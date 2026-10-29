@@ -66,5 +66,8 @@ Check 'migration: a rearranged panel is left alone' ((([string]$global:cfg.panel
 foreach ($bad in 'abc', '2.5x', '') { $global:cfg = $oldJson | ConvertFrom-Json; $global:cfg | Add-Member layoutVersion $bad -Force; $e = $null
     try { Update-OldDefaultOrder } catch { $e = $_ }
     Check "MB-L1: layoutVersion '$bad' treated as 1 (migrates, no error)" (-not $e -and $global:cfg.layoutVersion -eq 2 -and (([string]$global:cfg.panels[1].buttons[4].label) -replace "`n", ' ') -eq 'START JARTREK SECURITY') }
+$global:cfgPath = Join-Path $tmp 'no-such-dir/buttons.json'; $global:cfg = $oldJson | ConvertFrom-Json; $e = $null
+try { Update-OldDefaultOrder } catch { $e = $_ }
+Check 'MB-L2: failed migration write is logged, no error, config migrated in memory' (-not $e -and $global:cfg.layoutVersion -eq 2 -and ((Get-Content $global:logPath -Raw) -match "couldn't save the migrated"))
 Remove-Item -LiteralPath $tmp -Recurse -Force
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

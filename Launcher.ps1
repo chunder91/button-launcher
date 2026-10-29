@@ -944,9 +944,13 @@ function global:Update-OldDefaultOrder {
     Set-Prop $global:cfg 'layoutVersion' 2
     if ($changed) { Add-Content -LiteralPath $global:logPath -Value ("{0}  moved Start Jartrek Security above the Restarts (old default order)" -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
     # No panels are open yet, so Save-Config (which rebuilds the list from open panels) can't be used here.
-    $tmp = $global:cfgPath + '.tmp'
-    [IO.File]::WriteAllText($tmp, ($global:cfg | ConvertTo-Json -Depth 12), (New-Object Text.UTF8Encoding $false))
-    if (Test-Path -LiteralPath $global:cfgPath) { [IO.File]::Replace($tmp, $global:cfgPath, $global:cfgPath + '.bak') } else { [IO.File]::Move($tmp, $global:cfgPath) }
+    try {   # MB-L2: if the write fails, log it and keep going with the migrated config in memory
+        $tmp = $global:cfgPath + '.tmp'
+        [IO.File]::WriteAllText($tmp, ($global:cfg | ConvertTo-Json -Depth 12), (New-Object Text.UTF8Encoding $false))
+        if (Test-Path -LiteralPath $global:cfgPath) { [IO.File]::Replace($tmp, $global:cfgPath, $global:cfgPath + '.bak') } else { [IO.File]::Move($tmp, $global:cfgPath) }
+    } catch {
+        Add-Content -LiteralPath $global:logPath -Value ("{0}  couldn't save the migrated buttons.json ({1}); using it in memory" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue
+    }
 }
 
 # Second launch (Start menu, exe, shortcut) while running: show every panel and bring it to the front.
