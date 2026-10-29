@@ -318,10 +318,14 @@ function global:Get-IconImage($path) {
 
 function global:Resolve-Img($path) { if ([IO.Path]::IsPathRooted($path)) { $path } else { Join-Path $global:here $path } }
 
-function global:Get-PicSource($btn) {
+function global:Get-PicSource($btn, $px) {
     if (-not $btn.image) { return $null }
     if ($btn.image -eq 'icon') { return Get-IconImage $btn.target }
     $p = Resolve-Img $btn.image
+    if ($px -and $px -le 48) {   # small spots use "<name>-small.png" when it exists (e.g. Red Dog logo without the wordmark)
+        $sm = Join-Path ([IO.Path]::GetDirectoryName($p)) ([IO.Path]::GetFileNameWithoutExtension($p) + '-small' + [IO.Path]::GetExtension($p))
+        if (Test-Path -LiteralPath $sm) { $p = $sm }
+    }
     if (-not (Test-Path $p)) { return $null }
     try {
         $bi = New-Object System.Windows.Media.Imaging.BitmapImage
@@ -347,7 +351,9 @@ function global:Add-MissingPicCue($content, $btn) {
 
 function global:New-Content($btn, $fs, $h) {
     $label = New-Label $btn.label $btn.fg $fs
-    $src = Get-PicSource $btn
+    $m0 = if ($btn.imageMode) { [string]$btn.imageMode } else { 'left' }
+    $px = switch ($m0) { 'left' { [Math]::Min(48, $h * 0.6) } 'above' { [Math]::Max(16, $h * 0.4) } default { $h } }
+    $src = Get-PicSource $btn $px
     if (-not $src) {
         if ($btn.image -and [string]$btn.image -ne 'icon') { return (Add-MissingPicCue $label $btn) }
         return $label
