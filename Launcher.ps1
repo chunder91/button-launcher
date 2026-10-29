@@ -9,6 +9,8 @@ Add-Type -Namespace BL -Name Native -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
 [DllImport("user32.dll", EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr h, int i);
 [DllImport("user32.dll", EntryPoint="SetWindowLongPtrW")] public static extern IntPtr SetWindowLongPtr(IntPtr h, int i, IntPtr v);
+[DllImport("user32.dll")] public static extern bool RegisterHotKey(IntPtr h, int id, uint mods, uint vk);
+[DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
 [DllImport("shell32.dll")] public static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA d);
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 [StructLayout(LayoutKind.Sequential)] public struct APPBARDATA { public uint cbSize; public IntPtr hWnd; public uint msg; public uint edge; public RECT rc; public IntPtr lParam; }
@@ -38,6 +40,11 @@ $global:Acronyms     = @('PLCE', 'PC', 'POS', 'VNC', 'KBS', 'USB', 'TV', 'ID', '
 $global:app          = $null
 $global:relayoutTimer = $null
 $global:labelSink    = $null
+$global:single       = $null                                      # one-panel layout window state (layout 'single')
+$global:middle       = $null                                      # middle icons: @{ cols; items }
+$global:tray         = $null
+$global:hotkeySrc    = $null
+$global:hotkeyOk     = $false
 $global:AppVersion   = '1.2.0'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
@@ -622,7 +629,9 @@ function global:Show-SetupWindow([switch]$OnlyIfNeeded) {
 # ---------- config + layout: anchors are relative, so they work at any resolution / scaling ----------
 function global:Save-Config {
     foreach ($p in $global:panels) { Set-Prop $p.cfg 'buttons' @($p.items.ToArray()) }
-    $global:cfg.panels = @($global:panels | ForEach-Object { $_.cfg })
+    if (-not $global:single) { $global:cfg.panels = @($global:panels | ForEach-Object { $_.cfg }) }   # single: panels 3+ stay as they are
+    if ($global:middle) { if (-not $global:cfg.middle) { Set-Prop $global:cfg 'middle' ([pscustomobject]@{ columns = $global:middle.cols; items = @() }) }
+                          Set-Prop $global:cfg.middle 'items' @($global:middle.items.ToArray()) }
     $json = $global:cfg | ConvertTo-Json -Depth 12
     # CC-M2: write to a temp file, then swap it in and keep the previous copy as buttons.json.bak
     $tmp = $global:cfgPath + '.tmp'
@@ -661,6 +670,7 @@ function global:Get-WorkArea($screen) {
 function global:Get-Dpi($p) { try { $d = [BL.Native]::GetDpiForWindow($p.hwnd); if ($d -gt 0) { return $d / 96.0 } } catch {}; return 1.0 }
 
 function global:Layout-Panel($p) {
+    if ($p.single) { Layout-Single; return }
     if (-not $p.hwnd -or $p.hwnd -eq [IntPtr]::Zero -or -not $p.win.IsVisible) { return }
     $pc = $p.cfg
     $wa = Get-WorkArea (Get-Screen $pc)
@@ -713,6 +723,7 @@ function global:Snap-Anchor($p) {
 function global:Apply-Lock {
     $locked = [bool]$global:cfg.locked
     foreach ($p in $global:panels) { Build-Panel $p }   # UX-1: menus differ when locked, so rebuild them
+    if ($global:single) { Build-Middle; $global:single.win.ShowInTaskbar = -not $locked }
     foreach ($p in $global:panels) {
         $p.grip.Visibility = if ($locked) { 'Collapsed' } else { 'Visible' }
         if ($p.hwnd -and $p.hwnd -ne [IntPtr]::Zero) {
@@ -776,11 +787,12 @@ function global:Panel-Menu($p, $menu) {
     # edit
     [void](Add-MenuItem $menu 'Add new button at end...' { $nb = New-DefaultButton; if (Edit-Button $nb) { [void]$p.items.Add($nb); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
     [void](Add-MenuItem $menu 'Rename panel...' { $n = [Microsoft.VisualBasic.Interaction]::InputBox('Panel name:', 'Rename panel', $p.cfg.name); if ($n) { $p.cfg.name = $n; $p.win.Title = $n; Save-Config } }.GetNewClosure())
-    [void](Add-MenuItem $menu 'Add new panel...' { New-PanelFromMenu }.GetNewClosure())
-    [void](Add-MenuItem $menu 'Delete this panel...' {
+    if ($global:single) { [void](Add-MenuItem $menu 'Add icon to the middle...' { Add-ChipFromMenu }) }
+    if (-not $global:single) { [void](Add-MenuItem $menu 'Add new panel...' { New-PanelFromMenu }.GetNewClosure()) }
+    if (-not $global:single) { [void](Add-MenuItem $menu 'Delete this panel...' {
         if ([System.Windows.MessageBox]::Show("Delete the panel ""$($p.cfg.name)"" and all its buttons?", 'Launcher', 'YesNo', 'Warning', 'No') -eq 'Yes') {
             $global:panels.Remove($p); $p.deleted = $true; Save-Config; $p.win.Close()
-            foreach ($o in $global:panels) { Build-Panel $o } } }.GetNewClosure())   # CC-L5: drop the deleted panel from Move menus
+            foreach ($o in $global:panels) { Build-Panel $o } } }.GetNewClosure()) }   # CC-L5: drop the deleted panel from Move menus
     [void]$menu.Items.Add((New-Object System.Windows.Controls.Separator))
     # Setup submenu: 44 px item with a 12 px #A0A0A0 second line
     $setup = New-Object System.Windows.Controls.MenuItem; $setup.MinHeight = 44
@@ -791,6 +803,12 @@ function global:Panel-Menu($p, $menu) {
     [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
     [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" })
     [void](Add-MenuItem $setup 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
+    $lay = New-Object System.Windows.Controls.MenuItem; $lay.Header = 'Layout'
+    foreach ($opt in @(@('two', 'Two panels'), @('single', 'One panel, docked to the edge'))) { $val = $opt[0]
+        $li = Add-MenuItem $lay $opt[1] { Set-Prop $global:cfg 'layout' $val; Save-Config
+            [System.Windows.MessageBox]::Show('Saved. Choose Setup > Reload to switch the layout.', 'Launcher') | Out-Null }.GetNewClosure()
+        $li.IsCheckable = $true; $li.IsChecked = ((Get-LayoutMode $global:cfg) -eq $val) }
+    [void]$setup.Items.Add($lay)
     $sq = Add-MenuItem $setup 'Square panel corners (for slow PCs)' { Set-Prop $global:cfg 'squarePanels' (-not [bool]$global:cfg.squarePanels); Save-Config
         [System.Windows.MessageBox]::Show('Saved. Choose Setup > Reload to apply it.', 'Launcher') | Out-Null }
     $sq.IsCheckable = $true; $sq.IsChecked = [bool]$global:cfg.squarePanels
@@ -861,7 +879,8 @@ function global:Build-Panel($p) {
         $e.FontFamily = $global:UiFont; $e.Margin = '10,20'; $e.TextWrapping = 'Wrap'; [void]$stack.Children.Add($e)
     }
     $p.labels = $global:labelSink; $global:labelSink = $null; Apply-MinFont $p
-    $pm = New-Object System.Windows.Controls.ContextMenu; Panel-Menu $p $pm; $p.win.ContextMenu = $pm
+    $pm = New-Object System.Windows.Controls.ContextMenu; Panel-Menu $p $pm
+    if ($p.menuHost) { $p.menuHost.ContextMenu = $pm } else { $p.win.ContextMenu = $pm }
 }
 
 function global:Open-Panel($pc) {
@@ -886,8 +905,8 @@ function global:Open-Panel($pc) {
     # Edit mode: 28 px amber "Editing" bar (also the drag handle). Locked: hidden, so the panel is clean.
     $grip = New-Object System.Windows.Controls.Border; $grip.Height = 28; $grip.Background = Brush $global:Theme.amber; $grip.Cursor = 'SizeAll'
     $grip.CornerRadius = '8'; $grip.Margin = '3,3,3,3'; $grip.Padding = '10,0'
-    $grip.ToolTip = 'Editing: right-click a button to change it. Lock when done. Drag this bar to move the panel.'
-    $gt = New-Object System.Windows.Controls.TextBlock; $gt.Text = 'Editing: right-click a button to change it. Lock when done.'
+    $grip.ToolTip = 'Editing. Lock when done. Right-click a button to change it. Drag this bar to move the panel.'
+    $gt = New-Object System.Windows.Controls.TextBlock; $gt.Text = 'Editing. Lock when done.'
     $gt.FontFamily = $global:UiFont; $gt.FontWeight = [System.Windows.FontWeights]::SemiBold; $gt.FontSize = 12
     $gt.TextTrimming = 'CharacterEllipsis'; $gt.TextWrapping = 'NoWrap'
     $gt.Foreground = Brush $global:Theme.editText; $gt.VerticalAlignment = 'Center'; $grip.Child = $gt
@@ -947,6 +966,10 @@ function global:Update-OldDefaultOrder {
 
 # Second launch (Start menu, exe, shortcut) while running: show every panel and bring it to the front.
 function global:Show-AllPanels {
+    if ($global:single) {   # one-panel layout: one window to restore and raise
+        $w = $global:single.win
+        if ($w.WindowState -eq 'Minimized') { $w.WindowState = 'Normal' }
+        $t = $w.Topmost; $w.Topmost = $true; $w.Topmost = $t; [void]$w.Activate(); Request-Relayout; return }
     $reopen = @($global:panels | Where-Object { -not $_.deleted -and -not $_.win.IsVisible })
     foreach ($p in $reopen) { [void]$global:panels.Remove($p); [void](Open-Panel $p.cfg) }
     if ($reopen.Count) { Apply-Lock }
@@ -1002,6 +1025,305 @@ function global:New-PanelFromMenu {
     foreach ($o in $global:panels) { if ($o -ne $p) { Build-Panel $o } }
 }
 
+# ================= One-panel layout ("layout": "single"), tray icon and Ctrl+Alt+L =================
+# Pure helpers first (tools/test-onepanel.ps1 runs these without Windows).
+function global:Get-LayoutMode($cfg) { if ([string]$cfg.layout -eq 'single') { 'single' } else { 'two' } }
+function global:Get-MiddleHint([int]$count, [bool]$locked) {   # empty + unlocked: a subtle hint; locked: nothing
+    if ($count -eq 0 -and -not $locked) { return 'Unlock and right-click to add icons' }
+    return $null
+}
+# How many chips fit, and whether a "+N more" row is needed. Chips 64 high, 6 gap, "+N more" row 28 high.
+function global:Get-OverflowSplit([int]$total, [double]$availH, [int]$cols = 2, [double]$chipH = 64, [double]$gap = 6, [double]$moreH = 28) {
+    if ($total -le 0) { return @{ shown = 0; more = 0 } }
+    $rowsAll = [Math]::Floor(($availH + $gap) / ($chipH + $gap))
+    if ($rowsAll * $cols -ge $total) { return @{ shown = $total; more = 0 } }
+    $rows = [Math]::Max(0, [Math]::Floor(($availH - $moreH) / ($chipH + $gap)))   # room for the 28 px row plus its gap
+    $shown = [int]([Math]::Min($total, $rows * $cols))
+    return @{ shown = $shown; more = $total - $shown }
+}
+function global:Get-ChipLabel($btn) {   # one-line label, file extensions hidden (full name goes in the tooltip)
+    $l = ([string]$btn.label) -replace '\\n', ' ' -replace '\s+', ' '
+    $l = $l.Trim()
+    if (-not $l) { $t = Expand $btn.target; if ($t) { $l = [IO.Path]::GetFileName($t.TrimEnd('\', '/')) } }
+    if ((Get-ButtonType $btn) -ne 'website') { $l = $l -replace '(?i)\.(exe|lnk|url|pdf|xlsx?|xlsm|docx?|pptx?|csv|txt|rtf|ps1|bat|cmd|vbs|png|jpe?g)$', '' }
+    if (-not $l) { $l = 'Icon' }
+    return $l
+}
+function global:New-MiddleState($cfg) {   # normalises buttons.json "middle": { "columns": 2, "items": [ ... ] }
+    if (-not $cfg.middle) { Set-Prop $cfg 'middle' ([pscustomobject]@{ columns = 2; items = @() }) }
+    if ($cfg.middle.items -eq $null) { Set-Prop $cfg.middle 'items' @() }
+    $cols = 2; if ($cfg.middle.columns) { $cols = [Math]::Max(1, [Math]::Min(4, [int]$cfg.middle.columns)) }
+    $list = New-Object System.Collections.ArrayList
+    foreach ($b in @($cfg.middle.items)) { if ($b) { [void]$list.Add($b) } }
+    return @{ cols = $cols; items = $list }
+}
+function global:New-DefaultChip { [pscustomobject]@{ label = 'New icon'; type = 'program'; target = 'TODO: set a target'; args = ''; image = 'icon' } }
+
+# ---------- chips ----------
+function global:Get-ChipIcon($btn) {   # the target's own icon, else a Set A icon for its type
+    $kind = Get-ButtonType $btn
+    if ($btn.image -and [string]$btn.image -ne 'icon') { $s = Get-PicSource $btn 32; if ($s) { return $s } }
+    if ($kind -ne 'website') {
+        $t = Expand $btn.target
+        if ($t -and -not (Is-Todo $t) -and (Test-Path -LiteralPath $t -PathType Leaf)) {
+            try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($t)
+                  $bs = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
+                  $ico.Dispose(); $bs.Freeze(); return $bs } catch {}
+        }
+    }
+    $fb = switch ($kind) { 'website' { 'images/globe.png' } 'file' { 'images/guide.png' } 'script' { 'images/screenconnect.png' } default { 'images/register.png' } }
+    return Get-PicSource ([pscustomobject]@{ image = $fb }) 32
+}
+function global:New-Chip($btn, [int]$index) {
+    $chip = New-Object System.Windows.Controls.Border; $chip.Height = 64; $chip.Margin = '3'; $chip.CornerRadius = '8'
+    $chip.Background = Brush '#A6141414'; $chip.BorderBrush = Brush '#29FFFFFF'; $chip.BorderThickness = '1'   # Kern: 65% fill, 16% outline
+    $chip.Cursor = [System.Windows.Input.Cursors]::Hand; $chip.Focusable = $true; $chip.FocusVisualStyle = $null; $chip.AllowDrop = $true
+    $full = (([string]$btn.label) -replace '\\n', ' ').Trim(); if (-not $full) { $full = [string]$btn.target }
+    $chip.ToolTip = $full + $(if ($btn.target -and $full -ne [string]$btn.target) { "`n" + [string]$btn.target } else { '' })
+    $g = New-Object System.Windows.Controls.Grid
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.VerticalAlignment = 'Center'; $sp.Margin = '8'
+    $src = Get-ChipIcon $btn
+    if ($src) { $img = New-Object System.Windows.Controls.Image; $img.Source = $src; $img.Width = 32; $img.Height = 32; $img.Margin = '0,0,0,6'
+                [System.Windows.Media.RenderOptions]::SetBitmapScalingMode($img, 'HighQuality'); [void]$sp.Children.Add($img) }
+    $tb = New-Label (Get-ChipLabel $btn) '#FFFFFF' 12; $tb.TextWrapping = 'NoWrap'; $tb.TextTrimming = 'CharacterEllipsis'
+    $tb.HorizontalAlignment = 'Center'; $tb.TextAlignment = 'Center'; [void]$sp.Children.Add($tb)
+    [void]$g.Children.Add($sp)
+    $flash = New-Object System.Windows.Controls.Border; $flash.IsHitTestVisible = $false; $flash.Opacity = 0; $flash.CornerRadius = '7'
+    $flash.Background = [System.Windows.Media.Brushes]::White; [void]$g.Children.Add($flash)
+    if (-not [bool]$global:cfg.locked) {
+        $eo = New-Object System.Windows.Shapes.Rectangle; $eo.IsHitTestVisible = $false; $eo.Stroke = Brush '#99FFFFFF'; $eo.StrokeThickness = 2
+        $eo.StrokeDashArray = New-Object System.Windows.Media.DoubleCollection (,[double[]](4, 3)); $eo.RadiusX = 6; $eo.RadiusY = 6; $eo.Margin = '2'
+        [void]$g.Children.Add($eo) }
+    if (-not (Test-ButtonSetUpQuick $btn)) { [void]$g.Children.Add((New-MissingDot 'Not set up on this PC yet')) }
+    $chip.Child = $g
+    $st = @{ down = $false; start = $null; dragged = $false }
+    $chip.Add_MouseLeftButtonDown({ $st.down = $true; $st.dragged = $false; $st.start = $_.GetPosition($null); $_.Handled = $true; Play-Click }.GetNewClosure())
+    $chip.Add_MouseMove({
+        if (-not $st.down -or [bool]$global:cfg.locked -or $_.LeftButton -ne 'Pressed') { return }
+        $pt = $_.GetPosition($null)
+        if ([Math]::Abs($pt.X - $st.start.X) -gt 4 -or [Math]::Abs($pt.Y - $st.start.Y) -gt 4) {   # edit mode: the whole chip drags
+            $st.dragged = $true; $st.down = $false
+            [void][System.Windows.DragDrop]::DoDragDrop($chip, ('bl-chip:' + $index), [System.Windows.DragDropEffects]::Move) }
+    }.GetNewClosure())
+    $chip.Add_MouseLeftButtonUp({
+        if (-not $st.down) { return }; $st.down = $false; $_.Handled = $true
+        if (-not $st.dragged) { $ok = Invoke-Button $btn; if ($ok -eq $true) { Start-Flash $flash } }
+    }.GetNewClosure())
+    $chip.Add_KeyDown({ if ($_.Key -eq 'Enter' -or $_.Key -eq 'Space') { $_.Handled = $true; $ok = Invoke-Button $btn; if ($ok -eq $true) { Start-Flash $flash } } }.GetNewClosure())
+    $chip.Add_Drop({
+        $d = [string]$_.Data.GetData([string])
+        if ($d -match '^bl-chip:(\d+)$') { Move-Chip ([int]$matches[1]) $index; $_.Handled = $true } }.GetNewClosure())
+    $chip.ContextMenu = Chip-Menu $btn
+    return $chip
+}
+function global:Move-Chip([int]$from, [int]$to) {
+    $it = $global:middle.items
+    if ($from -eq $to -or $from -lt 0 -or $from -ge $it.Count -or $to -lt 0 -or $to -ge $it.Count) { return }
+    $b = $it[$from]; $it.RemoveAt($from); $it.Insert($to, $b); Save-Config; Build-Middle
+}
+function global:Remove-Chip($btn) {   # removes now, Undo for 5 seconds
+    $i = $global:middle.items.IndexOf($btn); if ($i -lt 0) { return }
+    $global:middle.items.RemoveAt($i); Save-Config; Build-Middle
+    Show-UndoToast ("Removed " + (Get-ChipLabel $btn)) { if ($global:middle.items.IndexOf($btn) -lt 0) { $global:middle.items.Insert([Math]::Min($i, $global:middle.items.Count), $btn); Save-Config; Build-Middle } }.GetNewClosure()
+}
+function global:Show-UndoToast($text, $undo) {
+    $t = $global:single.toast; if (-not $t) { return }
+    $t.Child = $null
+    $dp = New-Object System.Windows.Controls.DockPanel
+    $ub = New-Object System.Windows.Controls.Button; $ub.Content = 'Undo'; $ub.Padding = '10,2'; $ub.Margin = '8,0,0,0'
+    [System.Windows.Controls.DockPanel]::SetDock($ub, 'Right'); [void]$dp.Children.Add($ub)
+    $tx = New-Label $text '#FFFFFF' 12; $tx.TextTrimming = 'CharacterEllipsis'; $tx.TextWrapping = 'NoWrap'; [void]$dp.Children.Add($tx)
+    $t.Child = $dp; $t.Visibility = 'Visible'
+    $timer = New-Object System.Windows.Threading.DispatcherTimer; $timer.Interval = [TimeSpan]::FromSeconds(5)
+    $timer.Add_Tick({ $timer.Stop(); $t.Visibility = 'Collapsed' }.GetNewClosure())
+    $ub.Add_Click({ $timer.Stop(); $t.Visibility = 'Collapsed'; & $undo }.GetNewClosure())
+    $timer.Start()
+}
+function global:Add-ChipFromMenu([int]$at = -1) {
+    $nb = New-DefaultChip
+    if (Edit-Button $nb) { if ($at -ge 0 -and $at -le $global:middle.items.Count) { $global:middle.items.Insert($at, $nb) } else { [void]$global:middle.items.Add($nb) }; Save-Config; Build-Middle }
+}
+# Chips get the same kind of menu as group tiles: Edit, Move, Add, Remove, then the panel menu.
+function global:Chip-Menu($btn) {
+    $m = New-Object System.Windows.Controls.ContextMenu
+    $hostP = $global:panels[0]
+    if ([bool]$global:cfg.locked) { Locked-Menu $hostP $m; return $m }
+    [void](Add-MenuItem $m 'Edit this icon...' { if (Edit-Button $btn) { Save-Config; Build-Middle } }.GetNewClosure())
+    [void](Add-MenuItem $m 'Move earlier' { $i = $global:middle.items.IndexOf($btn); Move-Chip $i ($i - 1) }.GetNewClosure())
+    [void](Add-MenuItem $m 'Move later' { $i = $global:middle.items.IndexOf($btn); Move-Chip $i ($i + 1) }.GetNewClosure())
+    [void](Add-MenuItem $m 'Add new icon after...' { Add-ChipFromMenu ($global:middle.items.IndexOf($btn) + 1) }.GetNewClosure())
+    [void](Add-MenuItem $m 'Remove this icon' { Remove-Chip $btn }.GetNewClosure())
+    [void]$m.Items.Add((New-Object System.Windows.Controls.Separator))
+    Panel-Menu $hostP $m
+    return $m
+}
+function global:Middle-Menu {
+    $m = New-Object System.Windows.Controls.ContextMenu
+    $hostP = $global:panels[0]
+    if ([bool]$global:cfg.locked) { Locked-Menu $hostP $m; return $m }
+    [void](Add-MenuItem $m 'Add icon...' { Add-ChipFromMenu })
+    [void]$m.Items.Add((New-Object System.Windows.Controls.Separator))
+    Panel-Menu $hostP $m
+    return $m
+}
+function global:New-ChipGrid($list, [int]$cols, [int]$offset) {
+    $ug = New-Object System.Windows.Controls.Primitives.UniformGrid; $ug.Columns = $cols
+    for ($i = 0; $i -lt $list.Count; $i++) { [void]$ug.Children.Add((New-Chip $list[$i] ($offset + $i))) }
+    return $ug
+}
+# Middle area: Background $null when locked, so empty pixels click through to the desktop; only chips are hit-testable.
+function global:Build-Middle {
+    $s = $global:single; if (-not $s) { return }
+    $mid = $s.middle; $mid.Children.Clear()
+    $global:labelSink = New-Object System.Collections.ArrayList
+    $locked = [bool]$global:cfg.locked
+    $mid.Background = if ($locked) { $null } else { Brush '#01000000' }   # edit mode catches right-click and drops
+    $mid.ContextMenu = if ($locked) { $null } else { Middle-Menu }
+    $items = @($global:middle.items)
+    $hint = Get-MiddleHint $items.Count $locked
+    if ($hint) {
+        $h = New-Label $hint '#B3FFFFFF' 12; $h.HorizontalAlignment = 'Center'; $h.TextAlignment = 'Center'; $h.VerticalAlignment = 'Center'
+        $h.IsHitTestVisible = $false; [void]$mid.Children.Add($h) }
+    if ($hint -or $items.Count -eq 0) { $s.labels = $global:labelSink; $global:labelSink = $null; Apply-MinFont $s; return }
+    $split = Get-OverflowSplit $items.Count $s.availH $global:middle.cols
+    $s.lastShown = $split.shown
+    $col = New-Object System.Windows.Controls.StackPanel; $col.VerticalAlignment = 'Center'; $col.Margin = '3,16'   # >= 16 px to the groups
+    if ($split.shown -gt 0) { [void]$col.Children.Add((New-ChipGrid @($items[0..($split.shown - 1)]) $global:middle.cols 0)) }
+    if ($split.more -gt 0) {
+        $more = New-Object System.Windows.Controls.Border; $more.Height = 28; $more.Margin = '3'; $more.CornerRadius = '8'
+        $more.Background = Brush '#A6141414'; $more.BorderBrush = Brush '#29FFFFFF'; $more.BorderThickness = '1'; $more.Cursor = [System.Windows.Input.Cursors]::Hand
+        $mt = New-Label ("+{0} more {1}" -f $split.more, [char]0x25BE) '#FFFFFF' 12; $mt.HorizontalAlignment = 'Center'; $more.Child = $mt
+        $pop = New-Object System.Windows.Controls.Primitives.Popup; $pop.StaysOpen = $false; $pop.PlacementTarget = $more; $pop.Placement = 'Left'
+        $pop.AllowsTransparency = $true
+        $pb = New-Object System.Windows.Controls.Border; $pb.Background = Brush $global:Theme.panel; $pb.CornerRadius = '12'; $pb.Padding = '3'; $pb.Width = 290
+        $pb.Child = New-ChipGrid @($items[$split.shown..($items.Count - 1)]) $global:middle.cols $split.shown
+        $pop.Child = $pb
+        $more.Add_MouseLeftButtonUp({ $pop.IsOpen = -not $pop.IsOpen }.GetNewClosure())
+        [void]$col.Children.Add($more); [void]$col.Children.Add($pop)
+    }
+    [void]$mid.Children.Add($col)
+    $s.labels = $global:labelSink; $global:labelSink = $null; Apply-MinFont $s   # 12 px floor for chip labels too
+}
+
+# ---------- the single docked window ----------
+function global:Open-Single {
+    $pcs = @($global:cfg.panels)
+    $w = New-Object System.Windows.Window
+    $w.WindowStyle = 'None'; $w.ResizeMode = 'NoResize'; $w.ShowInTaskbar = -not [bool]$global:cfg.locked
+    $w.Title = if ($global:cfg.title) { [string]$global:cfg.title } else { 'Launcher' }
+    $w.SizeToContent = 'Width'; $w.WindowStartupLocation = 'Manual'; $w.Left = -32000; $w.Top = -32000
+    $w.Topmost = [bool]$pcs[0].alwaysOnTop                   # not topmost unless the panel already was
+    $w.AllowsTransparency = $true; $w.Background = $null      # per-pixel alpha: transparent pixels click through
+    $scale = New-Object System.Windows.Media.ScaleTransform 1, 1
+    $root = New-Object System.Windows.Controls.Grid; $root.Width = $global:BaseWidth; $root.LayoutTransform = $scale
+    foreach ($r in 'Auto', '*', 'Auto', 'Auto') { $rd = New-Object System.Windows.Controls.RowDefinition; $rd.Height = (New-Object System.Windows.GridLengthConverter).ConvertFromString($r); [void]$root.RowDefinitions.Add($rd) }
+    $w.Content = $root
+    $global:single = @{ win = $w; root = $root; scale = $scale; middle = $null; toast = $null; availH = 0; lastShown = -1; hwnd = [IntPtr]::Zero; labels = $null }
+    $groups = @()
+    for ($gi = 0; $gi -lt [Math]::Min(2, $pcs.Count); $gi++) {
+        $pc = $pcs[$gi]
+        $p = @{ cfg = $pc; items = (New-Object System.Collections.ArrayList); deleted = $false; hwnd = [IntPtr]::Zero; single = $true }
+        foreach ($b in $pc.buttons) { [void]$p.items.Add($b) }
+        $edge = New-Object System.Windows.Controls.Border; $edge.Background = Brush $global:Theme.panel; $edge.Padding = '3'
+        $edge.CornerRadius = $(if ($gi -eq 0) { '0,0,0,14' } else { '14,0,0,0' })
+        $dock = New-Object System.Windows.Controls.DockPanel
+        $grip = New-Object System.Windows.Controls.Border
+        if ($gi -eq 0) {   # Editing bar (top group only). Squint: lead with "Lock when done".
+            $grip.Height = 28; $grip.Background = Brush $global:Theme.amber; $grip.CornerRadius = '8'; $grip.Margin = '3'; $grip.Padding = '10,0'
+            $grip.ToolTip = 'Editing. Lock when done. Right-click a button or icon to change it.'
+            $gt = New-Label 'Editing. Lock when done.' $global:Theme.editText 12; $gt.TextTrimming = 'CharacterEllipsis'; $gt.TextWrapping = 'NoWrap'; $grip.Child = $gt
+            [System.Windows.Controls.DockPanel]::SetDock($grip, 'Top'); [void]$dock.Children.Add($grip) }
+        $stack = New-Object System.Windows.Controls.StackPanel; [void]$dock.Children.Add($stack)
+        $edge.Child = $dock
+        [System.Windows.Controls.Grid]::SetRow($edge, $(if ($gi -eq 0) { 0 } else { 2 })); [void]$root.Children.Add($edge)
+        $p.win = $w; $p.stack = $stack; $p.grip = $grip; $p.edge = $edge; $p.scale = $scale; $p.menuHost = $edge
+        [void]$global:panels.Add($p); $groups += $p
+    }
+    $mid = New-Object System.Windows.Controls.Grid; [System.Windows.Controls.Grid]::SetRow($mid, 1); [void]$root.Children.Add($mid)
+    $toast = New-Object System.Windows.Controls.Border; $toast.Visibility = 'Collapsed'; $toast.Background = Brush '#2B2B2B'; $toast.CornerRadius = '8'
+    $toast.Padding = '10,6'; $toast.Margin = '6'; [System.Windows.Controls.Grid]::SetRow($toast, 3); [void]$root.Children.Add($toast)
+    $global:single.middle = $mid; $global:single.toast = $toast
+    $w.Add_SourceInitialized({
+        $h = (New-Object System.Windows.Interop.WindowInteropHelper $w).Handle
+        $global:single.hwnd = $h; foreach ($g in $global:panels) { $g.hwnd = $h }
+        $src = [System.Windows.Interop.HwndSource]::FromHwnd($h)
+        $src.AddHook([System.Windows.Interop.HwndSourceHook]{
+            param($hh, $msg, $wp, $lp, [ref]$handled)
+            if ($msg -in 0x007E, 0x001A, 0x02E0, 0x0218, 0x0219) { Request-Relayout }   # display, work area, DPI, power, devices
+            return [IntPtr]::Zero })
+    }.GetNewClosure())
+    $w.Add_ContentRendered({ Request-Relayout })
+    $w.Add_Closed({ Save-Config; $global:app.Shutdown() })
+    foreach ($p in $groups) { Build-Panel $p }
+    Build-Middle
+    $w.Show()
+}
+# Dock: the panels' edge (left if the top panel was anchored left, else right), full work-area height of that monitor.
+function global:Layout-Single {
+    $s = $global:single; if (-not $s -or -not $s.hwnd -or $s.hwnd -eq [IntPtr]::Zero) { return }
+    $pc = $global:panels[0].cfg
+    $wa = Get-WorkArea (Get-Screen $pc)
+    $dpi = Get-Dpi $global:panels[0]
+    $pct = if ($pc.size -is [string] -and $global:SizePct[[string]$pc.size]) { $global:SizePct[[string]$pc.size] } elseif ($pc.size) { [double]$pc.size } else { 14 }
+    $wDip = [Math]::Max(180, [Math]::Min(560, ($wa.W * $pct / 100.0) / $dpi))
+    $sc = $wDip / $global:BaseWidth
+    $hDip = $wa.H / $dpi
+    $s.scale.ScaleX = $sc; $s.scale.ScaleY = $sc
+    $s.root.Height = $hDip / $sc
+    foreach ($g in $global:panels) { Apply-MinFont $g }; Apply-MinFont $s
+    $s.win.UpdateLayout()
+    $groupsH = 0; foreach ($g in $global:panels) { $groupsH += $g.edge.ActualHeight }
+    if ($groupsH -gt $s.root.Height) {   # groups alone don't fit: shrink to fit (tiles keep their 44 px minimum in layout units)
+        $sc = $sc * $s.root.Height / $groupsH; $s.scale.ScaleX = $sc; $s.scale.ScaleY = $sc; $s.root.Height = $hDip / $sc
+        foreach ($g in $global:panels) { Apply-MinFont $g }; $s.win.UpdateLayout(); $groupsH = 0; foreach ($g in $global:panels) { $groupsH += $g.edge.ActualHeight } }
+    $avail = [Math]::Max(0, $s.root.Height - $groupsH - 32)
+    $need = Get-OverflowSplit $global:middle.items.Count $avail $global:middle.cols
+    $s.availH = $avail
+    if ($need.shown -ne $s.lastShown) { Build-Middle; $s.win.UpdateLayout() }
+    $wPx = [int][Math]::Round($s.win.ActualWidth * $dpi)
+    $left = ([string]$pc.anchor) -like '*left*'
+    $x = if ($left) { $wa.L } else { $wa.R - $wPx }
+    foreach ($g in $global:panels) { $g.edge.CornerRadius = $(if ($g -eq $global:panels[0]) { if ($left) { '0,0,14,0' } else { '0,0,0,14' } } else { if ($left) { '0,14,0,0' } else { '14,0,0,0' } }) }
+    [void][BL.Native]::SetWindowPos($s.hwnd, [IntPtr]::Zero, [int]$x, [int]$wa.T, 0, 0, 0x0015)
+}
+
+# ---------- tray icon + Ctrl+Alt+L (both layouts) ----------
+function global:Start-TrayAndHotkey {
+    try {
+        $ni = New-Object System.Windows.Forms.NotifyIcon
+        $ico = Join-Path $global:here 'images\app.ico'
+        $ni.Icon = if (Test-Path -LiteralPath $ico) { New-Object System.Drawing.Icon $ico } else { [System.Drawing.SystemIcons]::Application }
+        $ni.Text = 'Button Launcher (Ctrl+Alt+L)'
+        $cm = New-Object System.Windows.Forms.ContextMenuStrip
+        [void]$cm.Items.Add('Show', $null, { Show-AllPanels })
+        $lk = $cm.Items.Add('Unlock', $null, { $global:cfg.locked = -not [bool]$global:cfg.locked; Save-Config; Apply-Lock })
+        [void]$cm.Items.Add('Settings', $null, { Show-AllPanels; Show-SetupWindow })
+        [void]$cm.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
+        [void]$cm.Items.Add('Exit', $null, { $global:app.Shutdown() })
+        $cm.Add_Opening({ $lk.Text = if ([bool]$global:cfg.locked) { 'Unlock' } else { 'Lock' } }.GetNewClosure())
+        $ni.ContextMenuStrip = $cm
+        $ni.Add_MouseClick({ if ($_.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Show-AllPanels } })
+        $ni.Visible = $true
+        $global:tray = $ni
+    } catch { Write-LauncherError 'starting the tray icon' $_ }
+    try {   # hidden message-only window (HWND_MESSAGE) receives WM_HOTKEY
+        $hp = New-Object System.Windows.Interop.HwndSourceParameters 'ButtonLauncherHotkey'
+        $hp.ParentWindow = [IntPtr](-3); $hp.Width = 0; $hp.Height = 0; $hp.WindowStyle = 0
+        $global:hotkeySrc = New-Object System.Windows.Interop.HwndSource $hp
+        $global:hotkeySrc.AddHook([System.Windows.Interop.HwndSourceHook]{
+            param($hh, $msg, $wp, $lp, [ref]$handled)
+            if ($msg -eq 0x0312 -and $wp.ToInt64() -eq 0xB10) { Show-AllPanels; $handled.Value = $true }
+            return [IntPtr]::Zero })
+        $global:hotkeyOk = [BL.Native]::RegisterHotKey($global:hotkeySrc.Handle, 0xB10, 0x4003, 0x4C)   # MOD_CONTROL|MOD_ALT|MOD_NOREPEAT, 'L'
+        if (-not $global:hotkeyOk) { Add-Content -LiteralPath $global:logPath -Value ("{0}  Ctrl+Alt+L is already used by another program; use the tray icon instead." -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
+    } catch { Write-LauncherError 'registering Ctrl+Alt+L' $_ }
+}
+function global:Stop-TrayAndHotkey {
+    try { if ($global:hotkeyOk -and $global:hotkeySrc) { [void][BL.Native]::UnregisterHotKey($global:hotkeySrc.Handle, 0xB10) } } catch {}
+    try { if ($global:hotkeySrc) { $global:hotkeySrc.Dispose() } } catch {}
+    try { if ($global:tray) { $global:tray.Visible = $false; $global:tray.Dispose() } } catch {}
+}
+
 # ================= MAIN (runs only after every function above is defined) =================
 try {
     # CC-M3: one launcher per install folder. A Reload waits (up to 10 s) for the old copy to save and exit.
@@ -1047,11 +1369,15 @@ try {
     $global:app.Add_DispatcherUnhandledException({ Write-LauncherError 'while running' $_.Exception; $_.Handled = $true })
     $global:relayoutTimer = New-Object System.Windows.Threading.DispatcherTimer
     $global:relayoutTimer.Interval = [TimeSpan]::FromMilliseconds(400)
-    $global:relayoutTimer.Add_Tick({ $global:relayoutTimer.Stop(); foreach ($o in $global:panels) { Layout-Panel $o } })
+    $global:relayoutTimer.Add_Tick({ $global:relayoutTimer.Stop(); if ($global:single) { Layout-Single } else { foreach ($o in $global:panels) { Layout-Panel $o } } })
 
-    foreach ($pc in @($global:cfg.panels)) { [void](Open-Panel $pc) }
+    $global:middle = New-MiddleState $global:cfg
+    if ((Get-LayoutMode $global:cfg) -eq 'single' -and @($global:cfg.panels).Count -ge 1) { Open-Single }
+    else { foreach ($pc in @($global:cfg.panels)) { [void](Open-Panel $pc) } }
     Apply-Lock                                          # builds every panel (menus know every panel) + tool-window style + placement
     if ($global:panels.Count -eq 0) { throw 'No panels could be opened.' }
+    Start-TrayAndHotkey                                 # Squint Major 1: tray icon + Ctrl+Alt+L bring the launcher forward (both layouts)
+    $global:app.Add_Exit({ Stop-TrayAndHotkey })
     $showTimer = New-Object System.Windows.Threading.DispatcherTimer; $showTimer.Interval = [TimeSpan]::FromMilliseconds(400)
     $showTimer.Add_Tick({ if ($global:showEvent.WaitOne(0)) { Show-AllPanels } }); $showTimer.Start()
     if (-not [bool]$global:cfg.setupDone) {   # UX-2a: first run (right after install) lists every button that still needs a file
