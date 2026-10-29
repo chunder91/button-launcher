@@ -1,5 +1,15 @@
 # Button Launcher release notes
 
+## v1.3.0 (vnc-picker): find registers automatically
+
+Not released yet. Separate from v1.2.0; waiting on ClaudeCode, Lockjaw, Kern and Squint and a real Windows test.
+
+- **View Register finds the registers.** Clicking it opens a list of PCs on this network that answer as UltraVNC servers. The last list shows straight away; Rescan (F5) looks again. It only looks at this PC's own private network (normally the 254 addresses next to it), gently, and only when the list opens and is over a day old, or when you press Rescan.
+- **View only or Interact.** Enter or double-click is View only. Both open the UltraVNC Viewer scaled to fit your screen.
+- **Names and pins.** Name a register (e.g. "Register 1") to pin it to the top, or add one by hand.
+- **View-only password, saved once.** The first View only asks for the shared view-only password (or "No password"). It's saved for this Windows user only, encrypted by Windows. Change or clear it with the picker's "View-only password..." button or Setup > View-only register password. Interact always asks for its own password.
+- Old setups: a View Register button that already had an address in its arguments keeps working the old way.
+
 ## v1.2.0 (modern-b): new modern look
 
 Not released yet. It's waiting on the ClaudeCode and Lockjaw reviews and a test on a real Windows PC.

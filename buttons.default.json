@@ -66,6 +66,7 @@
             ]
           },
           "askTitle": "Pick the UltraVNC Viewer (vncviewer.exe)",
+          "vncPicker": true,
           "image": "images/register.png",
           "imageMode": "left",
           "runAsAdmin": false
@@ -235,6 +236,7 @@
   "clickSound": false,
   "layoutVersion": 2,
   "layout": "single",
+  "vnc": { "port": 5900, "prefix": 24, "favorites": [] },
   "middle": {
     "columns": 2,
     "items": []

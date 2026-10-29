@@ -163,7 +163,7 @@ Check 'idle: relayout timer goes through Invoke-Relayout' ($src -match '\$global
 Check 'idle: show signal is a thread-pool wait, not a 400 ms poll' ($src -match 'RegisterWaitForSingleObject' -and $src -notmatch 'FromMilliseconds\(400\)\s*\r?\n\s*\$showTimer' -and $src -notmatch "showTimer\.Interval = \[TimeSpan\]::FromMilliseconds\(400\)")
 Check 'idle: no forever-repeating animations' ($src -notmatch 'RepeatBehavior')
 $ticks = [regex]::Matches($src, 'DispatcherTimer').Count
-Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback)' ($ticks -eq 4)
+Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback, VNC scan drain, VNC temp-file delete)' ($ticks -eq 6)
 # First run: no file picker without a click
 $afp = [regex]::Matches($src, '(?m)^.*Ask-ForPath \$.*$') | ForEach-Object { $_.Value.Trim() }
 Check 'first run: Ask-ForPath only from Pick..., Edit Browse, or a launch click' (@($afp | Where-Object { $_ -notmatch '^\$f = Ask-ForPath \$b' -and $_ -notmatch '^\$found = Ask-ForPath \$btn \$kind' -and $_ -notmatch "^\`$p = Ask-ForPath \(\[pscustomobject\]" }).Count -eq 0)
@@ -212,5 +212,5 @@ $nat2 = $src.Substring(0, $src.IndexOf("'@"))
 Check 'R12-L2: BL.Native still has no WindowsBase' ($nat2 -notmatch 'WindowsBase|Dispatcher|ReferencedAssemblies')
 Check 'R12-N1: WatchHandle and WatchResume in separate trys' ($src -match '(?s)\[BL\.Waits\]::WatchHandle\([^\n]*\$showWatch = \$true\s+\} catch \{' -and $src -match "try \{ if \('BL\.Waits' -as \[type\]\) \{ \[BL\.Waits\]::WatchResume")
 $vw = Get-Content (Join-Path $root 'tools/verify-waits.sh') -Raw
-Check 'R12-L1: verify-waits builds without node reuse / shared compiler, offline when cached, shuts build servers' ($vw -match '-nodeReuse:false' -and $vw -match 'UseSharedCompilation=false' -and $vw -match 'RestoreSources' -and $vw -match 'build-server shutdown')
+Check 'R12-L1: verify-waits builds without node reuse / shared compiler, offline when cached, never shuts down shared build servers (R13-M1)' ($vw -match '-nodeReuse:false' -and $vw -match 'UseSharedCompilation=false' -and $vw -match 'RestoreSources' -and $vw -notmatch 'build-server shutdown')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

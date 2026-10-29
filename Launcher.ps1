@@ -59,7 +59,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.2.0'
+$global:AppVersion   = '1.3.0'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -239,6 +239,7 @@ function global:Invoke-Button($btn) {
                 Start-Process $u; return $true
             }
             default {
+                if (Test-VncPickerButton $btn) { Show-VncPicker $btn; return $false }   # v1.3.0: View Register opens the picker (no flash)
                 $path = Resolve-ButtonPath $btn $kind
                 if (-not $path) { return $false }
                 $wd = if ($path -match '[\\/]') { Split-Path -Parent $path } else { $global:here }
@@ -955,6 +956,7 @@ function global:Panel-Menu($p, $menu) {
     [void]$hs.Children.Add($h1); [void]$hs.Children.Add($h2); $setup.Header = $hs
     [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
     [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" })
+    [void](Add-MenuItem $setup 'View-only register password...' { [void](Show-VncPasswordDialog $null) })
     [void](Add-MenuItem $setup 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
     $lay = New-Object System.Windows.Controls.MenuItem; $lay.Header = 'Layout'
     foreach ($opt in @(@('two', 'Two panels'), @('single', 'One panel, docked to the edge'))) { $val = $opt[0]
@@ -1543,6 +1545,441 @@ function global:Stop-TrayAndHotkey {
     try { if ($global:trayIcon) { $global:trayIcon.Dispose() } } catch {}   # OP-N1
     try { if ('BL.Waits' -as [type]) { [BL.Waits]::UnwatchResume() } } catch {}   # R11-N1: drop the PowerModeChanged handler
     $global:hotkeyOk = $false; $global:hotkeySrc = $null; $global:tray = $null; $global:trayIcon = $null   # safe to call twice (Exit + finally)
+}
+
+# ---------- VNC register picker (v1.3.0) ----------
+# View Register opens a picker of UltraVNC hosts found on this PC's own private subnets.
+# UltraVNC viewer switches, checked against https://uvnc.com/docs/ultravnc-viewer/52-ultravnc-viewer-commandline-parameters.html
+# and the viewer source (github.com/ultravnc/UltraVNC vncviewer/VNCOptions.cpp, ClientConnectionFile.cpp):
+#   host::port   two colons = a TCP port (host:N with one colon is display N = port 5900+N), so we always use '::'
+#   -viewonly    do not send keyboard or mouse events;   -autoscaling   scale the remote screen to fit
+#   -config file load host, port and the obfuscated password from a .vnc file ([connection] host=, port=, password=<16 hex>)
+# The -password switch is never used: a password must never be on a command line.
+$global:VncDefaultPort = 5900
+$global:VncTimeoutMs   = 300
+$global:VncParallel    = 16
+$global:VncPaceMs      = 40
+$global:VncCacheMaxAge = [TimeSpan]::FromDays(1)
+$global:VncEntropy     = [Text.Encoding]::UTF8.GetBytes('ButtonLauncher.VNC.ViewOnly.v1')
+$global:VncDesKey      = [byte[]](0xE8, 0x4A, 0xD6, 0x60, 0xC4, 0x72, 0x1A, 0xE0)   # vncauth.c fixedkey {23,82,107,6,35,78,88,7}, bit-reversed for standard DES. Obfuscation, not encryption.
+$global:vncPicker      = $null
+
+function global:Test-VncIPv4([string]$s) {
+    if ($s -notmatch '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$') { return $false }
+    foreach ($i in 1..4) { $o = $matches[$i]; if (($o.Length -gt 1 -and $o[0] -eq '0') -or [int]$o -gt 255) { return $false } }
+    return $true
+}
+function global:Test-VncHost([string]$s) {   # untrusted: an IPv4 dotted quad, or a hostname of [A-Za-z0-9.-]
+    if (-not $s -or $s.Length -gt 253) { return $false }
+    if ($s -match '^[\d.]+$') { return (Test-VncIPv4 $s) }
+    if ($s -cnotmatch '^[A-Za-z0-9.-]+$') { return $false }
+    foreach ($l in $s.TrimEnd('.').Split('.')) { if ($l.Length -lt 1 -or $l.Length -gt 63 -or $l.StartsWith('-') -or $l.EndsWith('-')) { return $false } }
+    return $true
+}
+function global:Get-VncPort($p) {   # an integer 1-65535, else $null
+    $s = ([string]$p).Trim()
+    if ($s -notmatch '^\d{1,5}$') { return $null }
+    $n = [int]$s; if ($n -lt 1 -or $n -gt 65535) { return $null }
+    return $n
+}
+function global:ConvertTo-VncEndpoint([string]$text, [int]$defaultPort = 5900) {   # 'host' or 'host:port' -> @{ host; port } or $null
+    $t = ([string]$text).Trim(); $port = $defaultPort
+    if ($t -match '^([^:]+)::?(\d+)$') { $t = $matches[1]; $port = Get-VncPort $matches[2]; if (-not $port) { return $null } }
+    elseif ($t.Contains(':')) { return $null }
+    if (-not (Test-VncHost $t)) { return $null }
+    return @{ host = $t; port = [int]$port }
+}
+function global:Test-Rfc1918([string]$ip) {
+    if (-not (Test-VncIPv4 $ip)) { return $false }
+    $o = @($ip.Split('.') | ForEach-Object { [int]$_ })
+    return ($o[0] -eq 10 -or ($o[0] -eq 172 -and $o[1] -ge 16 -and $o[1] -le 31) -or ($o[0] -eq 192 -and $o[1] -eq 168))
+}
+function global:ConvertTo-VncUInt([string]$ip) { $o = $ip.Split('.'); return ([uint32]$o[0] * 16777216 + [uint32]$o[1] * 65536 + [uint32]$o[2] * 256 + [uint32]$o[3]) }
+function global:ConvertFrom-VncUInt([uint32]$n) { return ('{0}.{1}.{2}.{3}' -f (($n -shr 24) -band 255), (($n -shr 16) -band 255), (($n -shr 8) -band 255), ($n -band 255)) }
+function global:Get-VncPrefix($cfgPrefix) {   # setting: default /24; never wider than /22; at most /30
+    $p = 24; $s = ([string]$cfgPrefix).Trim(); if ($s -match '^\d{1,2}$') { $p = [int]$s }
+    if ($p -lt 22) { $p = 22 }; if ($p -gt 30) { $p = 30 }
+    return $p
+}
+# Addresses to probe around this PC's own address: never wider than the adapter's own subnet or the setting, private only.
+function global:Get-VncScanTargets([string]$ip, [int]$adapterPrefix, $cfgPrefix) {
+    if (-not (Test-Rfc1918 $ip)) { return @() }
+    $p = [Math]::Max([int]$adapterPrefix, (Get-VncPrefix $cfgPrefix)); if ($p -gt 30) { return @() }
+    $self = ConvertTo-VncUInt $ip
+    $size = [uint32][Math]::Pow(2, 32 - $p); $net = [uint32]([Math]::Floor($self / $size) * $size)
+    $out = New-Object System.Collections.Generic.List[string]
+    for ($n = $net + 1; $n -lt $net + $size - 1; $n++) { if ($n -ne $self) { $a = ConvertFrom-VncUInt ([uint32]$n); if (Test-Rfc1918 $a) { $out.Add($a) } } }
+    return $out.ToArray()
+}
+function global:Get-VncLocalSubnets {   # @{ ip; prefix } for adapters that are up, not loopback, not APIPA, private IPv4
+    $res = @()
+    foreach ($nic in [System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces()) {
+        if ($nic.OperationalStatus -ne 'Up' -or $nic.NetworkInterfaceType -eq 'Loopback' -or $nic.NetworkInterfaceType -eq 'Tunnel') { continue }
+        foreach ($u in $nic.GetIPProperties().UnicastAddresses) {
+            if ($u.Address.AddressFamily -ne 'InterNetwork') { continue }
+            $a = $u.Address.ToString(); if ($a.StartsWith('169.254.') -or $a.StartsWith('127.') -or -not (Test-Rfc1918 $a)) { continue }
+            $pl = 24; try { $pl = [int]$u.PrefixLength } catch {}
+            $res += @{ ip = $a; prefix = $pl } } }
+    return $res
+}
+function global:Get-SafeText([string]$s, [int]$max = 64) {   # display only: control characters out, length capped
+    if (-not $s) { return '' }
+    $t = [regex]::Replace($s, '[\x00-\x1F\x7F-\x9F]', '')
+    if ($t.Length -gt $max) { $t = $t.Substring(0, $max) }
+    return $t
+}
+function global:Get-RfbBanner([byte[]]$bytes) {   # at most 12 bytes from the server; @{ text; rfb }
+    if (-not $bytes -or $bytes.Length -eq 0) { return @{ text = ''; rfb = $false } }
+    $n = [Math]::Min(12, $bytes.Length)
+    $raw = -join ($bytes[0..($n - 1)] | ForEach-Object { if ($_ -ge 32 -and $_ -le 126) { [char]$_ } else { '' } })
+    $isRfb = $raw -cmatch '^RFB \d{3}\.\d{3}$'
+    return @{ text = (Get-SafeText $raw 12); rfb = [bool]$isRfb }
+}
+function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$configFile) {   # an argument list; no shell
+    if ($configFile) {
+        if ($configFile -notmatch '^[A-Za-z]:\\[^"]+\.vnc$') { throw 'bad config path' }
+        $a = @('-config', ('"' + $configFile + '"'))
+    } else {
+        $p = Get-VncPort $port
+        if (-not (Test-VncHost $h) -or -not $p) { throw 'bad host or port' }
+        $a = @(('{0}::{1}' -f $h, $p))
+    }
+    $a += '-autoscaling'
+    if ($viewOnly) { $a += '-viewonly' }
+    return $a
+}
+function global:ConvertTo-VncObfuscated([byte[]]$pw) {   # VNC password file form: first 8 bytes, zero padded, DES with the fixed key, as 16 hex digits
+    $buf = New-Object byte[] 8
+    $out = $null
+    try {
+        [Array]::Copy($pw, $buf, [Math]::Min(8, $pw.Length))
+        $des = [System.Security.Cryptography.DES]::Create(); $des.Mode = 'ECB'; $des.Padding = 'None'
+        $enc = $des.CreateEncryptor($global:VncDesKey, (New-Object byte[] 8))
+        $out = $enc.TransformFinalBlock($buf, 0, 8); $enc.Dispose(); $des.Dispose()
+        return (($out | ForEach-Object { $_.ToString('x2') }) -join '')
+    } finally { [Array]::Clear($buf, 0, 8); if ($out) { [Array]::Clear($out, 0, $out.Length) } }
+}
+function global:New-VncConfigText([string]$h, [int]$port, [string]$hex, [bool]$viewOnly) {
+    if (-not (Test-VncHost $h) -or -not (Get-VncPort $port) -or ($hex -notmatch '^[0-9a-f]{16}$')) { throw 'bad .vnc values' }
+    $v = if ($viewOnly) { 1 } else { 0 }
+    return "[connection]`r`nhost=$h`r`nport=$port`r`npassword=$hex`r`n[options]`r`nviewonly=$v`r`nAutoScaling=1`r`n"
+}
+# Config: buttons.json "vnc": { port, prefix, favorites: [ { host, port, name, pinned } ], viewOnlyAsked }
+function global:Get-VncState($cfg) {
+    if (-not $cfg.vnc) { Set-Prop $cfg 'vnc' ([pscustomobject]@{ port = 5900; prefix = 24; favorites = @() }) }
+    $v = $cfg.vnc
+    $port = Get-VncPort $v.port; if (-not $port) { $port = 5900 }
+    $favs = New-Object System.Collections.ArrayList
+    foreach ($f in @($v.favorites)) {
+        if (-not $f) { continue }
+        $p = Get-VncPort $f.port; if (-not $p) { $p = $port }
+        if (-not (Test-VncHost ([string]$f.host))) { continue }   # config is untrusted too
+        [void]$favs.Add([pscustomobject]@{ host = [string]$f.host; port = $p; name = (Get-SafeText ([string]$f.name) 40); pinned = [bool]$f.pinned }) }
+    return @{ port = $port; prefix = (Get-VncPrefix $v.prefix); favorites = $favs }
+}
+function global:Save-VncFavorites($cfg, $favs) {
+    if (-not $cfg.vnc) { [void](Get-VncState $cfg) }
+    Set-Prop $cfg.vnc 'favorites' @($favs | ForEach-Object { [pscustomobject]@{ host = $_.host; port = $_.port; name = $_.name; pinned = [bool]$_.pinned } })
+}
+function global:Set-VncFavorite($favs, [string]$h, [int]$port, [string]$name, $pinned) {   # add or update; returns $false on bad input
+    if (-not (Test-VncHost $h) -or -not (Get-VncPort $port)) { return $false }
+    $f = $null; foreach ($x in $favs) { if ($x.host -eq $h -and $x.port -eq $port) { $f = $x; break } }
+    if (-not $f) { $f = [pscustomobject]@{ host = $h; port = $port; name = ''; pinned = $true }; [void]$favs.Add($f) }
+    if ($name -ne $null) { $f.name = Get-SafeText $name 40 }
+    if ($pinned -ne $null) { $f.pinned = [bool]$pinned }
+    return $true
+}
+function global:Read-VncCache([string]$path) {   # @{ time; hosts } ; hosts re-validated
+    $r = @{ time = [datetime]::MinValue; hosts = @() }
+    try {
+        if (-not (Test-Path -LiteralPath $path)) { return $r }
+        $j = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        $t = [datetime]::MinValue; if ($j.time -is [datetime]) { $r.time = $j.time.ToUniversalTime() } elseif ([datetime]::TryParse([string]$j.time, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$t)) { $r.time = $t.ToUniversalTime() }
+        $r.hosts = @(@($j.hosts) | Where-Object { $_ -and (Test-VncIPv4 ([string]$_.host)) -and (Get-VncPort $_.port) } | ForEach-Object {
+            $nm = [string]$_.name; if (-not (Test-VncHost $nm)) { $nm = '' }
+            [pscustomobject]@{ host = [string]$_.host; port = [int]$_.port; name = $nm; banner = (Get-SafeText ([string]$_.banner) 12) } })
+    } catch {}
+    return $r
+}
+function global:Save-VncCache([string]$path, $hosts, [datetime]$time) {
+    $o = [pscustomobject]@{ time = $time.ToUniversalTime().ToString('o'); hosts = @($hosts | ForEach-Object { [pscustomobject]@{ host = $_.host; port = $_.port; name = $_.name; banner = $_.banner } }) }
+    $tmp = $path + '.tmp'
+    [IO.File]::WriteAllText($tmp, ($o | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding $false))
+    if (Test-Path -LiteralPath $path) { [IO.File]::Replace($tmp, $path, $null) } else { [IO.File]::Move($tmp, $path) }
+}
+function global:Test-VncCacheStale($cache, [datetime]$nowUtc) { return (@($cache.hosts).Count -eq 0 -or ($nowUtc - $cache.time) -gt $global:VncCacheMaxAge -or $cache.time -gt $nowUtc.AddMinutes(5)) }
+function global:Merge-VncRows($favs, $hosts) {   # pinned favourites first (by name), then the rest by address
+    $rows = New-Object System.Collections.ArrayList
+    foreach ($f in $favs) { $h = $null; foreach ($x in $hosts) { if ($x.host -eq $f.host -and $x.port -eq $f.port) { $h = $x; break } }
+        [void]$rows.Add([pscustomobject]@{ host = $f.host; port = $f.port; name = $(if ($f.name) { $f.name } elseif ($h) { $h.name } else { '' }); banner = $(if ($h) { $h.banner } else { '' }); pinned = [bool]$f.pinned; fav = $true }) }
+    foreach ($h in $hosts) { $isFav = $false; foreach ($x in $favs) { if ($x.host -eq $h.host -and $x.port -eq $h.port) { $isFav = $true } }; if (-not $isFav) {
+        [void]$rows.Add([pscustomobject]@{ host = $h.host; port = $h.port; name = $h.name; banner = $h.banner; pinned = $false; fav = $false }) } }
+    $sorted = @($rows | Sort-Object @{ e = { -not $_.pinned } }, @{ e = { if ($_.pinned) { $_.name } else { '' } } }, @{ e = { if (Test-VncIPv4 $_.host) { ConvertTo-VncUInt $_.host } else { [uint32]::MaxValue } } })
+    return $sorted
+}
+function global:Test-VncPickerButton($btn) {   # new: "vncPicker": true. Old configs: the stock View Register (no args) gets the picker; a button with args keeps working as before.
+    if ($btn.PSObject.Properties['vncPicker']) { return [bool]$btn.vncPicker }
+    if ((Get-ButtonType $btn) -ne 'program' -or ([string]$btn.args).Trim()) { return $false }
+    $lnk = @($btn.detect.lnkNames) -contains 'UltraVNC Viewer'
+    return ($lnk -or (([string]$btn.target) -match '(?i)\\vncviewer\.exe$'))
+}
+
+# ----- view-only password: one shared value, DPAPI CurrentUser + app entropy, in vnc-viewonly.dat beside buttons.json -----
+function global:Get-VncSecretPath { Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-viewonly.dat' }
+function global:Test-VncSecret { Test-Path -LiteralPath (Get-VncSecretPath) }
+function global:Save-VncSecret([System.Security.SecureString]$ss) {
+    Add-Type -AssemblyName System.Security
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($ss); $raw = $null; $prot = $null
+    try {
+        $len = [Math]::Min(8, $ss.Length); $raw = New-Object byte[] $len   # UltraVNC uses the first 8 characters
+        for ($i = 0; $i -lt $len; $i++) { $c = [Runtime.InteropServices.Marshal]::ReadInt16($bstr, $i * 2); $raw[$i] = [byte]($c -band 0xFF) }
+        $prot = [System.Security.Cryptography.ProtectedData]::Protect($raw, $global:VncEntropy, 'CurrentUser')
+        $p = Get-VncSecretPath; $tmp = $p + '.tmp'
+        [IO.File]::WriteAllBytes($tmp, $prot)
+        if (Test-Path -LiteralPath $p) { [IO.File]::Replace($tmp, $p, $null) } else { [IO.File]::Move($tmp, $p) }
+    } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr); if ($raw) { [Array]::Clear($raw, 0, $raw.Length) } }
+}
+function global:Clear-VncSecret { $p = Get-VncSecretPath; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
+function global:Get-VncSecretHex {   # obfuscated hex for the .vnc file, or $null; the plaintext bytes are zeroed
+    $p = Get-VncSecretPath; if (-not (Test-Path -LiteralPath $p)) { return $null }
+    Add-Type -AssemblyName System.Security
+    $raw = $null
+    try { $raw = [System.Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBytes($p), $global:VncEntropy, 'CurrentUser'); return (ConvertTo-VncObfuscated $raw) }
+    catch { return $null }
+    finally { if ($raw) { [Array]::Clear($raw, 0, $raw.Length) } }
+}
+function global:Remove-VncTempLeftovers([int]$minAgeSec = 120) {   # old bl-vnc-* folders from a launch that couldn't clean up
+    try { foreach ($d in @(Get-ChildItem -LiteralPath $env:TEMP -Directory -Filter 'bl-vnc-*' -Force -ErrorAction SilentlyContinue)) {
+        if ($d.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        if (((Get-Date) - $d.CreationTime).TotalSeconds -ge $minAgeSec) { Remove-Item -LiteralPath $d.FullName -Recurse -Force -ErrorAction SilentlyContinue } } } catch {}
+}
+function global:New-VncTempConfig([string]$h, [int]$port, [string]$hex) {   # %TEMP%\bl-vnc-<random>\c.vnc, folder ACL: this user only
+    $dir = Join-Path $env:TEMP ('bl-vnc-' + [guid]::NewGuid().ToString('N'))
+    $me = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $sec = New-Object System.Security.AccessControl.DirectorySecurity
+    $sec.SetAccessRuleProtection($true, $false)
+    $sec.SetOwner($me)
+    $sec.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($me, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')))
+    [void][IO.Directory]::CreateDirectory($dir, $sec)
+    $f = Join-Path $dir 'c.vnc'
+    $text = New-VncConfigText $h $port $hex $true
+    $fs = New-Object IO.FileStream($f, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try { $b = [Text.Encoding]::ASCII.GetBytes($text); $fs.Write($b, 0, $b.Length); [Array]::Clear($b, 0, $b.Length) } finally { $fs.Dispose() }
+    return $f
+}
+function global:Remove-VncTempSoon([string]$file, $proc) {   # after the viewer has read it: input idle (max 5 s) + 3 s, then up to 5 tries
+    $dir = Split-Path -Parent $file; $state = @{ tries = 0; waited = $false }
+    $t = New-Object System.Windows.Threading.DispatcherTimer; $t.Interval = [TimeSpan]::FromSeconds(3)
+    $t.Add_Tick({
+        if (-not $state.waited) { $state.waited = $true; try { if ($proc -and -not $proc.HasExited) { [void]$proc.WaitForInputIdle(5000) } } catch {}; return }
+        $state.tries++
+        try { Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction Stop } catch {}
+        if (-not (Test-Path -LiteralPath $dir) -or $state.tries -ge 5) { $t.Stop() } }.GetNewClosure())
+    $t.Start()
+}
+function global:Show-VncPasswordDialog($owner) {   # set, replace or clear the shared view-only password; returns $true when one is saved
+    $d = New-Object System.Windows.Window; $d.Title = 'View-only password'; $d.SizeToContent = 'WidthAndHeight'; $d.ResizeMode = 'NoResize'
+    $d.WindowStartupLocation = if ($owner) { 'CenterOwner' } else { 'CenterScreen' }; if ($owner) { $d.Owner = $owner }
+    $d.Background = Brush '#1E1E1E'; $d.FontFamily = $global:UiFont
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = '18'; $sp.Width = 360
+    $t = New-Object System.Windows.Controls.TextBlock; $t.TextWrapping = 'Wrap'; $t.Foreground = Brush '#FFFFFF'; $t.FontSize = 14
+    $t.Text = "If your registers have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password."
+    [void]$sp.Children.Add($t)
+    $st = New-Object System.Windows.Controls.TextBlock; $st.Margin = '0,8,0,0'; $st.Foreground = Brush '#A0A0A0'; $st.FontSize = 12
+    $st.Text = if (Test-VncSecret) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only connects straight through.' }
+    [void]$sp.Children.Add($st)
+    $pb = New-Object System.Windows.Controls.PasswordBox; $pb.Margin = '0,10,0,0'; $pb.FontSize = 15; $pb.Padding = '6,4'; $pb.MaxLength = 64
+    [void]$sp.Children.Add($pb)
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = '0,14,0,0'
+    $res = @{ saved = $false }
+    $bSave = New-Object System.Windows.Controls.Button; $bSave.Content = 'Save'; $bSave.Padding = '14,4'; $bSave.IsDefault = $true
+    $bNone = New-Object System.Windows.Controls.Button; $bNone.Content = 'No password'; $bNone.Padding = '14,4'; $bNone.Margin = '8,0,0,0'
+    $bCancel = New-Object System.Windows.Controls.Button; $bCancel.Content = 'Cancel'; $bCancel.Padding = '14,4'; $bCancel.Margin = '8,0,0,0'; $bCancel.IsCancel = $true
+    $bSave.Add_Click({ if ($pb.SecurePassword.Length -gt 0) { Save-VncSecret $pb.SecurePassword; $res.saved = $true }; $pb.Clear(); $d.Close() }.GetNewClosure())
+    $bNone.Add_Click({ Clear-VncSecret; $pb.Clear(); $d.Close() }.GetNewClosure())
+    $bCancel.Add_Click({ $pb.Clear(); $d.Close() }.GetNewClosure())
+    foreach ($b in $bSave, $bNone, $bCancel) { [void]$row.Children.Add($b) }
+    [void]$sp.Children.Add($row)
+    $d.Content = $sp; $d.Add_ContentRendered({ [void]$pb.Focus() }.GetNewClosure())
+    if ($global:cfg -and $global:cfg.vnc) { Set-Prop $global:cfg.vnc 'viewOnlyAsked' $true; Save-Config }
+    [void]$d.ShowDialog()
+    return $res.saved
+}
+
+function global:Find-VncViewer($btn) {   # local fixed path to vncviewer.exe, or $null; asks once and saves it on the button
+    $t = Expand $btn.target
+    if (-not (Is-Todo $t) -and (Test-LocalFixedPath $t) -and (Test-Path -LiteralPath $t -PathType Leaf)) { return $t }
+    $f = Find-Detected $btn   # local detect paths only
+    if (-not $f) { foreach ($k in 'HKCU:', 'HKLM:') { try {
+        $v = [string](Get-ItemProperty -LiteralPath "$k\Software\Microsoft\Windows\CurrentVersion\App Paths\vncviewer.exe" -ErrorAction Stop).'(default)'
+        $v = (Expand $v).Trim('"'); if ($v -and (Test-LocalFixedPath $v) -and (Test-Path -LiteralPath $v -PathType Leaf)) { $f = $v; break } } catch {} } }
+    if (-not $f) {
+        [System.Windows.MessageBox]::Show("Please pick the UltraVNC Viewer (vncviewer.exe) on this PC.", 'View Register') | Out-Null
+        $f = Ask-ForPath $btn 'program' }
+    if (-not $f) { return $null }
+    if ($f -like '*.lnk') { try { $f = (New-Object -ComObject WScript.Shell).CreateShortcut($f).TargetPath } catch { $f = $null } }
+    if (-not $f -or -not (Test-LocalFixedPath $f) -or -not (Test-Path -LiteralPath $f -PathType Leaf)) {
+        [System.Windows.MessageBox]::Show("The viewer has to be on this PC's own drive (not a network share).", 'View Register') | Out-Null; return $null }
+    if ($f -ne $t) { Set-Prop $btn 'target' $f; Save-Config }
+    return $f
+}
+function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner) {
+    $h = [string]$row.host; $p = Get-VncPort $row.port
+    if (-not (Test-VncHost $h) -or -not $p) { [System.Windows.MessageBox]::Show("That address isn't valid.", 'View Register') | Out-Null; return $false }
+    $exe = Find-VncViewer $btn; if (-not $exe) { return $false }
+    $file = $null; $hex = $null
+    if ($viewOnly) {
+        if (-not (Test-VncSecret) -and -not [bool]$global:cfg.vnc.viewOnlyAsked) { [void](Show-VncPasswordDialog $owner) }   # first View only: ask once
+        $hex = Get-VncSecretHex
+        if ($hex) { $file = New-VncTempConfig $h $p $hex; $hex = $null } }
+    try {
+        $proc = Start-Process -FilePath $exe -ArgumentList (Get-VncViewerArgs $h $p $viewOnly $file) -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+        if ($file) { Remove-VncTempSoon $file $proc }
+        return $true
+    } catch {
+        if ($file) { Remove-Item -LiteralPath (Split-Path -Parent $file) -Recurse -Force -ErrorAction SilentlyContinue }
+        [System.Windows.MessageBox]::Show("Couldn't start the viewer.`n`n" + $_.Exception.Message, 'View Register') | Out-Null; return $false }
+}
+
+# Background scan: one runspace, 16 connects at a time, 300 ms each, paced; reads at most 12 bytes and closes. Never replies.
+$global:VncScanScript = {
+    param($targets, [int]$port, [int]$timeoutMs, [int]$parallel, [int]$paceMs, $sync)
+    for ($i = 0; $i -lt $targets.Count -and -not $sync.cancel; $i += $parallel) {
+        $batch = @(); $end = [Math]::Min($targets.Count, $i + $parallel)
+        for ($j = $i; $j -lt $end; $j++) { $c = New-Object System.Net.Sockets.TcpClient; $c.NoDelay = $true
+            try { $ar = $c.BeginConnect($targets[$j], $port, $null, $null); $batch += @{ ip = $targets[$j]; c = $c; ar = $ar } } catch { $c.Close() } }
+        $deadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
+        foreach ($b in $batch) {
+            $left = [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+            $ok = $false; try { $ok = $b.ar.AsyncWaitHandle.WaitOne($left) -and $b.c.Connected } catch {}
+            if ($ok -and -not $sync.cancel) {
+                $buf = New-Object byte[] 12; $got = 0
+                try { $s = $b.c.GetStream(); $s.ReadTimeout = $timeoutMs
+                      while ($got -lt 12) { $n = $s.Read($buf, $got, 12 - $got); if ($n -le 0) { break }; $got += $n } } catch {}
+                $sync.found.Enqueue(@{ ip = $b.ip; bytes = $buf[0..([Math]::Max(0, $got - 1))]; n = $got }) }
+            try { $b.c.Close() } catch {} }
+        $sync.scanned = $end
+        if ($paceMs -gt 0) { Start-Sleep -Milliseconds $paceMs } }
+    $sync.done = $true
+}
+$global:VncNameScript = {   # reverse DNS for the hosts found, best effort, 800 ms each
+    param($ips, $sync)
+    foreach ($ip in $ips) { if ($sync.cancel) { break }
+        try { $ar = [System.Net.Dns]::BeginGetHostEntry($ip, $null, $null)
+              if ($ar.AsyncWaitHandle.WaitOne(800)) { $e = [System.Net.Dns]::EndGetHostEntry($ar); $sync.names.Enqueue(@{ ip = $ip; name = [string]$e.HostName }) } } catch {} }
+    $sync.namesDone = $true
+}
+function global:Start-VncScan($ui) {
+    if ($ui.scan -and -not $ui.scan.sync.done) { return }
+    $targets = @(); foreach ($n in @(Get-VncLocalSubnets)) { $targets += @(Get-VncScanTargets $n.ip $n.prefix $ui.state.prefix) }
+    $targets = @($targets | Select-Object -Unique)
+    if ($targets.Count -eq 0) { $ui.setStatus.Invoke('No private network found on this PC, so nothing was scanned. Add a register by hand.'); return }
+    $sync = [hashtable]::Synchronized(@{ cancel = $false; done = $false; scanned = 0; total = $targets.Count; found = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]); names = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]); namesDone = $false })
+    $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open()
+    $ps = [powershell]::Create(); $ps.Runspace = $rs
+    [void]$ps.AddScript($global:VncScanScript).AddArgument([string[]]$targets).AddArgument([int]$ui.state.port).AddArgument($global:VncTimeoutMs).AddArgument($global:VncParallel).AddArgument($global:VncPaceMs).AddArgument($sync)
+    $ui.scan = @{ sync = $sync; ps = $ps; rs = $rs; handle = $ps.BeginInvoke(); hits = (New-Object System.Collections.ArrayList); nameps = $null }
+    $ui.setStatus.Invoke(('Looking for registers on this network (0 of {0})...' -f $targets.Count))
+    $ui.timer.Start()
+}
+function global:Stop-VncScan($ui) {
+    if (-not $ui.scan) { return }
+    $ui.scan.sync.cancel = $true
+    foreach ($x in $ui.scan.ps, $ui.scan.nameps) { if ($x) { try { $x.Stop() } catch {}; try { $x.Dispose() } catch {} } }
+    foreach ($r in $ui.scan.rs, $ui.scan.namers) { if ($r) { try { $r.Dispose() } catch {} } }
+    $ui.timer.Stop()
+}
+function global:Step-VncScan($ui) {   # UI thread, every 200 ms: drain results, update the list and the status line
+    $sc = $ui.scan; if (-not $sc) { $ui.timer.Stop(); return }
+    $it = $null; $changed = $false
+    while ($sc.sync.found.TryDequeue([ref]$it)) {
+        if (-not (Test-VncIPv4 ([string]$it.ip))) { continue }
+        $bn = if ($it.n -gt 0) { Get-RfbBanner ([byte[]]$it.bytes) } else { @{ text = ''; rfb = $false } }
+        [void]$sc.hits.Add([pscustomobject]@{ host = [string]$it.ip; port = [int]$ui.state.port; name = ''; banner = $bn.text }); $changed = $true }
+    while ($sc.sync.names.TryDequeue([ref]$it)) {
+        $nm = ([string]$it.name).TrimEnd('.'); if (-not (Test-VncHost $nm) -or $nm -eq $it.ip) { continue }
+        foreach ($h in $sc.hits) { if ($h.host -eq $it.ip) { $h.name = $nm; $changed = $true } } }
+    if ($changed) { $ui.hosts = @($sc.hits); $ui.refresh.Invoke() }
+    if (-not $sc.sync.done) { $ui.setStatus.Invoke(('Looking for registers on this network ({0} of {1})...' -f $sc.sync.scanned, $sc.sync.total)); return }
+    if (-not $sc.nameps -and $sc.hits.Count -gt 0) {   # banners done: names, then save
+        $rs = [runspacefactory]::CreateRunspace(); $rs.Open(); $ps = [powershell]::Create(); $ps.Runspace = $rs
+        [void]$ps.AddScript($global:VncNameScript).AddArgument([string[]]@($sc.hits | ForEach-Object { $_.host })).AddArgument($sc.sync)
+        $sc.nameps = $ps; $sc.namers = $rs; [void]$ps.BeginInvoke() }
+    if ($sc.hits.Count -gt 0 -and -not $sc.sync.namesDone) { $ui.setStatus.Invoke(('Found {0}. Looking up names...' -f $sc.hits.Count)); return }
+    $ui.timer.Stop()
+    $ui.hosts = @($sc.hits); $ui.refresh.Invoke()
+    try { Save-VncCache $ui.cachePath $ui.hosts ([datetime]::UtcNow) } catch {}
+    $ui.setStatus.Invoke(('Found {0} register(s). Scanned {1} addresses at {2}.' -f $sc.hits.Count, $sc.sync.total, (Get-Date -Format 't')))
+    foreach ($x in $sc.ps, $sc.nameps) { if ($x) { try { $x.Dispose() } catch {} } }; foreach ($r in $sc.rs, $sc.namers) { if ($r) { try { $r.Dispose() } catch {} } }
+}
+
+function global:Show-VncPicker($btn) {
+    if ($global:vncPicker -and $global:vncPicker.win.IsVisible) { $global:vncPicker.win.Activate() | Out-Null; return }
+    Remove-VncTempLeftovers
+    $ui = @{ btn = $btn; state = (Get-VncState $global:cfg); cachePath = (Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-cache.json'); scan = $null; hosts = @() }
+    $cache = Read-VncCache $ui.cachePath; $ui.hosts = @($cache.hosts)
+    $w = New-Object System.Windows.Window; $w.Title = 'View Register'; $w.Width = 620; $w.Height = 480; $w.MinWidth = 520; $w.MinHeight = 360
+    $w.WindowStartupLocation = 'CenterScreen'; $w.Background = Brush '#141414'; $w.Foreground = Brush '#FFFFFF'; $w.FontFamily = $global:UiFont; $w.FontSize = 14
+    $ui.win = $w
+    $g = New-Object System.Windows.Controls.DockPanel; $g.Margin = '16'
+    $hd = New-Object System.Windows.Controls.TextBlock; $hd.Text = 'View Register'; $hd.FontSize = 20; $hd.FontWeight = 'SemiBold'; $hd.Margin = '0,0,0,10'
+    [System.Windows.Controls.DockPanel]::SetDock($hd, 'Top'); [void]$g.Children.Add($hd)
+    $status = New-Object System.Windows.Controls.TextBlock; $status.Foreground = Brush '#A0A0A0'; $status.FontSize = 12; $status.Margin = '0,10,0,0'; $status.TextWrapping = 'Wrap'
+    [System.Windows.Controls.DockPanel]::SetDock($status, 'Bottom')
+    $acts = New-Object System.Windows.Controls.WrapPanel; $acts.Margin = '0,12,0,0'; [System.Windows.Controls.DockPanel]::SetDock($acts, 'Bottom')
+    function PBtn($txt, $bg, $fg) { $b = New-Object System.Windows.Controls.Button; $b.Content = $txt; $b.Padding = '16,7'; $b.Margin = '0,0,8,6'; $b.FontSize = 14
+        $b.Background = Brush $bg; $b.Foreground = Brush $fg; $b.BorderThickness = '0'; $b }
+    $bView = PBtn 'View only' '#0E7A4B' '#FFFFFF'; $bView.FontWeight = 'SemiBold'
+    $bInt = PBtn 'Interact' '#0B6E99' '#FFFFFF'
+    $bScan = PBtn 'Rescan' '#2A2A2A' '#FFFFFF'; $bAdd = PBtn 'Add...' '#2A2A2A' '#FFFFFF'; $bRen = PBtn 'Rename / pin...' '#2A2A2A' '#FFFFFF'
+    $bDel = PBtn 'Remove' '#2A2A2A' '#FFFFFF'; $bPw = PBtn 'View-only password...' '#2A2A2A' '#FFFFFF'
+    foreach ($b in $bView, $bInt, $bScan, $bAdd, $bRen, $bDel, $bPw) { [void]$acts.Children.Add($b) }
+    [void]$g.Children.Add($status); [void]$g.Children.Add($acts)
+    $lv = New-Object System.Windows.Controls.ListView; $lv.Background = Brush '#1E1E1E'; $lv.Foreground = Brush '#FFFFFF'; $lv.BorderBrush = Brush '#2A2A2A'; $lv.SelectionMode = 'Single'
+    $gv = New-Object System.Windows.Controls.GridView
+    foreach ($c in @(@('', 'pin', 28), @('Name', 'name', 200), @('Address', 'addr', 170), @('Greeting', 'banner', 120))) {
+        $col = New-Object System.Windows.Controls.GridViewColumn; $col.Header = $c[0]; $col.Width = $c[2]; $col.DisplayMemberBinding = New-Object System.Windows.Data.Binding $c[1]; [void]$gv.Columns.Add($col) }
+    $lv.View = $gv; [void]$g.Children.Add($lv)
+    $w.Content = $g
+    $ui.setStatus = [Action[string]]{ param($s) $status.Text = $s }.GetNewClosure()
+    $ui.refresh = [Action]{
+        $sel = $lv.SelectedItem; $lv.Items.Clear()
+        foreach ($r in (Merge-VncRows $ui.state.favorites $ui.hosts)) {
+            $addr = if ($r.port -eq 5900) { $r.host } else { '{0}:{1}' -f $r.host, $r.port }
+            $item = [pscustomobject]@{ pin = $(if ($r.pinned) { [char]0x2605 } else { '' }); name = (Get-SafeText $r.name 40); addr = $addr; banner = (Get-SafeText $r.banner 12); row = $r }
+            [void]$lv.Items.Add($item); if ($sel -and $sel.row.host -eq $r.host -and $sel.row.port -eq $r.port) { $lv.SelectedItem = $item } }
+        if (-not $lv.SelectedItem -and $lv.Items.Count) { $lv.SelectedIndex = 0 }
+        $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $bRen.IsEnabled = $has; $bDel.IsEnabled = $has -and [bool]$lv.SelectedItem.row.fav
+    }.GetNewClosure()
+    $ui.timer = New-Object System.Windows.Threading.DispatcherTimer; $ui.timer.Interval = [TimeSpan]::FromMilliseconds(200)
+    $ui.timer.Add_Tick({ Step-VncScan $ui }.GetNewClosure())
+    $go = { param([bool]$vo) $s = $lv.SelectedItem; if ($s) { [void](Start-VncViewer $ui.btn $s.row $vo $ui.win) } }.GetNewClosure()
+    $bView.Add_Click({ & $go $true }.GetNewClosure()); $bInt.Add_Click({ & $go $false }.GetNewClosure())
+    $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $bRen.IsEnabled = $has; $bDel.IsEnabled = $has -and [bool]$lv.SelectedItem.row.fav }.GetNewClosure())
+    $lv.Add_MouseDoubleClick({ & $go $true }.GetNewClosure())
+    $w.Add_PreviewKeyDown({ if ($_.Key -eq 'Enter' -and $lv.SelectedItem -and -not ($_.OriginalSource -is [System.Windows.Controls.Button])) { $_.Handled = $true; & $go $true }
+                            elseif ($_.Key -eq 'Escape') { $_.Handled = $true; $w.Close() } elseif ($_.Key -eq 'F5') { $_.Handled = $true; Start-VncScan $ui } }.GetNewClosure())
+    $bScan.Add_Click({ Start-VncScan $ui }.GetNewClosure())
+    $bAdd.Add_Click({
+        $t = [Microsoft.VisualBasic.Interaction]::InputBox('Address of the register (IP or name, optionally :port):', 'Add a register', '')
+        if (-not $t) { return }
+        $ep = ConvertTo-VncEndpoint $t $ui.state.port
+        if (-not $ep) { [System.Windows.MessageBox]::Show("That isn't a valid address. Use an IP like 192.168.1.20 or a name like REG1, optionally with :port.", 'Add a register') | Out-Null; return }
+        $n = [Microsoft.VisualBasic.Interaction]::InputBox('Name (e.g. Register 1):', 'Add a register', '')
+        [void](Set-VncFavorite $ui.state.favorites $ep.host $ep.port $n $true); Save-VncFavorites $global:cfg $ui.state.favorites; Save-Config; $ui.refresh.Invoke() }.GetNewClosure())
+    $bRen.Add_Click({ $s = $lv.SelectedItem; if (-not $s) { return }
+        $n = [Microsoft.VisualBasic.Interaction]::InputBox('Name (e.g. Register 1). Named registers are pinned to the top; leave empty to unpin.', 'Rename / pin', [string]$s.row.name)
+        [void](Set-VncFavorite $ui.state.favorites $s.row.host $s.row.port $n ([bool]$n)); Save-VncFavorites $global:cfg $ui.state.favorites; Save-Config; $ui.refresh.Invoke() }.GetNewClosure())
+    $bDel.Add_Click({ $s = $lv.SelectedItem; if (-not $s -or -not $s.row.fav) { return }
+        $f = $ui.state.favorites | Where-Object { $_.host -eq $s.row.host -and $_.port -eq $s.row.port } | Select-Object -First 1
+        if ($f) { $ui.state.favorites.Remove($f) }; Save-VncFavorites $global:cfg $ui.state.favorites; Save-Config; $ui.refresh.Invoke() }.GetNewClosure())
+    $bPw.Add_Click({ [void](Show-VncPasswordDialog $ui.win) }.GetNewClosure())
+    $w.Add_Closed({ Stop-VncScan $ui; $global:vncPicker = $null }.GetNewClosure())
+    $global:vncPicker = $ui
+    $ui.refresh.Invoke()
+    if ($cache.time -gt [datetime]::MinValue) { $ui.setStatus.Invoke(('Last scan {0}. Press Rescan (F5) to look again.' -f $cache.time.ToLocalTime().ToString('g'))) }
+    $w.Show(); [void]$lv.Focus()
+    if (Test-VncCacheStale $cache ([datetime]::UtcNow)) { Start-VncScan $ui }   # scan only here or on Rescan, never at startup
 }
 
 # ================= MAIN (runs only after every function above is defined) =================
