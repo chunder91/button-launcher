@@ -3,6 +3,8 @@
 # "<PanelName> Setup.cmd" + ".ps1" pair in case IExpress isn't available.
 param([string]$OutDir)
 Add-Type -AssemblyName PresentationFramework
+# R3-L2: release builds follow RELEASE.md (verify-exe, dry-run, check-launcher first).
+Write-Host 'Reminder: before a release build, run the RELEASE.md checklist (tools/verify-exe.sh, tools/test-installer-dryrun.ps1, check-launcher.ps1).'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 # R-M2: this PC's buttons.json (or the shipped default) becomes the installer's buttons.default.json.
 # The installer only turns it into buttons.json when the target PC has none, so reinstalls keep that PC's edits.
@@ -255,5 +257,5 @@ finally {
 
 $msg = if ($built) { "Built:`n$exe`n`nCopy that one file to the other PC and run it.`n(Backup: '$safe Setup.cmd' + '$ps1Name' together also work.)" }
        else { "IExpress wasn't available, so built:`n$cmd`n$ps1`n`nCopy BOTH files to the other PC and run the .cmd." }
-[System.Windows.MessageBox]::Show($msg, 'Build installer') | Out-Null
+[System.Windows.MessageBox]::Show($msg + "`n`nReleasing it? Run the RELEASE.md checklist first (verify-exe, dry-run, check-launcher).", 'Build installer') | Out-Null
 Start-Process explorer.exe "`"$OutDir`""

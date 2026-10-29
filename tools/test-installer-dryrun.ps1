@@ -77,6 +77,8 @@ Check 'stub: no bare powershell.exe fallback' ($cs -notmatch '=\s*"powershell\.e
 Check 'stub: missing PowerShell shows an error' ($cs -match '(?s)if \(!File\.Exists\(ps\)\)\s*\{\s*MessageBox\.Show\(')
 $shaRec = ((Get-Content -LiteralPath (Join-Path $root 'exe/ButtonLauncher.exe.sha256') -Raw).Trim() -split '\s+')[0]
 Check 'committed exe matches exe/ButtonLauncher.exe.sha256' ((Get-FileHash -LiteralPath (Join-Path $root 'ButtonLauncher.exe') -Algorithm SHA256).Hash -ieq $shaRec)
+Check 'RELEASE.md lists verify-exe, dry-run, check-launcher (R3-L2)' ((Get-Content (Join-Path $root 'RELEASE.md') -Raw) -match 'verify-exe\.sh' -and (Get-Content (Join-Path $root 'RELEASE.md') -Raw) -match 'test-installer-dryrun' -and (Get-Content (Join-Path $root 'RELEASE.md') -Raw) -match 'check-launcher')
+Check 'builder prints the RELEASE.md reminder (R3-L2)' ($ast.Extent.Text -match 'RELEASE\.md checklist')
 Check 'builder checks the exe SHA-256' ($ast.Extent.Text -match 'does not match its recorded SHA-256')
 Check 'builder never ships buttons.json' ($ast.Extent.Text -notmatch "'Launcher.ps1','buttons.json'" -and $ast.Extent.Text -match "Join-Path \`$stage 'buttons.default.json'")
 
