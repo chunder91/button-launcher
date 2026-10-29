@@ -454,7 +454,9 @@ function global:New-Tile($p, $btn) {
     }.GetNewClosure())
     $tile.Add_LostMouseCapture({ if ($st.down) { $st.down = $false; & $toRest } }.GetNewClosure())
     $tile.Add_IsKeyboardFocusedChanged({ $ring.Visibility = if ($tile.IsKeyboardFocused) { 'Visible' } else { 'Hidden' } }.GetNewClosure())
-    $tile.Add_KeyDown({ if ($_.Key -eq 'Enter' -or $_.Key -eq 'Space') { $_.Handled = $true; Start-Anim $fill $colorProp $pressC 60; & $run; Start-Anim $fill $colorProp $base 120 } }.GetNewClosure())
+    # MB-M1: one launch per key press. Held keys auto-repeat KeyDown, so ignore repeats.
+    $tile.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; Start-Anim $fill $colorProp $pressC 60; & $run; Start-Anim $fill $colorProp $base 120 }
+                        elseif ($_.Key -eq 'Enter' -or $_.Key -eq 'Space') { $_.Handled = $true } }.GetNewClosure())
     $tile.Add_MouseRightButtonDown({ [void]$tile.Focus() }.GetNewClosure())
     $tile.ContextMenu = Button-Menu $p $btn
     if ($btn.width -eq 'half') { $wrap.Tag = 'half' } else { $wrap.Tag = 'full' }
