@@ -21,10 +21,12 @@ Check 'uninstall uses $PSScriptRoot' ($tmpl['$uninstTemplate'] -match '\$dest = 
 Check 'uninstall has no cmd rmdir' ($tmpl['$uninstTemplate'] -notmatch 'rmdir')
 Check 'uninstall removes Run value' ($tmpl['$uninstTemplate'] -match "Remove-ItemProperty -LiteralPath \`$run -Name 'ButtonLauncher'")
 # H1/L4: sanitizer (same expression as the builder)
-$line = @($ast.Extent.Text -split "`n" | Where-Object { $_ -match '^\$safe = ' })[0]
+$fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-SafeAppName' }, $true)
+Check 'builder defines Get-SafeAppName' ([bool]$fn)
+Invoke-Expression $fn.Extent.Text
 foreach ($case in @(@('?', 'Launcher'), @('  ', 'Launcher'), @('::', 'Launcher'), @('..', 'Launcher'), @('..\..\Windows', 'Windows'),
                      @('C:\Temp', 'CTemp'), @('a$(calc)b', 'acalcb'), @("O'Brien", 'OBrien'), @('Shop  Panel', 'Shop Panel'), @('Launcher', 'Launcher'))) {
-    $name = $case[0]; Invoke-Expression $line; if (-not $safe) { $safe = 'Launcher' }
+    $safe = Get-SafeAppName $case[0]
     Check ("name '{0}' -> '{1}'" -f $case[0], $safe) ($safe -ceq $case[1] -and $safe -match '^[A-Za-z0-9 _-]+$')
 }
 # Uninstall guard logic (copied from the template) against fake folders

@@ -12,8 +12,18 @@ $cfg  = Get-Content -LiteralPath $cfgSrc -Raw -Encoding UTF8 | ConvertFrom-Json
 $name = if ($cfg.title) { $cfg.title } else { 'Launcher' }
 # H1/M1/LJ-L4: allow-list the name (letters, digits, space, - and _ only) so it can never be empty,
 # rooted, '..', or carry quotes/$()/cmd metacharacters into the generated scripts.
-$safe = (([string]$name) -replace '[^A-Za-z0-9 _-]', '' -replace '\s+', ' ').Trim()
-if (-not $safe) { $safe = 'Launcher' }
+# R-L1: also reject Windows reserved device names (with or without an extension), trim trailing dots/spaces, cap at 64.
+function Get-SafeAppName([string]$n) {
+    $reserved = '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$'
+    $raw = ([string]$n).Trim()
+    if ((($raw -split '\.')[0]).Trim() -match $reserved) { return 'Launcher' }
+    $s = (($raw -replace '[^A-Za-z0-9 _-]', '') -replace '\s+', ' ').Trim()
+    if ($s.Length -gt 64) { $s = $s.Substring(0, 64) }
+    $s = $s.TrimEnd('.', ' ')
+    if (-not $s -or $s -match $reserved) { return 'Launcher' }
+    return $s
+}
+$safe = Get-SafeAppName $name
 if (-not $OutDir) { $OutDir = Join-Path $here 'installer-output' }
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 
