@@ -87,4 +87,12 @@ Check 'Setup > Layout menu' ($src -match "\`$lay\.Header = 'Layout'" -and $src -
 Check 'Save keeps panels 3+ in single layout' ($src -match "if \(-not \`$global:single\) \{ \`$global:cfg\.panels = ")
 Check 'restart confirm default No kept' ($src -match "\[System\.Windows\.MessageBox\]::Show\(\`$cText, \`$cTitle, 'YesNo', 'Warning', 'No'\)")
 Check 'chip Enter/Space ignore key repeat' ($src -match "\`$chip\.Add_KeyDown\(\{ if \(\(\`$_\.Key -eq 'Enter' -or \`$_\.Key -eq 'Space'\) -and -not \`$_\.IsRepeat\)")
+$stf = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Stop-TrayAndHotkey' }, $true)
+Invoke-Expression $stf.Extent.Text
+$global:dispN = 0; $mk = { $o = [pscustomobject]@{ Visible = $true }; $o | Add-Member ScriptMethod Dispose { $global:dispN++ }; $o }
+$global:tray = & $mk; $global:trayIcon = & $mk; $global:hotkeySrc = $null; $global:hotkeyOk = $false
+Stop-TrayAndHotkey; Stop-TrayAndHotkey
+# OP-N1
+Check 'OP-N1: tray and its app.ico Icon each disposed once, even when cleanup runs twice' ($global:dispN -eq 2 -and $null -eq $global:tray -and $null -eq $global:trayIcon)
+Check 'OP-N1: app.ico Icon kept in $global:trayIcon' ($src -match '\$global:trayIcon = New-Object System\.Drawing\.Icon \$ico; \$ni\.Icon = \$global:trayIcon')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

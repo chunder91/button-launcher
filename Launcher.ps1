@@ -45,7 +45,9 @@ $global:middle       = $null                                      # middle icons
 $global:tray         = $null
 $global:hotkeySrc    = $null
 $global:hotkeyOk     = $false
-$global:iconCache    = @{}                                         # OP-L1: chip icons extracted once per target
+$global:trayIcon     = $null                                      # OP-N1: app.ico Icon behind the tray, disposed on exit
+$global:toastTimer   = $null                                      # CC OP-L1: one Undo-toast timer for all removes
+$global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:AppVersion   = '1.2.0'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
@@ -1338,7 +1340,8 @@ function global:Start-TrayAndHotkey {
     try {
         $ni = New-Object System.Windows.Forms.NotifyIcon
         $ico = Join-Path $global:here 'images\app.ico'
-        $ni.Icon = if (Test-Path -LiteralPath $ico) { New-Object System.Drawing.Icon $ico } else { [System.Drawing.SystemIcons]::Application }
+        if (Test-Path -LiteralPath $ico) { $global:trayIcon = New-Object System.Drawing.Icon $ico; $ni.Icon = $global:trayIcon }   # OP-N1: disposed in Stop-TrayAndHotkey
+        else { $ni.Icon = [System.Drawing.SystemIcons]::Application }
         $ni.Text = 'Button Launcher (Ctrl+Alt+L)'
         $cm = New-Object System.Windows.Forms.ContextMenuStrip
         [void]$cm.Items.Add('Show', $null, { Show-AllPanels })
@@ -1368,6 +1371,8 @@ function global:Stop-TrayAndHotkey {
     try { if ($global:hotkeyOk -and $global:hotkeySrc) { [void][BL.Native]::UnregisterHotKey($global:hotkeySrc.Handle, 0xB10) } } catch {}
     try { if ($global:hotkeySrc) { $global:hotkeySrc.Dispose() } } catch {}
     try { if ($global:tray) { $global:tray.Visible = $false; $global:tray.Dispose() } } catch {}
+    try { if ($global:trayIcon) { $global:trayIcon.Dispose() } } catch {}   # OP-N1
+    $global:hotkeyOk = $false; $global:hotkeySrc = $null; $global:tray = $null; $global:trayIcon = $null   # safe to call twice (Exit + finally)
 }
 
 # ================= MAIN (runs only after every function above is defined) =================
