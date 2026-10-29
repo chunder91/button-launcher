@@ -1,4 +1,4 @@
-# Checks for the Option B look that run without Windows: labels, palette, restart grouping, order migration, limits.
+﻿# Checks for the Option B look that run without Windows: labels, palette, restart grouping, order migration, limits.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $fail = 0
@@ -53,7 +53,7 @@ $tileSrc = ([regex]::Match($src, '(?s)function global:New-Tile.*?\r?\nfunction g
 $chipSrc = ([regex]::Match($src, '(?s)function global:New-Chip.*?\r?\nfunction global:Move-Chip')).Value
 Check 'D2: no DropShadowEffect, BlurEffect or Effect on tiles/chips' ($tileSrc -and $chipSrc -and ($tileSrc + $chipSrc) -notmatch 'DropShadowEffect|BlurEffect|\.Effect\s*=')
 Check 'D2: tile states are pre-built layers; only Opacity and transforms animate' ($tileSrc -match '\$hov = ' -and $tileSrc -match '\$prs = ' -and $tileSrc -match '\$glow = ' -and $tileSrc -notmatch 'ColorProperty')
-Check 'D2: hover lift -2, icon 1.06, pressed 0.97, glow 0.70 (restarts 0.35)' ($tileSrc -match '\$lift \$yProp -2 ' -and $tileSrc -match '\$iscale \$sxProp 1\.06' -and $tileSrc -match '\$press \$sxProp 0\.97' -and $tileSrc -match 'glowMax = if \(\$danger\) \{ 0\.35 \} else \{ 0\.70 \}')
+Check 'D2: hover lift -2, icon 1.06, pressed 0.97, glow 0.90 (restarts 0.55)' ($tileSrc -match '\$lift \$yProp -2 ' -and $tileSrc -match '\$iscale \$sxProp 1\.06' -and $tileSrc -match '\$press \$sxProp 0\.97' -and $tileSrc -match 'glowMax = if \(\$danger\) \{ 0\.55 \} else \{ 0\.90 \}')
 Check 'D2: tile radius 12, hero 14, sheen 10 px' ($tileSrc -match '\$rad = if \(\$cls -eq ''hero''\) \{ 14 \} else \{ 12 \}' -and $tileSrc -match 'Set-D2Surface \$tile \$rad 10 ')
 Check 'D2: restarts keep the 2 px red outline' ($tileSrc -match 'restartRed; \$tile\.BorderThickness = .2.')
 Check 'D2: restart icons are no longer red masks' ($src -notmatch 'OpacityMask = \$ib')
@@ -184,7 +184,7 @@ if ('System.Windows.Media.Color' -as [type]) { $cd = Get-D2Fill '#336699' $false
 Check 'D2: custom colour derives 7 hex stops, rest top = its own colour' (@($cd).Count -eq 7 -and $cd[0] -eq '#336699' -and @($cd | Where-Object { $_ -notmatch '^#[0-9A-F]{6}$' }).Count -eq 0) } else { 'SKIP  D2 derived colour (needs WPF: real Windows)' }
 
 # ---- v1.3.0 round 3 (Kern) ----
-Check 'Kern M1: glow Margin -6, radius rad+6, radial 85% at 0.70 -> 0, RadiusX 0.62 / RadiusY 0.75' ($tileSrc -match "\`$glow\.Margin = '-6'" -and $tileSrc -match 'CornerRadius = \[string\]\(\$rad \+ 6\)' -and $tileSrc -match 'New-GlowBrush \$f\[6\] 0\.85 0\.70 0\.62 0\.75' -and $tileSrc -match 'ClipToBounds = \$false')
+Check 'Kern M1: glow Margin -6, radius rad+6, radial 100% at 0.45 -> 0, RadiusX 0.62 / RadiusY 0.75' ($tileSrc -match "\`$glow\.Margin = '-6'" -and $tileSrc -match 'CornerRadius = \[string\]\(\$rad \+ 6\)' -and $tileSrc -match 'New-GlowBrush \$f\[6\] 1\.0 0\.45 0\.62 0\.75' -and $tileSrc -match 'ClipToBounds = \$false')
 Check 'Kern M2: Restart Computer uses the arrows art; no plug plate remains' ($src -notmatch "#D9FFFFFF" -and $src -notmatch '\$pl\.Width = 28' -and $src -notmatch 'power\\\.png\$' -and (Get-FileHash (Join-Path $root 'images/power.png')).Hash -eq (Get-FileHash '/home/box/shared/button-launcher/art/fluent-3d/power-48.png').Hash)
 Check 'Kern 3 / N2: inner corners 16 everywhere, none left at 14' ($src -match "'0,0,16,0'" -and $src -match "'16,0,0,0'" -and $src -notmatch "'0,0,14,0'|'14,0,0,0'|'0,0,0,14'|'0,14,0,0'")
 Check 'Kern 4: Version 11 subtitle 12 px Regular, line 14, 85%' ($src -match 'New-Label \$lab\.sub \$fg 12; \$sl\.FontWeight = \[System\.Windows\.FontWeights\]::Normal; \$sl\.LineHeight = 14; \$sl\.Opacity = 0\.85')
@@ -192,4 +192,14 @@ Check 'Kern 5: Segoe UI Variable only when installed, else Segoe UI' ($src -matc
 Check 'Shadow: no DropShadowEffect on the panel; 1 px #66000000 hairline, padding shrinks so the window never grows' ($src -notmatch 'DropShadowEffect' -and $src -match "BorderBrush = Brush '#66000000'" -and $src -match 'Thickness \(3 - \$t\.Left\), \(3 - \$t\.Top\), \(3 - \$t\.Right\), \(3 - \$t\.Bottom\)')
 Check 'Shadow: hairline only on the non-docked sides in one-panel; off with squarePanels' ($src -match "if \(\`$left\) \{ '0,0,1,1' \} else \{ '1,0,0,1' \}" -and $src -match "if \(\`$square\) \{ \`$w\.Content = \`$edge; \`$hair = \`$null \}")
 Remove-Item Function:\global:Test-Path, Function:\global:Get-ChildItem, Function:\global:Join-Path
+
+# Kern recheck: hover glow peak (glow colour at glowMax over the panel #1E1E22) is >= 1.5:1 against the panel
+function RelL([string]$h) { $v = @(foreach ($i in 1, 3, 5) { $c = [Convert]::ToInt32($h.Substring($i, 2), 16) / 255.0; if ($c -le 0.03928) { $c / 12.92 } else { [Math]::Pow(($c + 0.055) / 1.055, 2.4) } }); 0.2126 * $v[0] + 0.7152 * $v[1] + 0.0722 * $v[2] }
+function MixHex([string]$a, [string]$b, [double]$t) { '#' + (-join @(foreach ($i in 1, 3, 5) { '{0:X2}' -f [int][Math]::Round([Convert]::ToInt32($a.Substring($i, 2), 16) * $t + [Convert]::ToInt32($b.Substring($i, 2), 16) * (1 - $t)) })) }
+$glows = [regex]::Matches($src, "'(#[0-9A-F]{6}|restart)' = @\((?:'#[0-9A-F]{6}', ){6}'(#[0-9A-F]{6})'\)")
+Check 'Kern recheck: D2Fill glow colours found' ($glows.Count -ge 9)
+foreach ($m in $glows) { $gm = if ($m.Groups[1].Value -eq 'restart') { 0.55 } else { 0.90 }; $c = MixHex $m.Groups[2].Value '#1E1E22' $gm
+    $cr = ((RelL $c) + 0.05) / ((RelL '#1E1E22') + 0.05); Check ("Kern recheck: glow {0} at {1} = {2:N2}:1 >= 1.5:1" -f $m.Groups[2].Value, $gm, $cr) ($cr -ge 1.5) }
+Check 'Kern recheck: dialog button glow Margin -6, radius 16' ($src -match '<Border x:Name="glow" CornerRadius="16" Margin="-6"')
+Check 'Kern recheck: disabled menu item #9A9A9A' ($src -match '<Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="#9A9A9A"/><Setter TargetName="gt" Property="Foreground" Value="#9A9A9A"/>')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

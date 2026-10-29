@@ -231,4 +231,9 @@ Check 'two-panel dock fits inside the 1 px rim + 3 px padding' ($src -match '\$d
 Check 'Jartrek chip: key icon from label or target' ((Get-ChipFallbackPic 'program' 'Jartrek C:\x.exe') -eq 'images/jartrek-security.png' -and (Get-ChipFallbackPic 'file' 'JARTREK') -eq 'images/jartrek-security.png' -and (Test-Path (Join-Path $root 'images/jartrek-security.png')))
 Check 'Jartrek chip: type defaults unchanged' ((Get-ChipFallbackPic 'program' 'Notepad') -eq 'images/register.png' -and (Get-ChipFallbackPic 'website' 'jartrek.com') -eq 'images/globe.png')
 Check 'Jartrek key licensed' ((Get-Content (Join-Path $root 'images/LICENSES/LICENSES.txt') -Raw) -match 'jartrek-security\.png.*MIT' -and (Get-Content (Join-Path $root 'tools/sync-icons.sh') -Raw) -match 'jartrek-security:jartrek-security')
+
+# Kern 12 DIP floor at the 0.928 panel scale: sizes are raised so size * scale >= 12 (labels, chips, the Editing bar)
+$am = ([regex]::Match($src, '(?s)function global:Apply-MinFont.*?\n\}')).Value
+Check 'Kern floor: labels raised to floor / scale' ($am -match 'Max\(\[double\]\$tb\.Tag, \$floor / \$s\)' -and $am -match '12\.0 / \$s')
+foreach ($sc in 0.928, 0.75, 1.0, 1.5) { $eff = [Math]::Max(12.0, 12.0 / $sc) * $sc; Check ("Kern floor: 12 px text at scale {0} draws at {1:N2} px >= 12" -f $sc, $eff) ($eff -ge 11.999) }
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

@@ -400,8 +400,9 @@ function global:New-Label($text, $fg, $size) {
 
 # Kern-3/UX-6: label floor of 12 DIP (13 for 3+ line labels) on screen, after the panel's scale is applied.
 function global:Apply-MinFont($p) {
-    if (-not $p.labels) { return }
     $s = [Math]::Max(0.1, [double]$p.scale.ScaleX)
+    if ($p.grip -and $p.grip.Child -is [System.Windows.Controls.TextBlock]) { $p.grip.Child.FontSize = [Math]::Max(12.0, 12.0 / $s) }   # Kern 12 px floor: the Editing bar too (built outside the label sink)
+    if (-not $p.labels) { return }
     foreach ($tb in $p.labels) {
         $floor = if (([string]$tb.Text).Split("`n").Count -ge 3) { 13.0 } else { 12.0 }
         $tb.FontSize = [Math]::Max([double]$tb.Tag, $floor / $s)
@@ -589,10 +590,10 @@ function global:New-Tile($p, $btn) {
     $oProp = [System.Windows.UIElement]::OpacityProperty
 
     $wrap = New-Object System.Windows.Controls.Grid; $wrap.Margin = '3'                  # 3 + 3 = Kern's 6 px gap
-    $glowMax = if ($danger) { 0.35 } else { 0.70 }
+    $glowMax = if ($danger) { 0.55 } else { 0.90 }   # Kern recheck: hover glow >= 1.5:1 against the panel
     # Kern v1.3.0 Major 1: 6 px halo (inside the panel's 3+3 padding and the 6 px gaps); radial 85% at 0.70 -> 0 at 1.0
     $glow = New-Object System.Windows.Controls.Border; $glow.IsHitTestVisible = $false; $glow.Margin = '-6'; $glow.Opacity = 0
-    $glow.CornerRadius = [string]($rad + 6); $glow.Background = New-GlowBrush $f[6] 0.85 0.70 0.62 0.75; $glow.Height = $h + 12
+    $glow.CornerRadius = [string]($rad + 6); $glow.Background = New-GlowBrush $f[6] 1.0 0.45 0.62 0.75; $glow.Height = $h + 12
     $wrap.ClipToBounds = $false
     $tile = New-Object System.Windows.Controls.Border; $tile.Background = New-VGrad $f[0] $f[1]; $tile.Height = $h
     $sheen = Set-D2Surface $tile $rad 10 '#4DFFFFFF'; $sheen.Opacity = 0.73   # 30% brush: 22% at rest, 30% hover, 12% pressed
@@ -1855,7 +1856,7 @@ function global:Save-VncFavorites($cfg, $favs, $invalid) {   # invalid entries a
 function global:Get-VncInvalidText($invalid) {
     $n = @($invalid).Count; if ($n -eq 0) { return '' }
     $what = (@($invalid | ForEach-Object { Get-VncDisplayName ([string]$_.host) 30 }) -join ', ')
-    return ('{0} saved register(s) in buttons.json have an address that is not valid and are hidden: {1}' -f $n, $what)
+    return ('{0} saved computer(s) in buttons.json have an address that is not valid and are hidden: {1}' -f $n, $what)
 }
 function global:Set-VncFavorite($favs, [string]$h, [int]$port, $name, $pinned) {   # add or update; naming never pins (Squint 4); returns $false on bad input
     if (-not (Test-VncHost $h) -or -not (Get-VncPort $port)) { return $false }
@@ -1900,6 +1901,13 @@ function global:Merge-VncRows($favs, $hosts) {   # pinned first (by name), then 
     $sorted = @($rows | Sort-Object @{ e = { -not $_.pinned } }, @{ e = { if ($_.pinned) { $_.name } else { '' } } }, @{ e = { if (Test-VncIPv4 $_.host) { ConvertTo-VncUInt $_.host } else { [uint32]::MaxValue } } })
     return $sorted
 }
+function global:Get-VncFoundText([int]$n, [string]$At = '', [switch]$LookingUp) {   # Squint recheck wording
+    $c = if ($n -eq 1) { '1 computer' } else { '{0} computers' -f $n }
+    if ($LookingUp) { return ('Found {0} you can view. Looking up names...' -f $c) }
+    return ('Found {0} on the shop network at {1}.' -f $n, $At) }
+function global:Get-VncShortName([string]$n) {   # Squint: a reverse-DNS name shows its first label; the full name goes in the tooltip
+    if ($n -match '^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+\.?$' -and $n -notmatch '^\d+(\.\d+){3}$') { return $n.Split('.')[0] }
+    return $n }
 function global:Get-VncRowView($r, [bool]$fresh, [bool]$scanning, [string]$age = '', [bool]$stale = $false) {   # display fields for one row (Squint 1, 3)
     $named = [bool]$r.name
     $seen = if ($r.seen) { if ($fresh) { 'Now' } else { 'Earlier' } } elseif ($scanning) { 'Looking...' } else { 'Not found last scan' }
@@ -1910,7 +1918,8 @@ function global:Get-VncRowView($r, [bool]$fresh, [bool]$scanning, [string]$age =
         star = $(if ($r.pinned) { [string][char]0xE735 } else { [string][char]0xE734 }); starOn = [bool]$r.pinned
         starName = $(if ($r.pinned) { 'Pinned' } else { 'Not pinned' })
         starTip = $(if ($r.pinned) { 'Pinned. Click or press Space to unpin.' } else { 'Not pinned. Click or press Space to pin.' })
-        nameText = $(if ($named) { Get-VncDisplayName $r.name 40 } else { 'Unnamed (F2 to name)' })
+        nameText = $(if ($named) { Get-VncDisplayName (Get-VncShortName ([string]$r.name)) 40 } else { 'Unnamed (F2 to name)' })
+        nameFull = $(if ($named) { Get-SafeText ([string]$r.name) 255 } else { $null })
         nameFg = $(if ($named -and -not $dim) { '#FFFFFF' } else { '#A0A0A0' }); addrFg = $(if ($dim) { '#A0A0A0' } else { '#FFFFFF' })
         addr = $addr; seen = $seen; tip = $tip; row = $r }
 }
@@ -2248,13 +2257,14 @@ function global:Step-VncScan($ui) {   # UI thread, every 200 ms while a scan run
         catch { $sc.sync.namesDone = $true } }
     if ($sc.hits.Count -gt 0 -and -not $sc.sync.namesDone) {
         if (Get-VncWorkerFault $sc.nameps $false) { $sc.sync.namesDone = $true }   # names are best effort: a failed lookup just ends it
-        else { $ui.setStatus.Invoke(('Found {0}. Looking up names...' -f $sc.hits.Count)); return } }
+        else { $ui.setStatus.Invoke((Get-VncFoundText $sc.hits.Count -LookingUp)); return } }
     $found = $sc.hits.Count; $range = $sc.range
     $ui.hosts = @($sc.hits)
     Stop-VncScan $ui
     try { Save-VncCache $ui.cachePath $ui.hosts ([datetime]::UtcNow) } catch {}
     $ui.refresh.Invoke()
-    $ui.setStatus.Invoke(('Found {0} register(s) on {1} at {2}. Press F5 to rescan.' -f $found, $range, (Get-Date -Format 't')))
+    $ui.setStatus.Invoke((Get-VncFoundText $found -At (Get-Date -Format 't')))
+    if ($ui.statusTip) { $ui.statusTip.Invoke(('Range {0}, port {1}. Press F5 to rescan.' -f $range, $ui.state.port)) }
 }
 
 # Picker window (Kern D2 + Squint). Standard window chrome stays, so the title shows once there; the client area is D2.
@@ -2267,7 +2277,7 @@ $global:VncPickerXaml = @'
     <LinearGradientBrush x:Key="Stroke" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#47FFFFFF" Offset="0"/><GradientStop Color="#0FFFFFFF" Offset="1"/></LinearGradientBrush>
     <ControlTemplate x:Key="ChipTpl" TargetType="Button">
       <Grid x:Name="root" RenderTransformOrigin="0.5,0.5" Background="Transparent">
-        <Border x:Name="glow" CornerRadius="13" Margin="-3" Background="{TemplateBinding Tag}" Opacity="0" IsHitTestVisible="False"/>
+        <Border x:Name="glow" CornerRadius="16" Margin="-6" Background="{TemplateBinding Tag}" Opacity="0" IsHitTestVisible="False"/>
         <Border x:Name="bg" CornerRadius="10" Background="{TemplateBinding Background}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"/>
         <Border CornerRadius="9,9,0,0" Height="8" VerticalAlignment="Top" Margin="1,1,1,0" Background="#24FFFFFF" IsHitTestVisible="False"/>
         <Border CornerRadius="0,0,9,9" Height="1" VerticalAlignment="Bottom" Margin="2,0,2,1" Background="#40000000" IsHitTestVisible="False"/>
@@ -2325,7 +2335,7 @@ $global:VncPickerXaml = @'
         </Border>
         <ControlTemplate.Triggers>
           <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="hl" Property="Background" Value="#37373C"/></Trigger>
-          <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="#8A8A8A"/><Setter TargetName="gt" Property="Foreground" Value="#8A8A8A"/></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="#9A9A9A"/><Setter TargetName="gt" Property="Foreground" Value="#9A9A9A"/></Trigger>
         </ControlTemplate.Triggers>
       </ControlTemplate></Setter.Value></Setter>
     </Style>
@@ -2365,7 +2375,7 @@ $global:VncPickerXaml = @'
               <Border Tag="star" Background="Transparent" Cursor="Hand" ToolTip="{Binding starTip}" AutomationProperties.Name="{Binding starName}">
                 <TextBlock x:Name="star" Text="{Binding star}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" Foreground="#F59E0B" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
               </Border>
-              <TextBlock Grid.Column="1" Text="{Binding nameText}" Foreground="{Binding nameFg}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0"/>
+              <TextBlock Grid.Column="1" Text="{Binding nameText}" ToolTip="{Binding nameFull}" Foreground="{Binding nameFg}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0,12,0"/>
               <TextBlock Grid.Column="2" Text="{Binding addr}" Foreground="{Binding addrFg}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
               <TextBlock Grid.Column="3" Text="{Binding seen}" Foreground="#A0A0A0" FontSize="13" VerticalAlignment="Center"/>
             </Grid>
@@ -2436,6 +2446,7 @@ function global:Show-VncPicker($btn) {
     $bView = $w.FindName('View'); $bInt = $w.FindName('Interact'); $bScan = $w.FindName('Rescan'); $bAdd = $w.FindName('Add'); $bMore = $w.FindName('More')
     $ui.list = $lv
     try { [System.Windows.Automation.AutomationProperties]::SetLiveSetting($status, 'Polite') } catch {}   # .NET 4.7.1+
+    $ui.statusTip = [Action[string]]{ param($t) $status.ToolTip = $t }.GetNewClosure()
     $ui.setStatus = [Action[string]]{ param($s) $status.Text = $s
         try { $pe = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($status); if ($pe) { $pe.RaiseAutomationEvent('LiveRegionChanged') } } catch {} }.GetNewClosure()
     $ui.busy = [Action[bool]]{ param($on) $busyBar.IsIndeterminate = $on; $busyBar.Visibility = $(if ($on) { 'Visible' } else { 'Hidden' }); $bScan.IsEnabled = -not $on }.GetNewClosure()

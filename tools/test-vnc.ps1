@@ -1,4 +1,4 @@
-# VNC picker checks that run without Windows: validation, argument building, subnet math, banner parsing,
+﻿# VNC picker checks that run without Windows: validation, argument building, subnet math, banner parsing,
 # the .vnc file and its password obfuscation, favourites and cache persistence, and source checks for the scan.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -10,7 +10,7 @@ $fns = 'Set-Prop', 'Get-ButtonType', 'Test-VncIPv4', 'Test-VncHost', 'Get-VncPor
        'Get-VncPrefix', 'Get-VncScanTargets', 'Get-SafeText', 'Get-RfbBanner', 'Get-VncViewerArgs', 'ConvertTo-VncObfuscated', 'New-VncConfigText', 'Get-VncState',
        'Save-VncFavorites', 'Set-VncFavorite', 'Read-VncCache', 'Save-VncCache', 'Test-VncCacheStale', 'Merge-VncRows', 'Test-VncPickerButton',
        'Test-VncAdapter', 'Get-VncRangeText', 'Get-VncNewRanges', 'Test-VncAutoScan', 'Test-VncBannerText', 'Get-VncDisplayName', 'Get-VncInvalidText',
-       'Get-VncRowView', 'Test-VncUsePassword', 'Get-VncWorkerFault', 'Get-VncTempAction', 'Remove-VncTempDir',
+       'Get-VncRowView', 'Get-VncShortName', 'Get-VncFoundText', 'Test-VncUsePassword', 'Get-VncWorkerFault', 'Get-VncTempAction', 'Remove-VncTempDir',
        'Get-VncSubnetGateway', 'Get-VncRangeKey', 'Get-VncRangeState', 'Get-VncAgeText', 'Test-VncRangeKeyCurrent', 'ConvertTo-VncGatewayId', 'Select-VncGatewayMac'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
@@ -104,7 +104,7 @@ Check 'state: port from config, prefix capped at 22' ($st.port -eq 5901 -and $st
 Check 'L5: invalid favourites kept aside, not dropped' ($st.favorites.Count -eq 2 -and $st.invalid.Count -eq 2 -and $st.invalid[0].extra -eq 'kept')
 Check 'L5: long name kept whole in state, missing port -> default' ($st.favorites[1].name -eq $long -and $st.favorites[1].port -eq 5901)
 Check 'L5: long name shown with an ellipsis' ((Get-VncDisplayName $long 40).Length -eq 40 -and (Get-VncDisplayName $long 40).EndsWith([string][char]0x2026) -and (Get-VncDisplayName 'Register 1' 40) -eq 'Register 1')
-Check 'L5: warning names the hidden entries' ((Get-VncInvalidText $st.invalid) -match '^2 saved register\(s\).*bad host;x' -and (Get-VncInvalidText @()) -eq '')
+Check 'L5: warning names the hidden entries' ((Get-VncInvalidText $st.invalid) -match '^2 saved computer\(s\).*bad host;x' -and (Get-VncInvalidText @()) -eq '')
 Check 'favourite: bad host refused' (-not (Set-VncFavorite $st.favorites 'x y' 5900 'n' $true))
 Check 'favourite: add by hand is not pinned' ((Set-VncFavorite $st.favorites '192.168.1.44' 5900 'Register 2' $null) -and $st.favorites.Count -eq 3 -and -not $st.favorites[2].pinned)
 [void](Set-VncFavorite $st.favorites 'REG1' 5900 'Front Register' $null); Check 'rename keeps the pin state' ($st.favorites[0].name -eq 'Front Register' -and $st.favorites[0].pinned)
@@ -308,7 +308,7 @@ Check 'Squint Major: no "No registers found" before any scan (refresh picks nots
 Check 'Squint Major: declined network sets the Not scanned status on open' ($src -match "-not \`$okRanges -and -not \`$bad\) \{ \`$ui\.setStatus\.Invoke\('Not scanned\. Press Rescan \(F5\)")
 Check 'Squint 4: Add is one dialog; Cancel adds nothing; name labelled optional' ($src -match 'Name \(optional, e\.g\. Register 1\)\. Leave empty to name it later with F2\.' -and $src -match "\`$in = Show-VncAddDialog \`$ui\.win\s+if \(-not \`$in\) \{ return \}" -and $src -notmatch "InputBox\('Name \(e\.g\. Register 1\):'")
 Check 'Kern 6: Add and password dialogs use the D2 dialog' ($src -match "New-D2Dialog 'Add a register'" -and $src -match "New-D2Dialog 'View-only password'" -and $src -match "Background = Brush '#0FFFFFFF'" -and $src -match "Background = Brush '#22C55E'")
-Check 'Picker Blocker: menu text white 14 px UI font, disabled #8A8A8A' ($xaml2 -match '<Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/>' -and $xaml2 -match 'Property="Foreground" Value="#8A8A8A"' -and $src -match "\`$m\.Foreground = Brush '#FFFFFF'; \`$m\.FontFamily = \`$global:UiFont; \`$m\.FontSize = 14")
+Check 'Picker Blocker: menu text white 14 px UI font, disabled #9A9A9A' ($xaml2 -match '<Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/>' -and $xaml2 -match 'Property="Foreground" Value="#9A9A9A"' -and $src -match "\`$m\.Foreground = Brush '#FFFFFF'; \`$m\.FontFamily = \`$global:UiFont; \`$m\.FontSize = 14")
 Check 'Picker Minor: shortcut text #B4B4B4' ($xaml2 -match 'Text="\{TemplateBinding InputGestureText\}" Foreground="#B4B4B4"')
 Check 'Picker Minor: More menu above, right-aligned, 4 px gap' ($src -match "\`$m\.Placement = 'Top'; \`$m\.VerticalOffset = -4" -and $src -match 'HorizontalOffset = \$bMore\.ActualWidth - \$m\.ActualWidth')
 Check 'Picker Minor: list border 12% white' ($xaml2 -match 'Background="#2E000000" BorderBrush="#1FFFFFFF"')
@@ -324,4 +324,12 @@ Check 'R4-L1: Get-NetNeighbor filtered by -InterfaceIndex; empty id never cached
 $rm = [regex]::Match($xaml2, '(?s)<Window\.Resources>(.*?)</Window\.Resources>')
 $rdOk = $rm.Success; try { [void][xml]('<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">' + $rm.Groups[1].Value + '</ResourceDictionary>') } catch { $rdOk = $false }
 Check 'N2: dialog styles come from the resources block alone (well-formed)' ($rdOk -and $src.Contains('[regex]::Match($global:VncPickerXaml, ''(?s)<Window\.Resources>(.*?)</Window\.Resources>'')'))
+
+# Squint Windows recheck: wording, short reverse-DNS names, status line
+Check "Squint recheck: 'Found N computers you can view' while names load" ((Get-VncFoundText 3 -LookingUp) -eq 'Found 3 computers you can view. Looking up names...' -and (Get-VncFoundText 1 -LookingUp) -eq 'Found 1 computer you can view. Looking up names...')
+Check "Squint recheck: status 'Found N on the shop network at 12:54 PM.'" ((Get-VncFoundText 4 -At '12:54 PM') -eq 'Found 4 on the shop network at 12:54 PM.')
+Check 'Squint recheck: range and port only in the status tooltip' ($src -match "statusTip\.Invoke\(\('Range \{0\}, port \{1\}\. Press F5 to rescan\.'" -and $src -notmatch "register\(s\) on \{1\}")
+Check "Squint recheck: no 'register(s)' wording left" ($src -notmatch 'register\(s\)')
+Check 'Squint recheck: reverse-DNS name shows the first label, full name in tooltip' ((Get-VncShortName 'pos-03.shop.example.lan') -eq 'pos-03' -and (Get-VncShortName 'Till 2') -eq 'Till 2' -and (Get-VncShortName '192.168.1.5') -eq '192.168.1.5' -and (Get-VncRowView ([pscustomobject]@{ name = 'pos-03.shop.example.lan'; host = '192.168.1.5'; port = 5900; seen = $true }) $true $false).nameFull -eq 'pos-03.shop.example.lan')
+Check 'Squint recheck: name column tooltip + 12 px gap before Address' ($src -match 'Text="\{Binding nameText\}" ToolTip="\{Binding nameFull\}"[^>]*Margin="4,0,12,0"')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
