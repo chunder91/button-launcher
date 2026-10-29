@@ -141,9 +141,13 @@ Set-Content -Path '$res' -Value `$out -Encoding UTF8
 
 function global:Invoke-Button($btn) {
     $kind = Get-ButtonType $btn
-    if ($btn.confirm) {
+    $cText = [string]$btn.confirm
+    if (-not $cText.Trim() -and $kind -eq 'builtin' -and [string]$btn.action -eq 'restart-computer') {
+        $cText = 'Restart this computer now? Unsaved work in open programs will be lost.'   # CC-M4/LJ-L3: force restart ALWAYS asks
+    }
+    if ($cText.Trim()) {
         $cTitle = (([string]$btn.label) -replace "`n", ' ').Trim(); if (-not $cTitle) { $cTitle = 'Please confirm' }
-        $r = [System.Windows.MessageBox]::Show([string]$btn.confirm, $cTitle, 'YesNo', 'Warning', 'No')   # focus defaults to No
+        $r = [System.Windows.MessageBox]::Show($cText, $cTitle, 'YesNo', 'Warning', 'No')   # focus defaults to No
         if ($r -ne 'Yes') { return $false }
     }
     $a = Expand $btn.args
@@ -369,7 +373,7 @@ function global:Edit-Button($btn) {
     $actions = [ordered]@{ 'restart-screenconnect' = 'Restart ScreenConnect service'; 'restart-computer' = 'Restart computer (force)' }
     $cAct = Combo @($actions.Values) $(if ($btn.action -and $actions[[string]$btn.action]) { $actions[[string]$btn.action] } else { $actions['restart-computer'] })
     [void](AddRow 'action' 'Action' $cAct $null)
-    $tC = TB $btn.confirm; $tC.ToolTip = 'Optional. If filled in, asks Yes/No (No is the default) before running.'
+    $tC = TB $btn.confirm; $tC.ToolTip = 'Optional. If filled in, asks Yes/No (No is the default) before running. Restart computer always asks, even when blank.'
     [void](AddRow 'confirm' 'Ask first (Yes/No)' $tC $null)
     $bBrowse.Add_Click({
         $k = ($types.GetEnumerator() | Where-Object { $_.Value -eq $cType.SelectedItem }).Key
