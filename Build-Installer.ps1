@@ -125,9 +125,32 @@ $z = [IO.Compression.ZipFile]::OpenRead($zip)
 $oldMan = @{}
 $manPath = Join-Path $dest 'shipped-images.txt'
 if (Test-Path -LiteralPath $manPath) { foreach ($ml in Get-Content -LiteralPath $manPath) {
-    if ($ml -match '^([0-9a-fA-F]{64})\s+(.+)$') { $oldMan[$matches[2].Trim().ToLowerInvariant()] = $matches[1].ToLowerInvariant() } } }
-else {   # R4-L1: installs from before the manifest (v1.1.0) shipped these pictures (hashes from main); refresh them if unchanged
-    $oldMan = @{ 'images/badge.png' = 'c80191a8b71708f5126bb81c02945e72c88df7f94458236cc36cc9f7a618b072'; 'images/email.png' = '785779ad2815f5886e5f780176022ed2289ec245e749d792fe34ef63ffe82ae1'; 'images/globe.png' = '9febcce7441d02c7cc04edb8fca6e655c15f65da395d1ed2b3982d12837d5124'; 'images/guide.png' = 'a950556411e95be22caa7dc33a59e19fb80734e0c9e75784b1ef513142655893'; 'images/power.png' = '8289780bca861ad9aaf69dfc88de61675e7851a1182e686feea63600e5c18081'; 'images/reddog.png' = '4125711cedf60d0fb4dd4a9fb0b05aff01c7db95f12d80a0032f1657d37d553b'; 'images/register.png' = '662105e5ab430976a35bef64abae4cedfcd60211447d6968386763c6ba1a615f'; 'images/revenue.png' = '3c875cebd0396788a53715464fd6af61c706cdf93cfbe9d29fa5b68f3acfaaa5'; 'images/screenconnect.png' = 'f903c058d8ae014f69ae2e9c09b87e39780ab1240b0e355db86935fe476c700e'; 'images/security.png' = 'da7d33138bd401dd1ac00c43d97e9acf0a35967c35d64c5b669242e55edc2952' } }
+    if ($ml -match '^([0-9a-fA-F]{64})\s+(.+)$') { $oldMan[$matches[2].Trim().ToLowerInvariant()] = @($matches[1].ToLowerInvariant()) } } }
+else {   # R4-L1/R5-L1: installs from before the manifest shipped these pictures: v1.1.0 (main) and builds from review-fixes-1
+    # 772f83a..cde5cf5 (hashes computed from those commits). A picture that still matches any of them is refreshed.
+    $oldMan = @{
+        'images/globe.png' = @('0b5d8cd2ef4b0010ae965dbfcc35f7f9dfea5b2b5842d38b893a1c015956a2cf', '9febcce7441d02c7cc04edb8fca6e655c15f65da395d1ed2b3982d12837d5124')
+        'images/register.png' = @('18d7fc75aedb9d82e4c279e53df076ccaf9fc513094680117bfc61c0609bce88', '662105e5ab430976a35bef64abae4cedfcd60211447d6968386763c6ba1a615f')
+        'images/svg/power.svg' = @('1ef48914be3b033c01964faeeed297efe1be3e546968b9735a98c04271d9acb5')
+        'images/svg/badge.svg' = @('2528196660f1873fa49517097f73d2e06adf6bbbf1f2648c39f92b94a3aeb53b')
+        'images/svg/security.svg' = @('2d21a3dcb74d50a1230a8ffc5d7977918d576eeb6da61a1ba932ece7b45dd381')
+        'images/reddog-small.png' = @('3615faf1978993df2d72066a033d61bae27dd965afac8ec3801b8fa910eeb59a')
+        'images/revenue.png' = @('3c875cebd0396788a53715464fd6af61c706cdf93cfbe9d29fa5b68f3acfaaa5', '5fa7b0c5bae94e8dc96ceff920e566907e81e7e95054c88208b56685f448f969')
+        'images/reddog.png' = @('4125711cedf60d0fb4dd4a9fb0b05aff01c7db95f12d80a0032f1657d37d553b', '875aaf04221c6602808fe75a3736ff55fc0a057cc7a984f7b7785161e6d32816')
+        'images/screenconnect.png' = @('4abcbbb7c5ac7664f7282e17e0df135caf61dc52d14c15b72bc9a9254766e735', 'f903c058d8ae014f69ae2e9c09b87e39780ab1240b0e355db86935fe476c700e')
+        'images/security.png' = @('664fa94fb69012934cf3a6c7647a122b19105c43b164543a99d2a8b4cb59f70f', 'da7d33138bd401dd1ac00c43d97e9acf0a35967c35d64c5b669242e55edc2952')
+        'images/email.png' = @('6ded870b51d0fbaa4ce94d6d1c9aedaca47d60ef744c00a54212fb7af16bf01a', '785779ad2815f5886e5f780176022ed2289ec245e749d792fe34ef63ffe82ae1')
+        'images/svg/guide.svg' = @('80e7fd4e9de79c00082298a55c72cb1412791df3722a1743c140dcb76cb07427')
+        'images/power.png' = @('8289780bca861ad9aaf69dfc88de61675e7851a1182e686feea63600e5c18081', '9a6b72e428bea6cc14a698bf5d61c04bb2667b714c82500bca8b93335c5e0c86')
+        'images/guide.png' = @('a950556411e95be22caa7dc33a59e19fb80734e0c9e75784b1ef513142655893', 'd5177aec60a07cdd838c4570c56bb699e070100f3b6a2868f4e66934492d3b82')
+        'images/badge.png' = @('aafa4f4831c6260e4228e08fa1922e44e628b814fd9ff169f960ee2dfefb9cce', 'c80191a8b71708f5126bb81c02945e72c88df7f94458236cc36cc9f7a618b072')
+        'images/svg/register.svg' = @('ba2541a8de286809c8138732b7fe811eeb2abf34c3e76bcb07bd106d33a67db9')
+        'images/svg/reddog.svg' = @('ba6cd2d4d9a74e63eea48d0ff3814eb023234aa1f752a1d985a87d5d4a2c0de9')
+        'images/svg/globe.svg' = @('cca25437b131e4f9eea570871f5c5277594ec721ff62339276e704065b74fbe6')
+        'images/svg/revenue.svg' = @('d40e7ad5e89afce789d81b98999df27f2a33884ac5d74391cc7b4ba11d9c7ceb')
+        'images/svg/screenconnect.svg' = @('e9ae1141b148a9199ab6e6a353bffff885516d373b0bb284eb6745a2b93c3b5a')
+        'images/svg/email.svg' = @('edc024409b3e514db726f3ccc6cb629edda7965fd4d15434b787b5cb995b56e9')
+        'images/app.ico' = @('f1cab83836a4af76b9f86f43f863ca5abaae409ba6d07bc0a8be0a6f98426c02') } }
 $instLog = Join-Path $dest 'install.log'
 $destRoot = [IO.Path]::GetFullPath($dest).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 foreach ($e in $z.Entries) {
@@ -142,15 +165,22 @@ foreach ($e in $z.Entries) {
     if ($e.FullName.EndsWith('/') -or $e.FullName.EndsWith('\')) { New-Item -ItemType Directory -Force $t | Out-Null; continue }
     $rel = $en.Replace('\', '/')
     if ($rel -like 'images/*' -and (Test-Path -LiteralPath $t)) {
-        $was = $oldMan[$rel.ToLowerInvariant()]
+        $was = @($oldMan[$rel.ToLowerInvariant()] | Where-Object { $_ })
         $now = (Get-FileHash -LiteralPath $t -Algorithm SHA256).Hash.ToLowerInvariant()
-        if (-not $was -or $was -ne $now) {
+        if ($was.Count -eq 0 -or $was -notcontains $now) {
             Add-Content -LiteralPath $instLog -Value ("{0}  kept your picture {1} (added or changed on this PC); the shipped one was not copied" -f (Get-Date -Format s), $rel) -ErrorAction SilentlyContinue
             continue } }
     New-Item -ItemType Directory -Force (Split-Path $t) | Out-Null
     [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $t, $true)
 }
 $z.Dispose(); Remove-Item -LiteralPath $zip
+# R5-L2: stop before any shortcut or registry write if the core files didn't land
+$missingCore = @('Launcher.ps1', 'ButtonLauncher.exe', 'buttons.default.json' | Where-Object { -not (Test-Path -LiteralPath (Join-Path $dest $_)) })
+if ($missingCore.Count) {
+    Add-Content -LiteralPath (Join-Path $dest 'install.log') -Value ("{0}  install stopped: missing after extraction: {1}" -f (Get-Date -Format s), ($missingCore -join ', ')) -ErrorAction SilentlyContinue
+    [System.Windows.MessageBox]::Show("$AppName could not be installed: these files are missing after unpacking:`n" + ($missingCore -join "`n") + "`n`nNothing was added to the Start menu or the registry. Try the installer again.", "$AppName Setup", 'OK', 'Error') | Out-Null
+    exit 1
+}
 # R-M2: keep this PC's buttons.json (edits, saved paths). Only a first install gets the default. The payload never
 # contains buttons.json, and extraction only writes payload files, so pictures the user added to images\ stay too.
 $userCfg = Join-Path $dest 'buttons.json'
