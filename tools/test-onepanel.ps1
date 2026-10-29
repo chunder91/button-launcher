@@ -14,6 +14,12 @@ $global:PathProbe = @{ DosDevice = { param($d) '\Device\HarddiskVolume3' }; Attr
 Check "layout default (missing setting) is 'single'" ((Get-LayoutMode ([pscustomobject]@{})) -eq 'single')
 Check "saved layout 'two' is kept" ((Get-LayoutMode ([pscustomobject]@{ layout = 'two' })) -eq 'two')
 Check "layout 'single'" ((Get-LayoutMode ([pscustomobject]@{ layout = 'single' })) -eq 'single')
+$p3 = @([pscustomobject]@{}, [pscustomobject]@{}, [pscustomobject]@{})
+Check 'R9-M1: no layout + 3 panels -> two panels (nothing hidden)' ((Get-LayoutMode ([pscustomobject]@{ panels = $p3 })) -eq 'two')
+Check 'R9-M1: no layout + 2 panels -> single' ((Get-LayoutMode ([pscustomobject]@{ panels = @($p3[0], $p3[1]) })) -eq 'single')
+Check 'R9-M1: no layout + 1 panel -> single' ((Get-LayoutMode ([pscustomobject]@{ panels = @($p3[0]) })) -eq 'single')
+Check 'R9-M1: saved single with 3 panels is kept' ((Get-LayoutMode ([pscustomobject]@{ layout = 'single'; panels = $p3 })) -eq 'single')
+Check "R9-N1: ' two ' and 'TWO' mean two; ' Single ' means single" ((Get-LayoutMode ([pscustomobject]@{ layout = ' two ' })) -eq 'two' -and (Get-LayoutMode ([pscustomobject]@{ layout = 'TWO' })) -eq 'two' -and (Get-LayoutMode ([pscustomobject]@{ layout = ' Single '; panels = $p3 })) -eq 'single')
 Check "unknown layout falls back to 'single'" ((Get-LayoutMode ([pscustomobject]@{ layout = 'sideways' })) -eq 'single')
 $def = Get-Content (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
 Check "buttons.default.json: layout 'single'" ($def.layout -eq 'single')
@@ -31,7 +37,7 @@ $cfgNo = [pscustomobject]@{}; $m0 = New-MiddleState $cfgNo
 Check 'middle: missing group created empty' ($m0.items.Count -eq 0 -and $m0.cols -eq 2 -and $cfgNo.middle -and @($cfgNo.middle.items).Count -eq 0)
 foreach ($b in $m.items) { Check ("middle item type '{0}' is a known target type" -f $b.type) ($b.type -in 'program', 'website', 'file', 'script', 'builtin') }
 # Empty-state hint
-Check 'hint: empty + unlocked' ((Get-MiddleHint 0 $false) -eq 'Unlock and right-click to add icons')
+Check 'hint: empty + unlocked' ((Get-MiddleHint 0 $false) -eq 'Right-click here to add icons')
 Check 'hint: empty + locked shows nothing' ($null -eq (Get-MiddleHint 0 $true))
 Check 'hint: not empty shows nothing' ($null -eq (Get-MiddleHint 3 $false))
 # Overflow math (chips 64, gap 6, "+N more" row 28)
@@ -141,4 +147,26 @@ $nc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Functi
 Check 'OP-L2: chip captures the mouse on press' ($nc -match 'Add_MouseLeftButtonDown\(\{ \$st\.down = \$true;[^}]*\[void\]\$chip\.CaptureMouse\(\)')
 Check 'OP-L2: release launches only after own press, inside the chip' ($nc -match '(?s)if \(-not \$st\.down\) \{ return \}; \$st\.down = \$false; \$chip\.ReleaseMouseCapture\(\).*?\$inside = .*?if \(\$inside -and -not \$st\.dragged\) \{ \$ok = Invoke-Button')
 Check 'OP-L2: lost capture clears the press; drag releases capture' ($nc -match 'Add_LostMouseCapture\(\{ \$st\.down = \$false \}' -and $nc -match '\$st\.dragged = \$true; \$st\.down = \$false; \$chip\.ReleaseMouseCapture\(\)')
+# Idle CPU (laptop test): relayout only when layout-relevant state changed; no polling timer for the show signal
+foreach ($n in 'Invoke-Relayout') { $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true); Invoke-Expression $f.Extent.Text }
+$global:sigV = 'a'; function global:Get-LayoutSig { $global:sigV }
+$global:lays = 0; function global:Layout-Single { $global:lays++ }; $global:single = @{}; $global:lastLayoutSig = $null
+[void](Invoke-Relayout); [void](Invoke-Relayout); [void](Invoke-Relayout)
+Check 'idle: repeated events with nothing changed -> one layout pass' ($global:lays -eq 1)
+$global:sigV = 'b'; [void](Invoke-Relayout)
+Check 'idle: a real change (screen/DPI/settings) lays out again' ($global:lays -eq 2)
+[void](Invoke-Relayout -Force); Check 'idle: -Force always lays out' ($global:lays -eq 3)
+$global:single = $null
+$sigSrc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-LayoutSig' }, $true).Extent.Text
+Check 'idle: layout signature covers screens, work areas, DPI, visibility, handles, settings' ($sigSrc -match 'AllScreens' -and $sigSrc -match 'WorkingArea' -and $sigSrc -match 'Get-Dpi' -and $sigSrc -match 'IsVisible' -and $sigSrc -match 'hwnd' -and $sigSrc -match 'ConvertTo-Json')
+Check 'idle: relayout timer goes through Invoke-Relayout' ($src -match '\$global:relayoutTimer\.Add_Tick\(\{ \$global:relayoutTimer\.Stop\(\); Invoke-Relayout \}\)')
+Check 'idle: show signal is a thread-pool wait, not a 400 ms poll' ($src -match 'RegisterWaitForSingleObject' -and $src -notmatch 'FromMilliseconds\(400\)\s*\r?\n\s*\$showTimer' -and $src -notmatch "showTimer\.Interval = \[TimeSpan\]::FromMilliseconds\(400\)")
+Check 'idle: no forever-repeating animations' ($src -notmatch 'RepeatBehavior')
+$ticks = [regex]::Matches($src, 'DispatcherTimer').Count
+Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback)' ($ticks -eq 4)
+# First run: no file picker without a click
+$afp = [regex]::Matches($src, '(?m)^.*Ask-ForPath \$.*$') | ForEach-Object { $_.Value.Trim() }
+Check 'first run: Ask-ForPath only from Pick..., Edit Browse, or a launch click' (@($afp | Where-Object { $_ -notmatch '^\$f = Ask-ForPath \$b' -and $_ -notmatch '^\$found = Ask-ForPath \$btn \$kind' -and $_ -notmatch "^\`$p = Ask-ForPath \(\[pscustomobject\]" }).Count -eq 0)
+Check 'first run: Setup window focuses Close (Enter/Space cannot open a picker)' ($src -match '\$close\.IsDefault = \$true; \$d\.Add_ContentRendered\(\{ \[void\]\$close\.Focus\(\) \}')
+Check 'first run: Test-ButtonReady never opens a dialog' ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Test-ButtonReady' }, $true).Extent.Text -notmatch 'Ask-ForPath|OpenFileDialog|ShowDialog')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

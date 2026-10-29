@@ -43,6 +43,7 @@ $global:ModernFill   = @{ '#3EC3EE' = @('#0B6E99', '#FFFFFF'); '#0E8A55' = @('#0
 $global:Acronyms     = @('PLCE', 'PC', 'POS', 'VNC', 'KBS', 'USB', 'TV', 'ID', 'IT', 'PA', 'DOR')
 $global:app          = $null
 $global:relayoutTimer = $null
+$global:lastLayoutSig = $null                                     # idle CPU: last laid-out state
 $global:labelSink    = $null
 $global:single       = $null                                      # one-panel layout window state (layout 'single')
 $global:middle       = $null                                      # middle icons: @{ cols; items }
@@ -744,6 +745,7 @@ function global:Show-SetupWindow([switch]$OnlyIfNeeded) {
     }
     $close = New-Object System.Windows.Controls.Button; $close.Content = 'Close'; $close.Padding = '14,3'; $close.HorizontalAlignment = 'Right'; $close.Margin = '0,12,0,0'; $close.IsCancel = $true
     $close.Add_Click({ $d.Close() }.GetNewClosure()); [void]$sp.Children.Add($close)
+    $close.IsDefault = $true; $d.Add_ContentRendered({ [void]$close.Focus() }.GetNewClosure())   # a stray Enter/Space closes it; a file picker only opens on a Pick... click
     $d.Content = $sp; [void]$d.ShowDialog()
 }
 
@@ -858,6 +860,20 @@ function global:Apply-Lock {
     }
 }
 
+# Idle CPU: Windows sends WM_SETTINGCHANGE/WM_DEVICECHANGE often, and our own resizes raise SizeChanged. After the
+# debounce, lay out only when something that affects layout changed (screens, work areas, DPI, settings).
+function global:Get-LayoutSig {
+    $scr = @(foreach ($x in [System.Windows.Forms.Screen]::AllScreens) { '{0}|{1}' -f $x.Bounds, $x.WorkingArea }) -join ';'
+    $dp = @(foreach ($o in $global:panels) { '{0}:{1}:{2}' -f (Get-Dpi $o), [bool]$o.win.IsVisible, [bool]($o.hwnd -and $o.hwnd -ne [IntPtr]::Zero) }) -join ','
+    $cf = $global:cfg | ConvertTo-Json -Depth 12 -Compress
+    $sh = if ($global:single) { [bool]($global:single.hwnd -and $global:single.hwnd -ne [IntPtr]::Zero) } else { 'none' }
+    return "$scr#$dp#$sh#$($global:middle.items.Count)#$cf" }
+function global:Invoke-Relayout([switch]$Force) {
+    $sig = Get-LayoutSig
+    if (-not $Force -and $sig -eq $global:lastLayoutSig) { return $false }   # nothing changed: no layout pass, no SetWindowPos
+    $global:lastLayoutSig = $sig
+    if ($global:single) { Layout-Single } else { foreach ($o in $global:panels) { Layout-Panel $o } }
+    return $true }
 function global:Request-Relayout {
     # Debounce: Windows sends several messages for one change (resolution, DPI, taskbar, wake...)
     if ($global:relayoutTimer) { $global:relayoutTimer.Stop(); $global:relayoutTimer.Start() }
@@ -1153,9 +1169,16 @@ function global:New-PanelFromMenu {
 
 # ================= One-panel layout ("layout": "single"), tray icon and Ctrl+Alt+L =================
 # Pure helpers first (tools/test-onepanel.ps1 runs these without Windows).
-function global:Get-LayoutMode($cfg) { if ([string]$cfg.layout -eq 'two') { 'two' } else { 'single' } }   # one panel is the default; a saved 'two' is kept
+# One panel is the default; a saved value is kept (R9-N1: trimmed, any case). R9-M1: with no saved value, a config
+# with more than 2 panels opens as two panels so no buttons are hidden.
+function global:Get-LayoutMode($cfg) {
+    $v = ([string]$cfg.layout).Trim().ToLowerInvariant()
+    if ($v -eq 'two') { return 'two' }
+    if ($v -eq 'single') { return 'single' }
+    if (@($cfg.panels).Count -gt 2) { return 'two' }
+    return 'single' }
 function global:Get-MiddleHint([int]$count, [bool]$locked) {   # empty + unlocked: a subtle hint; locked: nothing
-    if ($count -eq 0 -and -not $locked) { return 'Unlock and right-click to add icons' }
+    if ($count -eq 0 -and -not $locked) { return 'Right-click here to add icons' }   # laptop test: it is already unlocked here
     return $null
 }
 # How many chips fit, and whether a "+N more" row is needed. Chips 64 high, 6 gap, "+N more" row 28 high.
@@ -1524,7 +1547,7 @@ try {
     $global:app.Add_DispatcherUnhandledException({ Write-LauncherError 'while running' $_.Exception; $_.Handled = $true })
     $global:relayoutTimer = New-Object System.Windows.Threading.DispatcherTimer
     $global:relayoutTimer.Interval = [TimeSpan]::FromMilliseconds(400)
-    $global:relayoutTimer.Add_Tick({ $global:relayoutTimer.Stop(); if ($global:single) { Layout-Single } else { foreach ($o in $global:panels) { Layout-Panel $o } } })
+    $global:relayoutTimer.Add_Tick({ $global:relayoutTimer.Stop(); Invoke-Relayout })
 
     $global:middle = New-MiddleState $global:cfg
     if ((Get-LayoutMode $global:cfg) -eq 'single' -and @($global:cfg.panels).Count -ge 1) { Open-Single }
@@ -1533,8 +1556,20 @@ try {
     if ($global:panels.Count -eq 0) { throw 'No panels could be opened.' }
     Start-TrayAndHotkey                                 # Squint Major 1: tray icon + Ctrl+Alt+L bring the launcher forward (both layouts)
     $global:app.Add_Exit({ Stop-TrayAndHotkey })
-    $showTimer = New-Object System.Windows.Threading.DispatcherTimer; $showTimer.Interval = [TimeSpan]::FromMilliseconds(400)
-    $showTimer.Add_Tick({ if ($global:showEvent.WaitOne(0)) { Show-AllPanels } }); $showTimer.Start()
+    # Idle CPU: wait for the "show" signal on a thread-pool wait instead of polling every 400 ms; it posts to the UI thread.
+    $showWatch = $false
+    try {
+        if (-not ('BL.ShowWaiter' -as [type])) {
+            Add-Type -ReferencedAssemblies WindowsBase -TypeDefinition @'
+namespace BL { public static class ShowWaiter {
+    public static void Watch(System.Threading.WaitHandle h, System.Windows.Threading.Dispatcher d, System.Action a) {
+        System.Threading.ThreadPool.RegisterWaitForSingleObject(h, delegate(object s, bool t) { d.BeginInvoke(a); }, null, -1, false); } } }
+'@ }
+        [BL.ShowWaiter]::Watch($global:showEvent, $global:app.Dispatcher, [Action]{ Show-AllPanels }); $showWatch = $true
+    } catch { Add-Content -LiteralPath $global:logPath -Value ("{0}  show-signal wait unavailable ({1}); polling instead" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }
+    if (-not $showWatch) {
+        $showTimer = New-Object System.Windows.Threading.DispatcherTimer; $showTimer.Interval = [TimeSpan]::FromMilliseconds(1000)
+        $showTimer.Add_Tick({ if ($global:showEvent.WaitOne(0)) { Show-AllPanels } }); $showTimer.Start() }
     if (-not [bool]$global:cfg.setupDone) {   # UX-2a: first run (right after install) lists every button that still needs a file
         Set-Prop $global:cfg 'setupDone' $true
         [void]$global:app.Dispatcher.BeginInvoke([Action]{ Show-SetupWindow -OnlyIfNeeded }, [System.Windows.Threading.DispatcherPriority]::ApplicationIdle)
