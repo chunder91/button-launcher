@@ -327,17 +327,53 @@ function global:Start-Flash($flash) {   # launch flash: white 45%, 60 ms in, 240
 }
 
 # Missing-program dot (cheap: no shortcut search while drawing; Set up this PC does the full search).
-function global:Test-ButtonSetUpQuick($btn) {
-    $kind = Get-ButtonType $btn
-    if ($kind -notin 'program', 'file', 'script') { return $true }
-    $t = Expand $btn.target
-    if (-not (Is-Todo $t)) {
-        if ($kind -eq 'program' -and $t -notmatch '[\\/]') { return $true }
-        if (Test-Path -LiteralPath $t) { return $true }
-    }
-    if ($btn.detect) { foreach ($pat in @($btn.detect.paths)) { if ($pat -and (Get-ChildItem -Path (Expand $pat) -File -ErrorAction SilentlyContinue | Select-Object -First 1)) { return $true } } }
-    return $false
+# LJ: draw-time checks touch only local fixed-drive paths (no SMB/NTLM traffic just from drawing a panel).
+function global:Get-DriveTypeName([string]$root) { ([IO.DriveInfo]::new($root)).DriveType.ToString() }
+function global:Test-LocalFixedPath([string]$path, [scriptblock]$DriveType) {
+    if (-not $DriveType) { $DriveType = { param($r) Get-DriveTypeName $r } }
+    $x = ([string]$path).Trim().Trim('"')
+    if (-not $x) { return $false }
+    if ($x.StartsWith('\\') -or $x.StartsWith('//') -or $x.StartsWith('\/') -or $x.StartsWith('/\')) { return $false }   # UNC, \\?\, \\?\UNC, \\.\
+    if ($x -notmatch '^[A-Za-z]:[\\/]') { return $false }                                     # relative or odd paths: no
+    try { $t = [string](& $DriveType ($x.Substring(0, 2) + '\')) } catch { return $false }
+    return ($t -eq 'Fixed')
 }
+function global:Test-SafeIconSource([string]$t, [scriptblock]$DriveType, [scriptblock]$ReadLnk) {
+    if (-not (Test-LocalFixedPath $t $DriveType)) { return $false }
+    if ($t -notmatch '(?i)\.lnk$') { return $true }
+    if (-not $ReadLnk) { $ReadLnk = { param($l) $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($l); @{ target = $sc.TargetPath; icon = $sc.IconLocation } } }
+    try { $info = & $ReadLnk $t } catch { return $false }                                     # the .lnk itself is local (checked above)
+    $lt = Expand ([string]$info.target)
+    $li = Expand ((([string]$info.icon) -replace ',\s*-?\d+\s*$', '').Trim())
+    if ($lt -and -not (Test-LocalFixedPath $lt $DriveType)) { return $false }
+    if ($li -and -not (Test-LocalFixedPath $li $DriveType)) { return $false }
+    return $true
+}
+# 'ok', 'missing' or 'unchecked'. Non-local targets (UNC, \\?\UNC, \\.\, mapped network drives, a .lnk pointing off
+# this PC) are 'unchecked': never touched while drawing and never shown as missing; they are resolved on click.
+function global:Get-SetupState($btn, [scriptblock]$DriveType, [scriptblock]$ReadLnk) {
+    $kind = Get-ButtonType $btn
+    if ($kind -notin 'program', 'file', 'script') { return 'ok' }
+    $t = Expand $btn.target
+    $unchecked = $false
+    if (-not (Is-Todo $t)) {
+        if ($kind -eq 'program' -and $t -notmatch '[\\/]') { return 'ok' }
+        if (-not (Test-LocalFixedPath $t $DriveType)) { $unchecked = $true }
+        elseif (-not (Test-Path -LiteralPath $t)) { }
+        elseif ($t -match '(?i)\.lnk$') {
+            $lt = ''; try { $lt = Expand ([string](& $(if ($ReadLnk) { $ReadLnk } else { { param($l) @{ target = (New-Object -ComObject WScript.Shell).CreateShortcut($l).TargetPath } } }) $t).target) } catch {}
+            if (-not $lt -or (Test-LocalFixedPath $lt $DriveType)) { return 'ok' }
+            return 'unchecked' }
+        else { return 'ok' }
+    }
+    if ($btn.detect) { foreach ($pat in @($btn.detect.paths)) { $e = Expand $pat
+        if (-not $e) { continue }
+        if (-not (Test-LocalFixedPath $e $DriveType)) { $unchecked = $true; continue }
+        if (Get-ChildItem -Path $e -File -ErrorAction SilentlyContinue | Select-Object -First 1) { return 'ok' } } }
+    if ($unchecked) { return 'unchecked' }
+    return 'missing'
+}
+function global:Test-ButtonSetUpQuick($btn) { (Get-SetupState $btn) -ne 'missing' }   # draw-time: only 'missing' gets the dot
 function global:New-MissingDot($tip) {
     $dot = New-Object System.Windows.Shapes.Ellipse; $dot.Width = 11; $dot.Height = 11   # 8 px amber + 1.5 px panel-colour ring
     $dot.Fill = Brush $global:Theme.amber; $dot.Stroke = Brush $global:Theme.panel; $dot.StrokeThickness = 1.5
@@ -422,7 +458,9 @@ function global:New-Tile($p, $btn) {
         $eo.StrokeDashArray = New-Object System.Windows.Media.DoubleCollection (,[double[]](4, 3)); $eo.RadiusX = 6; $eo.RadiusY = 6; $eo.Margin = '2'
         [void]$g.Children.Add($eo) }
     if ($c.missingPic) { [void]$g.Children.Add((New-MissingDot ("Picture not found: " + [string]$btn.image))) }
-    elseif (-not (Test-ButtonSetUpQuick $btn)) { [void]$g.Children.Add((New-MissingDot 'Not set up on this PC yet')) }
+    else { $ss = Get-SetupState $btn
+        if ($ss -eq 'missing') { [void]$g.Children.Add((New-MissingDot 'Not set up on this PC yet')) }
+        elseif ($ss -eq 'unchecked') { $tile.ToolTip = [string]$btn.target + "`n(network location: not checked until you click)" } }
     $g.Background = [System.Windows.Media.Brushes]::Transparent
     $tile.Child = $g
     $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-4'; $ring.CornerRadius = '12'

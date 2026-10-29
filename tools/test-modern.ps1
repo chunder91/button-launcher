@@ -75,4 +75,28 @@ $sb = $global:cfg.panels[1].buttons; $sb[5].height = 99; $sb[5].fontSize = 15; $
 Update-OldDefaultOrder; $mb = $global:cfg.panels[1].buttons
 Check 'MB-L3: moved tiles keep their sizes' ($mb[4].height -eq 99 -and $mb[4].fontSize -eq 15 -and $mb[4].width -eq 'half' -and $mb[5].width -eq 'full' -and $mb[5].height -eq 70 -and $mb[6].fontSize -eq 14 -and $mb[6].height -eq 85)
 Remove-Item -LiteralPath $tmp -Recurse -Force
+# LJ: setup check at draw time touches only local fixed-drive paths (drive types mocked: C fixed, Z mapped network)
+foreach ($n in 'Expand', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-SetupState', 'Test-ButtonSetUpQuick') {
+    $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
+    Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
+$dt = { param($r) switch ($r.Substring(0, 1).ToUpperInvariant()) { 'C' { 'Fixed' } 'Z' { 'Network' } default { 'NoRootDirectory' } } }
+$global:touched = New-Object System.Collections.ArrayList
+$global:present = @('C:\Apps\here.exe', 'C:\Links\net.lnk', 'C:\Links\loc.lnk')
+function global:Test-Path { param([string]$LiteralPath) [void]$global:touched.Add($LiteralPath); $global:present -contains $LiteralPath }
+function global:Get-ChildItem { param([string]$Path) [void]$global:touched.Add($Path); $null }
+$rl = { param($l) if ($l -like '*net.lnk') { @{ target = '\\srv\share\app.exe' } } else { @{ target = 'C:\Apps\here.exe' } } }
+function P($t) { [pscustomobject]@{ type = 'program'; target = $t } }
+foreach ($c in @(@('\\srv\share\app.exe', 'unchecked'), @('//srv/share/app.exe', 'unchecked'), @('\\?\UNC\srv\share\app.exe', 'unchecked'), @('\\.\pipe\x', 'unchecked'),
+                 @('Z:\apps\app.exe', 'unchecked'), @('C:\Apps\gone.exe', 'missing'), @('C:\Apps\here.exe', 'ok'), @('C:\Links\net.lnk', 'unchecked'), @('C:\Links\loc.lnk', 'ok'), @('notepad.exe', 'ok'), @('TODO', 'missing'))) {
+    $global:touched.Clear(); $r = Get-SetupState (P $c[0]) $dt $rl
+    $noNet = -not (@($global:touched) | Where-Object { $_ -match '^(\\\\|//|[Zz]:)' })
+    Check ("setup state '{0}' -> {1}, nothing non-local touched" -f $c[0], $c[1]) ($r -eq $c[1] -and $noNet) }
+$global:touched.Clear()
+Check 'website unaffected' ((Get-SetupState ([pscustomobject]@{ type = 'website'; target = '\\srv\x' }) $dt $rl) -eq 'ok' -and $global:touched.Count -eq 0)
+$dbtn = [pscustomobject]@{ type = 'program'; target = 'TODO'; detect = [pscustomobject]@{ paths = @('\\srv\share\*.exe', 'Z:\x\*.exe') } }
+Check 'detect paths: non-local only -> unchecked, never listed' ((Get-SetupState $dbtn $dt $rl) -eq 'unchecked' -and $global:touched.Count -eq 0)
+$global:touched.Clear()
+Check 'Test-ButtonSetUpQuick: UNC is not missing (no dot) and not touched' ((Test-ButtonSetUpQuick (P '\\srv\share\app.exe')) -and $global:touched.Count -eq 0)
+Check 'tile: only missing gets the dot; unchecked gets a tooltip' ($src -match "if \(\`$ss -eq 'missing'\) \{ \[void\]\`$g\.Children\.Add\(\(New-MissingDot" -and $src -match 'not checked until you click')
+Remove-Item Function:\global:Test-Path, Function:\global:Get-ChildItem
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
