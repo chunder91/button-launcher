@@ -164,6 +164,19 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     Check ($p + 'upgrade: kept pictures logged') ($ltxt -match 'images/reddog\.png' -and $ltxt -match 'images/my-own\.png' -and $ltxt -notmatch 'globe')
     Check ($p + 'LJ-N7: ../ entries not extracted outside') (-not (Test-Path $outside) -and -not (Test-Path (Join-Path $tb 'escape.txt')))
     & $instFile2   # a second run with the new manifest: reddog stays the user's
+    # R4-L1: an install from before the manifest (no shipped-images.txt) refreshes pictures that still match a v1.1.0 hash
+    Microsoft.PowerShell.Management\Remove-Item -LiteralPath (Join-Path $dest 'shipped-images.txt')
+    $badgeOld = Join-Path $dest 'images/badge.png'
+    $gitOk = $true; try { & git -C $root cat-file -e origin/main:images/badge.png 2>$null; $gitOk = ($LASTEXITCODE -eq 0) } catch { $gitOk = $false }
+    if ($gitOk) {
+        $raw = [System.Diagnostics.Process]::Start((New-Object System.Diagnostics.ProcessStartInfo -Property @{ FileName = 'git'; Arguments = "-C `"$root`" show origin/main:images/badge.png"; RedirectStandardOutput = $true; UseShellExecute = $false }))
+        $ms = New-Object IO.MemoryStream; $raw.StandardOutput.BaseStream.CopyTo($ms); $raw.WaitForExit(); [IO.File]::WriteAllBytes($badgeOld, $ms.ToArray())
+        Write-Raw (Join-Path $dest 'images/power.png') 'user-made'
+        $instFile3 = New-TestInstaller @{ 'badge.png' = 'new-badge'; 'power.png' = 'new-power' } @()
+        & $instFile3
+        Check ($p + 'R4-L1: no manifest: v1.1.0 badge.png refreshed') ((& $img 'badge.png') -eq 'new-badge')
+        Check ($p + 'R4-L1: no manifest: unknown power.png kept') ((& $img 'power.png') -eq 'user-made')
+    } else { Check ($p + 'R4-L1: origin/main available for the test') $false }
     Check ($p + 'upgrade again: user-replaced reddog.png still kept') ((& $img 'reddog.png') -eq 'custom')
     if ($safe -ne 'Launcher') {   # LJ-N6: a legacy 'ButtonLauncher' value for a look-alike folder (<name>2) is not ours
         $global:Reg[$runK]['ButtonLauncher'] = '"' + (Join-Path (Join-Path $env:LOCALAPPDATA 'Programs') ($safe + '2')) + '/ButtonLauncher.exe"'

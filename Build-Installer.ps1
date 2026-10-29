@@ -125,6 +125,8 @@ $oldMan = @{}
 $manPath = Join-Path $dest 'shipped-images.txt'
 if (Test-Path -LiteralPath $manPath) { foreach ($ml in Get-Content -LiteralPath $manPath) {
     if ($ml -match '^([0-9a-fA-F]{64})\s+(.+)$') { $oldMan[$matches[2].Trim().ToLowerInvariant()] = $matches[1].ToLowerInvariant() } } }
+else {   # R4-L1: installs from before the manifest (v1.1.0) shipped these pictures (hashes from main); refresh them if unchanged
+    $oldMan = @{ 'images/badge.png' = 'c80191a8b71708f5126bb81c02945e72c88df7f94458236cc36cc9f7a618b072'; 'images/email.png' = '785779ad2815f5886e5f780176022ed2289ec245e749d792fe34ef63ffe82ae1'; 'images/globe.png' = '9febcce7441d02c7cc04edb8fca6e655c15f65da395d1ed2b3982d12837d5124'; 'images/guide.png' = 'a950556411e95be22caa7dc33a59e19fb80734e0c9e75784b1ef513142655893'; 'images/power.png' = '8289780bca861ad9aaf69dfc88de61675e7851a1182e686feea63600e5c18081'; 'images/reddog.png' = '4125711cedf60d0fb4dd4a9fb0b05aff01c7db95f12d80a0032f1657d37d553b'; 'images/register.png' = '662105e5ab430976a35bef64abae4cedfcd60211447d6968386763c6ba1a615f'; 'images/revenue.png' = '3c875cebd0396788a53715464fd6af61c706cdf93cfbe9d29fa5b68f3acfaaa5'; 'images/screenconnect.png' = 'f903c058d8ae014f69ae2e9c09b87e39780ab1240b0e355db86935fe476c700e'; 'images/security.png' = 'da7d33138bd401dd1ac00c43d97e9acf0a35967c35d64c5b669242e55edc2952' } }
 $instLog = Join-Path $dest 'install.log'
 $destRoot = [IO.Path]::GetFullPath($dest).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 foreach ($e in $z.Entries) {
