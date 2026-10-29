@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Security</title>
+  <defs>
+    <!-- sticker: cream rim (dilate 7) with a 2px ink edge (dilate 9) and a hard drop shadow -->
+    <filter id="sticker" filterUnits="userSpaceOnUse" x="0" y="0" width="256" height="256" color-interpolation-filters="sRGB">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="9" result="d9"/>
+      <feMorphology in="SourceAlpha" operator="dilate" radius="7" result="d7"/>
+      <feFlood flood-color="#1b1b2a" result="ink"/>
+      <feComposite in="ink" in2="d9" operator="in" result="edge"/>
+      <feOffset in="edge" dx="5" dy="6" result="sh0"/>
+      <feComponentTransfer in="sh0" result="sh"><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feFlood flood-color="#fffdf2"/>
+      <feComposite in2="d7" operator="in" result="rim"/>
+      <feMerge><feMergeNode in="sh"/><feMergeNode in="edge"/><feMergeNode in="rim"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sticker)" stroke="#1b1b2a" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+
+    <path d="M128 18 l92 30 v66 q0 82 -92 124 q-92 -42 -92 -124 v-66z" fill="#2f6fdb"/>
+    <path d="M128 36 l74 24 v54 q0 66 -74 102z" fill="#2559b8" stroke="none"/>
+    <path d="M58 64 v42 q2 30 18 52" stroke="#ffffff" stroke-opacity="0.85" fill="none" stroke-width="7"/>
+    <path d="M98 118 v-22 q0 -30 30 -30 q30 0 30 30 v22" fill="none" stroke-width="22"/>
+    <path d="M98 118 v-22 q0 -30 30 -30 q30 0 30 30 v22" fill="none" stroke="#c7ced9" stroke-width="10"/>
+    <rect x="82" y="114" width="92" height="74" rx="12" fill="#ffd23f"/>
+    <path d="M128 140 a10 10 0 1 1 0.1 0 z M128 150 v18" fill="#1b1b2a" stroke-width="8"/>
+    <path d="M214 172 l5 12 l12 5 l-12 5 l-5 12 l-5 -12 l-12 -5 l12 -5z" fill="#ffffff" stroke-width="5"/>
+  </g>
+</svg>

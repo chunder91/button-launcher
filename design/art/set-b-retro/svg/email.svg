@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Email</title>
+  <defs>
+    <!-- sticker: cream rim (dilate 7) with a 2px ink edge (dilate 9) and a hard drop shadow -->
+    <filter id="sticker" filterUnits="userSpaceOnUse" x="0" y="0" width="256" height="256" color-interpolation-filters="sRGB">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="9" result="d9"/>
+      <feMorphology in="SourceAlpha" operator="dilate" radius="7" result="d7"/>
+      <feFlood flood-color="#1b1b2a" result="ink"/>
+      <feComposite in="ink" in2="d9" operator="in" result="edge"/>
+      <feOffset in="edge" dx="5" dy="6" result="sh0"/>
+      <feComponentTransfer in="sh0" result="sh"><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feFlood flood-color="#000000"/>
+      <feComposite in2="d7" operator="in" result="rim"/>
+      <feMerge><feMergeNode in="sh"/><feMergeNode in="edge"/><feMergeNode in="rim"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sticker)" stroke="#1b1b2a" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+
+    <path d="M22 96 h34 M14 126 h40 M26 156 h30" fill="none" stroke-width="10"/>
+    <rect x="66" y="60" width="170" height="130" rx="14" fill="#fffaf0"/>
+    <path d="M66 190 l64 -60 M236 190 l-64 -60" fill="none" stroke="#c9c2b0" stroke-width="7"/>
+    <path d="M66 190 l64 -60 M236 190 l-64 -60" fill="none"/>
+    <path d="M70 66 l81 66 l81 -66" fill="#f1eadb"/>
+    <path d="M151 120 c-10 -16 -36 -8 -30 12 c4 12 22 24 30 30 c8 -6 26 -18 30 -30 c6 -20 -20 -28 -30 -12z" fill="#ff3b5c"/>
+    <path d="M132 124 q4 -8 12 -6" stroke="#ffffff" stroke-opacity="0.85" fill="none" stroke-width="5"/>
+  </g>
+</svg>

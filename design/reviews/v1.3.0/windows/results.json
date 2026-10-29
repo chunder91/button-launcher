@@ -1,0 +1,46 @@
+﻿{
+    "favoritesAfter":  0,
+    "started":  "2026-10-29T12:53:43",
+    "scanSeconds":  9.4,
+    "promptSeen":  true,
+    "deviceScale":  1,
+    "panelScale":  0.92758620689655169,
+    "hosts":  [
+                  {
+                      "port":  5900,
+                      "host":  "10.200.1.54",
+                      "banner":  "RFB 003.008",
+                      "name":  ""
+                  },
+                  {
+                      "port":  5900,
+                      "host":  "10.200.1.101",
+                      "banner":  "RFB 003.008",
+                      "name":  "KBS-LT-CSR.bingo.keystonebingo.com"
+                  },
+                  {
+                      "port":  5900,
+                      "host":  "10.200.1.113",
+                      "banner":  "RFB 003.008",
+                      "name":  ""
+                  },
+                  {
+                      "port":  5900,
+                      "host":  "10.200.1.142",
+                      "banner":  "RFB 003.008",
+                      "name":  ""
+                  }
+              ],
+    "status":  "Found 4 register(s) on 10.200.1.0/24 (Ethernet) at 12:54 PM. Press F5 to rescan.",
+    "windowDpi":  96,
+    "subnets":  [
+                    {
+                        "range":  "10.200.1.0/24",
+                        "label":  "Ethernet",
+                        "gw":  "10.200.1.1",
+                        "ip":  "10.200.1.179",
+                        "gwIdKind":  "mac",
+                        "prefix":  24
+                    }
+                ]
+}

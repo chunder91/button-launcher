@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Restart remote connection</title>
+  <defs>
+    <!-- sticker: cream rim (dilate 7) with a 2px ink edge (dilate 9) and a hard drop shadow -->
+    <filter id="sticker" filterUnits="userSpaceOnUse" x="0" y="0" width="256" height="256" color-interpolation-filters="sRGB">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="9" result="d9"/>
+      <feMorphology in="SourceAlpha" operator="dilate" radius="7" result="d7"/>
+      <feFlood flood-color="#1b1b2a" result="ink"/>
+      <feComposite in="ink" in2="d9" operator="in" result="edge"/>
+      <feOffset in="edge" dx="5" dy="6" result="sh0"/>
+      <feComponentTransfer in="sh0" result="sh"><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feFlood flood-color="#fffdf2"/>
+      <feComposite in2="d7" operator="in" result="rim"/>
+      <feMerge><feMergeNode in="sh"/><feMergeNode in="edge"/><feMergeNode in="rim"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sticker)" stroke="#1b1b2a" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+
+    <path d="M128 30 a98 98 0 1 1 -86 52" fill="none" stroke-width="30"/>
+    <path d="M128 30 a98 98 0 1 1 -86 52" fill="none" stroke="#3fd17a" stroke-width="14"/>
+    <path d="M16 70 l52 -6 l-14 48 z" fill="#3fd17a"/>
+    <g transform="rotate(-35 128 132)">
+      <rect x="64" y="112" width="58" height="42" rx="10" fill="#4aa3ff"/>
+      <path d="M122 120 h22 M122 146 h22" stroke-width="12"/>
+      <path d="M122 120 h22 M122 146 h22" stroke="#ffd23f" stroke-width="4"/>
+      <path d="M64 133 h-26" stroke-width="12"/>
+      <rect x="152" y="108" width="50" height="50" rx="10" fill="#ff8a3d"/>
+      <path d="M202 133 h28" stroke-width="12"/>
+      <path d="M164 122 h10 M164 144 h10" stroke-width="7"/>
+    </g>
+  </g>
+</svg>

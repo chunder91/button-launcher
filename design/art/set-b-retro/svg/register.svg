@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>View register</title>
+  <defs>
+    <!-- sticker: cream rim (dilate 7) with a 2px ink edge (dilate 9) and a hard drop shadow -->
+    <filter id="sticker" filterUnits="userSpaceOnUse" x="0" y="0" width="256" height="256" color-interpolation-filters="sRGB">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="9" result="d9"/>
+      <feMorphology in="SourceAlpha" operator="dilate" radius="7" result="d7"/>
+      <feFlood flood-color="#1b1b2a" result="ink"/>
+      <feComposite in="ink" in2="d9" operator="in" result="edge"/>
+      <feOffset in="edge" dx="5" dy="6" result="sh0"/>
+      <feComponentTransfer in="sh0" result="sh"><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feFlood flood-color="#fffdf2"/>
+      <feComposite in2="d7" operator="in" result="rim"/>
+      <feMerge><feMergeNode in="sh"/><feMergeNode in="edge"/><feMergeNode in="rim"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sticker)" stroke="#1b1b2a" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+
+    <path d="M100 186 h56 l10 22 h-76 z" fill="#c9b98f"/>
+    <rect x="62" y="206" width="132" height="20" rx="8" fill="#e8dcc0"/>
+    <rect x="28" y="44" width="200" height="146" rx="22" fill="#e8dcc0"/>
+    <path d="M40 176 q88 12 176 0" stroke="#b5a57c" stroke-opacity="1" fill="none" stroke-width="7" />
+    <rect x="48" y="62" width="160" height="106" rx="14" fill="#123b36"/>
+    <g stroke="#7cff9b" stroke-width="6" fill="none">
+      <rect x="110" y="76" width="36" height="16" rx="3"/>
+      <path d="M94 104 h68 l10 30 h-88 z"/>
+      <path d="M86 134 h84 v20 h-84 z"/>
+      <path d="M118 144 h20"/>
+    </g>
+    <path d="M58 72 q4 -6 14 -6" stroke="#ffffff" stroke-opacity="0.85" fill="none" stroke-width="6"/>
+    <g fill="none">
+      <path d="M186 40 a26 26 0 0 1 26 -26" stroke-width="15"/>
+      <path d="M186 40 a26 26 0 0 1 26 -26" stroke="#ffd23f" stroke-width="7"/>
+      <path d="M198 40 a14 14 0 0 1 14 -14" stroke-width="15"/>
+      <path d="M198 40 a14 14 0 0 1 14 -14" stroke="#ffd23f" stroke-width="7"/>
+    </g>
+    <circle cx="210" cy="42" r="8" fill="#ffd23f"/>
+  </g>
+</svg>

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Internet</title>
+  <defs>
+    <!-- sticker: cream rim (dilate 7) with a 2px ink edge (dilate 9) and a hard drop shadow -->
+    <filter id="sticker" filterUnits="userSpaceOnUse" x="0" y="0" width="256" height="256" color-interpolation-filters="sRGB">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="9" result="d9"/>
+      <feMorphology in="SourceAlpha" operator="dilate" radius="7" result="d7"/>
+      <feFlood flood-color="#1b1b2a" result="ink"/>
+      <feComposite in="ink" in2="d9" operator="in" result="edge"/>
+      <feOffset in="edge" dx="5" dy="6" result="sh0"/>
+      <feComponentTransfer in="sh0" result="sh"><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feFlood flood-color="#fffdf2"/>
+      <feComposite in2="d7" operator="in" result="rim"/>
+      <feMerge><feMergeNode in="sh"/><feMergeNode in="edge"/><feMergeNode in="rim"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sticker)" stroke="#1b1b2a" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+
+    <path d="M38 150 C10 182 80 170 128 150 C176 130 238 92 214 74" fill="none" stroke-width="20"/>
+    <circle cx="124" cy="118" r="84" fill="#3fa9f5"/>
+    <path d="M124 34 a84 84 0 0 1 0 168 a60 84 0 0 0 0 -168z" fill="#2a86d1" stroke="none"/>
+    <path d="M76 70 c18 -10 34 -4 40 8 c6 12 -10 18 -6 30 c4 12 -14 20 -26 12 c-12 -8 -24 -10 -26 -24 c-2 -12 6 -20 18 -26z" fill="#5ad15a"/>
+    <path d="M140 132 c14 -8 34 -2 36 14 c2 14 -10 26 -20 34 c-10 8 -20 -4 -18 -16 c2 -12 -8 -24 2 -32z" fill="#5ad15a"/>
+    <path d="M160 64 c10 -2 20 6 18 14 c-2 8 -14 6 -20 0 c-6 -6 -4 -12 2 -14z" fill="#5ad15a"/>
+    <circle cx="124" cy="118" r="84" fill="none"/>
+    <path d="M70 64 q18 -20 46 -24" stroke="#ffffff" stroke-opacity="0.85" fill="none" stroke-width="7"/>
+    <path d="M38 150 C10 182 80 170 128 150 C176 130 238 92 214 74" fill="none" stroke="#ffd23f" stroke-width="9"/>
+    <path d="M168 150 l0 82 l20 -18 l14 28 l16 -8 l-14 -28 l26 -2 z" fill="#ffffff"/>
+  </g>
+</svg>

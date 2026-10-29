@@ -1,0 +1,49 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body{margin:0;background:#3a3f47;font-family:"Segoe UI Variable Text","Segoe UI",Arial,sans-serif}
+.win{position:absolute;left:30px;top:30px;width:620px;height:480px;color:#fff;box-shadow:0 12px 40px rgba(0,0,0,.5);border:1px solid #333;background:linear-gradient(#26262C,#16161A)}
+.tb{height:30px;background:#202020;display:flex;align-items:center;padding:0 10px;font-size:12px;color:#ddd;justify-content:space-between}
+.in{padding:14px 20px 16px;height:420px;display:flex;flex-direction:column;box-sizing:border-box}
+.hint{font-size:13px;color:#a0a0a0;margin-bottom:12px}
+.lv{flex:1;background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.10);border-radius:10px;font-size:14px;position:relative;overflow:hidden}
+.hd,.r{display:grid;grid-template-columns:28px 1fr 150px 130px;align-items:center;margin:0 4px}
+.hd{height:28px;color:#a0a0a0;font-size:12px;font-weight:600;border-bottom:1px solid rgba(255,255,255,.08);margin:0;padding:0 4px}
+.r{height:32px;border-radius:6px;position:relative}.r:first-of-type{margin-top:4px}
+.r.sel{background:rgba(255,255,255,.09)}.r.hov{background:rgba(255,255,255,.05)}
+.r.sel:before{content:"";position:absolute;left:0;top:8px;width:3px;height:16px;border-radius:1.5px;background:#22C55E}
+.st{color:#F59E0B;text-align:center;font-size:14px}.st.off{color:rgba(255,255,255,.5)}
+.dim{color:#a0a0a0}.seen{color:#a0a0a0;font-size:13px}
+.n{padding-left:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row{display:flex;margin-top:12px;align-items:center}
+.b{height:32px;line-height:30px;padding:0 14px;font-size:14px;border-radius:10px;box-sizing:border-box;border:1px solid;border-image:none;border-color:rgba(255,255,255,.28) rgba(255,255,255,.15) rgba(255,255,255,.06);background:linear-gradient(#2E2E2E,#1E1E1E);position:relative;text-align:center;margin-left:8px}
+.b:after{content:"";position:absolute;left:1px;right:1px;top:1px;height:8px;border-radius:9px 9px 0 0;background:rgba(255,255,255,.14)}
+.g{background:linear-gradient(#0E7A4B,#0A5A38);font-weight:600;min-width:104px;margin-left:0}
+.u{background:linear-gradient(#0B6E99,#085171);font-weight:600;min-width:92px}
+.sp{flex:1}.more{width:36px;padding:0;font-size:18px;letter-spacing:1px}
+.bar{height:2px;margin:0 10px;background:linear-gradient(90deg,transparent 20%,#0E7A4B 40%,#0E7A4B 60%,transparent 80%)}
+.status{color:#a0a0a0;font-size:12px;margin-top:10px}
+.menu{position:absolute;background:#26262C;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:4px;font-size:14px;width:250px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+.mi{height:36px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;border-radius:4px}
+.mi.h{background:rgba(255,255,255,.08)}.mi .k{color:#a0a0a0;font-size:12px}.mi.dis{color:#6a6a6a}
+.sep{height:1px;background:rgba(255,255,255,.10);margin:4px 8px}
+</style></head><body>
+<div class="win"><div class="tb"><span>View Register</span><span>—&nbsp;&nbsp;☐&nbsp;&nbsp;✕</span></div><div class="in">
+<div class="hint">Pick a register. View only to watch, Interact to take control.</div>
+<div class="lv"><div class="hd"><span></span><span style="padding-left:4px">Name</span><span>Address</span><span>Seen</span></div>
+<div class="r sel"><span class="st">★</span><span class="n">Register 1</span><span>192.168.1.21</span><span class="seen">Now</span></div>
+<div class="r"><span class="st">★</span><span class="n">Register 2</span><span>192.168.1.22</span><span class="seen">Now</span></div>
+<div class="r"><span class="st">★</span><span class="n dim">Office</span><span class="dim">office-pc:5901</span><span class="seen">Not found last scan</span></div>
+<div class="r hov"><span class="st off">☆</span><span class="n">backoffice.shop.lan</span><span>192.168.1.40</span><span class="seen">Now</span></div>
+<div class="r"><span></span><span class="n dim">Unnamed (F2 to name)</span><span>192.168.1.77</span><span class="seen">Now</span></div>
+</div>
+<div class="bar" id="bar"></div>
+<div class="row"><span class="b g">View only</span><span class="b u">Interact</span><span class="sp"></span><span class="b" style="min-width:84px">Rescan</span><span class="b" style="min-width:72px">Add...</span><span class="b more" id="more">⋯</span></div>
+<div class="status" id="status">Looking for registers on 192.168.1.0/24 (Wi-Fi) (176 of 253)...</div>
+</div></div>
+<div class="menu" id="menu" style="display:none;left:395px;top:300px">
+<div class="mi h"><span>Rename...</span><span class="k">F2</span></div>
+<div class="mi"><span>Unpin</span><span class="k">Space</span></div>
+<div class="sep"></div>
+<div class="mi"><span>Remove from favourites</span><span class="k">Del</span></div>
+</div>
+<script>if(location.hash=='#menu'){document.getElementById('menu').style.display='block';document.getElementById('bar').style.visibility='hidden';document.getElementById('status').textContent='Found 5 register(s) on 192.168.1.0/24 (Wi-Fi) at 11:52 AM. Press F5 to rescan.'}</script>
+</body></html>

@@ -1,0 +1,10 @@
+13:04:57.396  PowerShell: C:\windows\System32\WindowsPowerShell\v1.0\powershell.exe
+13:04:57.429  monitor \\.\DISPLAY5: bounds 1920,0-3840,1080 (1920x1080), work 1920,0-3840,1032, DPI 96 (100%), primary=False
+13:04:57.431  monitor \\.\DISPLAY10: bounds 0,0-1920,1080 (1920x1080), work 0,0-1920,1032, DPI 96 (100%), primary=True
+13:04:57.432  monitor \\.\DISPLAY11: bounds -1600,179-0,1079 (1600x900), work -1600,179-0,1031, DPI 96 (100%), primary=False
+13:04:57.586  launched Launcher.ps1 pid 44568
+13:05:12.636  panel window rect 1651,0-1920,1032 = 269x1032, window DPI 96
+13:05:42.722  idle CPU: 0 ms over 30.0 s = 0.000% of one core, 0.000% of 32 logical CPUs; WS 277.2 MB; 10 s samples (cumulative ms): 2766, 2766, 2766
+13:05:42.729  sent WM_CLOSE to the panel (app quit path: Closed -> Save-Config -> Shutdown)
+13:05:42.809  launcher exited gracefully, code 0
+13:05:42.815  HKCU Run unchanged: True

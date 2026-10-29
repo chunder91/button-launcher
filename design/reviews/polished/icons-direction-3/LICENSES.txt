@@ -1,0 +1,29 @@
+LICENSES - button launcher polished mockup icons (Smudge, Oct 29 2026)
+All mockups only. Nothing applied until Charles picks a direction.
+
+1. Fluent UI System Icons - Copyright (c) Microsoft Corporation - MIT License
+   https://github.com/microsoft/fluentui-system-icons (branch main, assets/<Name>/SVG/)
+2. Fluent Emoji (3D and Flat) - Copyright (c) Microsoft Corporation - MIT License
+   https://github.com/microsoft/fluentui-emoji (branch main, assets/<Name>/3D/ and /Flat/)
+   Full MIT texts: LICENSE-fluentui-system-icons.txt, LICENSE-fluentui-emoji.txt in this folder.
+3. Red Dog logo (reddog-48/256.png) - copied unchanged from art/reddog/reddog-full-{48,256}.png
+   (source https://reddogpos.com/red-dog-pos-logo.png). Red Dog POS trademark; not MIT; used as the vendor's own app logo.
+4. Font in renders: Selawik (Microsoft's open Segoe UI fallback) - SIL Open Font License 1.1
+   https://github.com/microsoft/Selawik . Font substitute for Segoe UI Variable (not redistributable). No font files shipped here.
+5. Smudge own work: none used in directions 3-5.
+
+FILES
+FILES (tint = MIT glyph recoloured, a permitted modification)
+register-48/256.png <- receipt.svg [Fluent UI System Icons Regular, MIT] tinted #34D399
+globe-48/256.png <- globe.svg [Fluent UI System Icons Regular, MIT] tinted #A78BFA
+email-48/256.png <- mail.svg [Fluent UI System Icons Regular, MIT] tinted #FACC15
+guide-backoffice-48/256.png <- book_open.svg [Fluent UI System Icons Regular, MIT] tinted #A1A1AA
+guide-register-48/256.png <- book.svg [Fluent UI System Icons Regular, MIT] tinted #A1A1AA
+badge-48/256.png <- shield.svg [Fluent UI System Icons Regular, MIT] tinted #FF4D5E
+revenue-48/256.png <- building_government.svg [Fluent UI System Icons Regular, MIT] tinted #F0E68C
+security-48/256.png <- lock_closed.svg [Fluent UI System Icons Regular, MIT] tinted #F5A524
+screenconnect-48/256.png <- arrow_sync.svg [Fluent UI System Icons Regular, MIT] tinted #E5484D
+power-48/256.png <- power.svg [Fluent UI System Icons Regular, MIT] tinted #E5484D
+chip-document-48/256.png <- document_text.svg [Fluent UI System Icons Regular, MIT] tinted #7DD3FC
+chip-files-48/256.png <- document.svg [Fluent UI System Icons Regular, MIT] tinted #7DD3FC
+reddog-48/256.png <- art/reddog/reddog-full-*.png [Red Dog POS, unchanged]

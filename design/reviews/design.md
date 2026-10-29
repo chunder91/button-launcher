@@ -1,0 +1,64 @@
+# Button Launcher: design review (UX: Squint, UI: Kern), Oct 29 2026
+Reviewed: src/Launcher.ps1, buttons.json and README.txt, plus original-panel.png, real-windows-shot.png and button-launcher-preview.png.
+
+**Combined verdict: SHIP WITH FIXES** (UX and UI both ship with fixes, no Blockers; UI has 3 Majors and 4 Minors). **UX verdict: SHIP WITH FIXES.** No Blockers, 2 Majors, 5 Minors.
+
+## What works (UX)
+- Restart computer asks first, and No has focus by default. The copy says what you lose: "Unsaved work in open programs will be lost."
+- Restart ScreenConnect reports the result in plain words, including a cancelled admin prompt and "No ScreenConnect Client service was found".
+- A button that isn't set up says how to fix it ("Right-click it > Edit this button..."), so it never fails silently.
+- Panels anchored by percent, staying clear of the taskbar and re-fitting on wake are the right calls for shop PCs with mixed screens.
+- Lock is on by default.
+
+## UX findings
+1. **Major: anyone at a shop PC can edit or delete buttons, even when the panels are locked.** Lock only stops dragging. Right-click still offers Edit this button, Delete this button, Move, Add, Delete this panel, Build installer and Edit buttons.json. A staff member who right-clicks by accident is two clicks from losing PLCE or changing what Restart Computer does, and there's no undo. Fix: while locked, the right-click menu shows only "Unlock to edit..." and Close this panel. Every edit, move, add and delete item appears only when unlocked. (A PIN for unlocking is in the proposals below.)
+2. **Major: first-run "ask once" prompts land on whoever clicks first, usually staff mid-shift.** Red Dog, VNC Viewer and both User Guides ask "Pick the ... (PDF). You'll only be asked once." The person at the counter usually doesn't know where the PDF lives, and if they pick the wrong file, nothing tells them how to fix it. Fix: (a) add a one-time "Set up this PC" step that runs after install, or from the menu, and lists every button that still needs a file, with a Pick... button for each. That way setup happens once, done by whoever installs it. (b) Change the prompt's last line to "If you pick the wrong one, right-click the button > Edit this button to change it." instead of "You'll only be asked once."
+3. **Minor: "Close all" quits the launcher with no confirm and no hint how to get it back.** Both panels vanish, and staff may think the PC broke. Fix: ask "Close the launcher? To open it again, use the Start Launcher shortcut on the desktop." Close this panel can stay as it is.
+4. **Minor: the confirm dialogs are generic.** Restart computer's title is "Please confirm" with Yes/No, and Delete this button says "Delete this button?" without naming it. Fix: use the action as the title ("Restart computer") and name the item ("Delete the PLCE button? This can't be undone."). Also give Restart ScreenConnect a default confirm: "Restart ScreenConnect? Anyone connected to this PC remotely will drop for a few seconds." The admin prompt alone doesn't tell staff what they're about to cut off.
+5. **Minor: the edit window speaks developer.** Label says "\n = new line". Height and Font size are bare number boxes with no unit or range, and only Website has Test. Fix: make Label a multi-line box (Enter = new line). Show Height and Font size as Small/Medium/Large, or put the default and range next to the box ("px, default 64"). Show Test for every Type (Program launches it, File opens it, Built-in shows "Test isn't available for restarts").
+6. **Minor: long labels get hard to read at Small size.** In the preview at Medium, DEPARTMENT OF REVENUE and START JARTREK SECURITY are already the smallest text on the panel, and an icon above the text squeezes it further. At Small they get too small to read at arm's length. Fix: set a minimum label size, or drop the icon when the button is too short. Kern will give the numbers. Proposal: shorter labels (below).
+7. **Minor: the panel right-click menu mixes everyday, setup and dangerous items in one flat list of 14.** Fix: keep Lock or Unlock, Always on top, Size and Monitor at the top. Put Rename, Add or Delete panel, Build installer, Edit buttons.json and Reload under a "Setup" submenu. Put Close this panel and Close all at the bottom.
+
+Label note: Charles chose the Red Dog Back Office and Email renames himself (Groot, Oct 29), so they're settled.
+
+## Creative proposals (UX), all need Charles's OK through Groot
+- **Edit mode you can see.** Unlocking shows a thin yellow bar on each panel: "Editing: right-click a button to change it. Lock when done." Buttons get a dashed outline, and double-click opens Edit. The panels lock again by themselves after 10 minutes with no changes, so a shop PC never stays editable overnight. An optional 4-digit unlock PIN can be set in the installer builder.
+- **"Set up this PC" checklist** (see Major 2). It shows a green tick next to each button whose file was found, and the installer builder can open it at the end of install.
+- **Missing-target corner dot.** A small amber dot shows on any button whose saved program or file isn't on this PC. Staff can see it needs setup before clicking, and hovering says "Not set up on this PC yet".
+- **Shorter, scannable labels:** "PA REVENUE", "JARTREK SECURITY", and "GUIDE: BACK OFFICE v11" / "GUIDE: REGISTER v11". These keep the panel's all-caps register-key feel while giving each word more room.
+- **Danger row.** Group Restart ScreenConnect and Restart Computer at the very bottom with a 6px gap above them, so launch buttons and restart buttons never sit side by side (today, Start Jartrek Security is next to Restart Computer).
+- **Keyboard and touch.** Add one hotkey to bring the panels forward (for example Ctrl+Alt+L), with arrow keys to move between buttons and Enter to launch, plus names for screen readers on each button. Keep every button at least 44px tall at Small, in case a shop PC has a touchscreen.
+- **Style steer for Smudge** (Kern to confirm the visuals): flat white line icons with one stroke weight. Icons go left of the text on full-width buttons and above it only on tall half-width buttons. The real Red Dog logo goes only on the Back Office button, because a brand logo on every button would muddy what each one does.
+
+## UI findings (Kern)
+
+**UI verdict: SHIP WITH FIXES.** No Blockers, 3 Majors, 4 Minors. Full file: /home/box/shared/kern/reviews/button-launcher-2026-10-29.md
+
+1. **Major: label contrast.** White text on these fills: #3EC3EE 2.05, #B48CF5 2.62, #FA8072 2.50, #DAA520 2.24, #7F7F7F 4.00, #0E8A55 4.39. Gold #FFC000 on #FF0000 (PLCE) is 2.44. Only RED DOG (30px) and PLCE (28px) count as large text (3:1), and both still fail. The rest are 10–22px and need 4.5:1.
+   Fix, keeping the hue family: Back Office #1C8FC0 (white 3.6, OK as large text), or keep #3EC3EE with fg #0B2A3A (7.3). Internet #7B4FD6 (white 5.3). Restart SC #C8402F (white 5.0). Security #9A6B00 (white 4.7). Guides #666666 (white 5.7). View Register #0B7A4A (white 5.4). PLCE: fg #FFFFFF on #C40000 (6.3), or keep #FF0000 with fg #000000 (5.25). Crop: real-panel-2x.png.
+2. **Major: the real build drops pictures.** The preview shows icons on every button. In the real shot, only RESTART COMPUTER has one (the guides, PLCE, Revenue, Screen Connect and Security have none). Either images/ didn't ship or Resolve-Img misses on the laptop. Fix: package images/, and log or show a visible placeholder when Get-PicSource returns null (see #6). Crop: real-guide-row-3x.png.
+3. **Major: small labels.** (This is the numbers for Squint's UX Minor 6.) The guides and Security are fontSize 11, Revenue is 10 and Restart Computer is 12. At the laptop's real width (about 268/290 = 0.92 scale) that's about 9–10px bold caps. Fix: set a floor of 12 DIP (13 for 3-line labels), and drop "VERSION 11" to a second weight or size (see the type scale in P2). The minimum size has to hold after scaling (`max(12, fs*s)`).
+4. **Minor: the bevel is too soft and too uniform.** It uses a 3px border with a 0,0→1,1 gradient at α200 (#FFFFFF/#282828), split at 0.49/0.51, so it reads as a diagonal smear. The original has hard top-left highlight and bottom-right shadow bands of different widths. Fix: see P1 (top/left 3px #FFFFFF α170, bottom/right 3px #000000 α140, plus a 1px inner #000 α60).
+5. **Minor: the black button sits on a black panel.** RESTART COMPUTER #000000 on panel #000000 is 1.00:1 (non-text needs 3:1). Only the bevel defines it. Fix: panel bg #1A1A1A plus a 1px #5A5A5A outer stroke on dark buttons, or use #2B2B2B as the button fill (white 14.0).
+6. **Minor: edge-state visuals are undefined.** A missing image falls back to text only, with no cue. An unset button (START JARTREK SECURITY) looks the same as a working one. Fix: this gives the visual spec for Squint's proposals rather than a separate one. Missing-target dot: 10px circle #FFB000 with a 1.5px #000000 ring (3:1 or better on every fill), 5px inset from the top-right corner inside the bevel. Edit-mode outline: 2px dashed #FFE600 (dash 4/3), 3px inside the bevel. Squint's edit bar: 20px tall, #FFE600 with #000000 12px bold text (19.6:1).
+7. **Minor: the launch flash wipes out the label.** White α0.8 for 300ms drops white-text contrast to about 1.2:1. Fix: flash to α0.45 with a 60ms rise and 240ms fall, or flash the bevel only (inset 3px glow of #FFFFFF). Hover (white α0.10) and press (black α0.15 plus sunken bevel and shift) are fine. The grip bar #555555 on #3A3A3A edge is 1.7:1; use #8C8C8C (3.4:1, passes non-text 3:1) and add 3 grip dots of #BDBDBD.
+
+Spacing: 2px margin (4px gutter), 4px panel padding (2px when locked), 290 DIP base width, scales 180–560. The gutter matches the original's rhythm, so keep it.
+Not checked: DPI at 125/150% (WPF per-monitor V2 scaling looks right in code, but there's no real capture at those scales), light/dark Windows (the panel ignores the OS theme by design), and right-click menus and the edit window (default WPF chrome, Squint covers the flow).
+
+### Creative proposals (UI) (all need Charles's OK via Groot)
+- **P1 "True Bevel".** Separate edge brushes. Top and left 3px #FFFFFF α170, bottom and right 3px #000000 α140, inner 1px #000 α60, corners mitred. Press swaps the edges and shifts content 1,1px. This is faithful to the shop panel.
+- **P2 Type scale.** Arial Black or Arial Bold 700 caps with letter-spacing +0.5. Tokens: hero 30, primary 22, secondary 16, small 13, sub-line 11 at 85% opacity (for "VERSION 11"). Line-height 1.05. The text shadow stays 1px, blur 0, #000 α50.
+- **P3 Colour tokens.** Keep the shop's hue families but AA-passing (see #1): blue #1C8FC0, green #0B7A4A, violet #7B4FD6, yellow #FFE600/#000, grey #666666, red #C40000, khaki #F0E68C/#4A3D00, salmon #C8402F, gold #9A6B00, ink #2B2B2B. Panel #1A1A1A.
+- **P4 Launch flash: "marquee pulse".** A 2px inner ring of #FFFFFF runs 0→1→0 over 90/180ms, plus a 4% scale-in at 1.0→0.97→1.0. The label stays readable the whole time.
+- **P5 Density modes.** Compact: 220 DIP width, 60px rows, icon left 20px. Classic: 290, 80px rows, icon left 32px. Large/touch: 360, 104px rows, icon above 40px. Icon size equals min(48, 0.4×row height).
+
+### Art spec for Smudge
+This agrees with Squint's steer (flat line icons with one stroke weight, icon left on full-width buttons and above only on tall half-width ones, Red Dog logo on Back Office only). The one difference: glyphs are #000000, not white, on the yellow and khaki fills, because white on #FFE600 is about 1.1:1.
+Placement rule in numbers: put the icon above only when the half-width button is at least 80 DIP tall. Otherwise put it left, or drop it below 56 DIP.
+art/ doesn't exist yet, so there's nothing to steer against. Current set: images/*.png plus svg (10 glyphs). Spec:
+- Format: SVG master, exported as PNG at 16/24/32/48/64, plus a multi-size ICO (16/24/32/48/256) for the app/installer icon.
+- Style: flat single-colour glyph, 2px stroke at 24px (scaled proportionally), rounded caps, no gradients. Colour is set per button: #FFFFFF on dark fills, #000000 on yellow/khaki. Keep a 1px #000 α40 drop at 1,1 to match the label shadow.
+- Grid: 24px artboard, 2px padding (20px live area), centred optically.
+- Red Dog logo: use the official reddogpos.com mark only. Make a one-colour knock-out version (white) for the #1C8FC0/#3EC3EE button plus a full-colour version for picture-only mode. Clear space is 15% of the height on all sides. At 48px it must stay legible, so drop the wordmark under 32px and use the dog head only. Don't recolour the brand red in the full-colour version.
+- Needed: guide (book), badge (PLCE shield), revenue (doc+$), screenconnect (monitor+refresh), security (lock), power, globe, mail, register (monitor+chart), and reddog. No separate missing or unset glyphs are needed, because the amber dot and dashed outline are drawn in code (finding 6).

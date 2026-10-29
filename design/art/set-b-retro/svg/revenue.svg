@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Department of revenue</title>
+  <defs>
+    <!-- sticker: cream rim (dilate 7) with a 2px ink edge (dilate 9) and a hard drop shadow -->
+    <filter id="sticker" filterUnits="userSpaceOnUse" x="0" y="0" width="256" height="256" color-interpolation-filters="sRGB">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="9" result="d9"/>
+      <feMorphology in="SourceAlpha" operator="dilate" radius="7" result="d7"/>
+      <feFlood flood-color="#1b1b2a" result="ink"/>
+      <feComposite in="ink" in2="d9" operator="in" result="edge"/>
+      <feOffset in="edge" dx="5" dy="6" result="sh0"/>
+      <feComponentTransfer in="sh0" result="sh"><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feFlood flood-color="#000000"/>
+      <feComposite in2="d7" operator="in" result="rim"/>
+      <feMerge><feMergeNode in="sh"/><feMergeNode in="edge"/><feMergeNode in="rim"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sticker)" stroke="#1b1b2a" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+
+    <path d="M18 84 l100 -56 l100 56z" fill="#e9eef5"/>
+    <rect x="22" y="84" width="192" height="20" fill="#d3dae6"/>
+    <g fill="#e9eef5"><rect x="36" y="104" width="24" height="84"/><rect x="80" y="104" width="24" height="84"/><rect x="124" y="104" width="24" height="84"/><rect x="168" y="104" width="24" height="84"/></g>
+    <rect x="16" y="188" width="204" height="18" fill="#d3dae6"/>
+    <rect x="6" y="206" width="224" height="20" rx="4" fill="#e9eef5"/>
+    <circle cx="186" cy="176" r="52" fill="#ffcc33"/>
+    <circle cx="186" cy="176" r="38" fill="#ffd95e" stroke-width="6"/>
+    <path d="M202 156 q-8 -8 -18 -8 q-16 0 -16 12 q0 10 18 14 q18 4 18 16 q0 12 -18 12 q-12 0 -20 -8 M186 140 v76" fill="none" stroke-width="9"/>
+    <path d="M152 156 q8 -14 22 -18" stroke="#ffffff" stroke-opacity="0.85" fill="none" stroke-width="6"/>
+  </g>
+</svg>
