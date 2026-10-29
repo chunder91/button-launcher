@@ -1,0 +1,1 @@
+$d=$env:BL_DIR;$k=$env:BL_KEEP;if(Test-Path -LiteralPath $k){gci -LiteralPath $k -Recurse -File -Force|%{$t=Join-Path $d $_.FullName.Substring($k.Length+1);$null=md (Split-Path $t) -Force;Move-Item -LiteralPath $_.FullName $t -Force};Remove-Item -LiteralPath $k -Recurse -Force}
