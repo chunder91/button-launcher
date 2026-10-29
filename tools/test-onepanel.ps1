@@ -60,7 +60,24 @@ Check 'lnk on a share or mapped drive is never read' ($script:lnkRead -eq 0)
 Check 'reader error -> fallback' (-not (Test-SafeIconSource 'C:\d\x.lnk' $dt { throw 'COM failed' }))
 foreach ($c in @(@('program', 'images/register.png'), @('file', 'images/guide.png'), @('script', 'images/screenconnect.png'), @('website', 'images/globe.png'))) {
     Check ("fallback icon for {0}: {1}" -f $c[0], $c[1]) ((Get-ChipFallbackPic $c[0]) -eq $c[1] -and (Test-Path (Join-Path $root $c[1]))) }
-Check 'Get-ChipIcon checks Test-SafeIconSource before Test-Path and caches per target' ($src -match '\(Test-SafeIconSource \$t\) -and \(Test-Path -LiteralPath \$t -PathType Leaf\)' -and $src -match '\$global:iconCache\[\$t\] = \$bs')
+# OP-L3: Get-ChipIcon run for real with mocks: cache key = path|mtime, no file access for non-local targets
+$gci = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-ChipIcon' }, $true)
+Invoke-Expression $gci.Extent.Text
+function global:Get-PicSource($b, $s) { 'fallback' }; function global:Resolve-Img($i) { $i }
+$global:safeOk = $true; function global:Test-SafeIconSource($t) { $global:safeOk }
+$tf = Join-Path ([IO.Path]::GetTempPath()) ('chip-' + [guid]::NewGuid() + '.exe'); Set-Content $tf 'x'
+$global:iconCache = @{}; $cb = [pscustomobject]@{ type = 'program'; target = $tf; image = 'icon' }
+[void](Get-ChipIcon $cb); [void](Get-ChipIcon $cb)
+$k1 = @($global:iconCache.Keys)
+Check 'OP-L3: one cache entry keyed path|LastWriteTimeUtc ticks after two draws' ($k1.Count -eq 1 -and $k1[0] -eq ($tf.ToLowerInvariant() + '|' + (Get-Item $tf).LastWriteTimeUtc.Ticks))
+(Get-Item $tf).LastWriteTimeUtc = (Get-Date).AddDays(-1).ToUniversalTime(); [void](Get-ChipIcon $cb)
+Check 'OP-L3: changed file -> new cache entry' ($global:iconCache.Count -eq 2)
+Check 'OP-L3: extraction only when the key is new' ($gci.Extent.Text -match '(?s)if \(-not \$global:iconCache\.ContainsKey\(\$ck\)\) \{.*?ExtractAssociatedIcon')
+$global:safeOk = $false; $global:iconCache = @{}; $script:gi = 0
+function global:Get-Item { $script:gi++; Microsoft.PowerShell.Management\Get-Item @args }
+Check 'OP-L1/L3: non-local target -> fallback, file never touched, nothing cached' ((Get-ChipIcon $cb) -eq 'fallback' -and $script:gi -eq 0 -and $global:iconCache.Count -eq 0)
+Remove-Item Function:\global:Get-Item; Remove-Item -LiteralPath $tf
+Check 'Get-ChipIcon checks Test-SafeIconSource before touching the file' ($gci.Extent.Text -match '(?s)if \(Test-SafeIconSource \$t\) \{\s+\$fi = \$null; try \{ \$fi = Get-Item')
 Check 'chip dot: no existence check on non-local paths' ($src -match '\(Test-LocalFixedPath \$ct\) -and -not \(Test-ButtonSetUpQuick \$btn\)')
 # Source checks
 Check 'click-through: middle Background $null when locked' ($src -match "\`$mid\.Background = if \(\`$locked\) \{ \`$null \}")

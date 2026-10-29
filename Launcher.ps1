@@ -1109,15 +1109,18 @@ function global:Get-ChipIcon($btn) {   # the target's own icon (local fixed driv
     if ($kind -ne 'website') {
         $t = Expand $btn.target
         if ($t -and -not (Is-Todo $t)) {
-            if ($global:iconCache.ContainsKey($t)) { if ($global:iconCache[$t]) { return $global:iconCache[$t] } }
-            else {
-                $bs = $null
-                if ((Test-SafeIconSource $t) -and (Test-Path -LiteralPath $t -PathType Leaf)) {
-                    try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($t)
-                          $bs = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
-                          $ico.Dispose(); $bs.Freeze() } catch { $bs = $null } }
-                $global:iconCache[$t] = $bs                                                     # extracted once per target, not on every draw
-                if ($bs) { return $bs } } }
+            # OP-L3: local fixed-drive targets only (OP-L1); cached by path + last-write time, so a rebuild never re-reads the file
+            if (Test-SafeIconSource $t) {
+                $fi = $null; try { $fi = Get-Item -LiteralPath $t -ErrorAction Stop } catch {}
+                if ($fi -and -not $fi.PSIsContainer) {
+                    $ck = $t.ToLowerInvariant() + '|' + $fi.LastWriteTimeUtc.Ticks
+                    if (-not $global:iconCache.ContainsKey($ck)) {
+                        $bs = $null
+                        try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($t)
+                              $bs = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
+                              $ico.Dispose(); $bs.Freeze() } catch { $bs = $null }
+                        $global:iconCache[$ck] = $bs }
+                    if ($global:iconCache[$ck]) { return $global:iconCache[$ck] } } } }
     }
     return Get-PicSource ([pscustomobject]@{ image = (Get-ChipFallbackPic $kind) }) 32
 }
