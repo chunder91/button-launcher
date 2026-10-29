@@ -2624,6 +2624,7 @@ function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, 
                 if (-not $t -and $l -match '(?i)^\* BYE') { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'server closed at sign-in' } } }
         } catch { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no sign-in reply' } }
         if ($t -ne 'OK') { if ($t) { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused' } }; return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no sign-in reply' } }
+        if ($Flags) { $Flags.loginOk = $true }   # CC L1: sign-in confirmed; a later cap/loss is a network retry
     }
     & $Write ([Text.Encoding]::ASCII.GetBytes("a2 STATUS INBOX (UNSEEN)`r`n"))
     $n = -1; $t = $null
@@ -2696,7 +2697,8 @@ function global:Update-MailState($s, $r, [datetime]$now) {   # one check result 
     return $out
 }
 function global:Get-MailLostResult($sync, [string]$why) {   # M15-I1: a check cut off by the 45 s cap (or lost) after LOGIN went out is an unclear sign-in failure: stop, never a timer retry
-    if ($sync -and $sync.loginSent) { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = $why } }
+    if ($sync -and $sync.loginSent -and -not $sync.loginOk) {   # CC L1: not after a tagged OK
+    return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = $why } }
     return @{ kind = 'net'; unseen = -1; detail = $why }
 }
 function global:Step-MailResume($s) { $s.epoch = [int]$s.epoch + 1 }   # a check that started before sleep is ignored when it ends
@@ -2797,7 +2799,7 @@ function global:Remove-MailLogin { foreach ($p in (Get-MailSecretPath), (Get-Mai
 function global:Start-MailRun([string]$user, [System.Security.SecureString]$secure, [scriptblock]$OnDone) {   # $false when a check is already running
     if ($global:mailRun) { return $false }
     Clear-MailDeadRuns
-    $sync = [hashtable]::Synchronized(@{ tcp = $null; loginSent = $false })
+    $sync = [hashtable]::Synchronized(@{ tcp = $null; loginSent = $false; loginOk = $false })
     $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open()
     $ps = [powershell]::Create(); $ps.Runspace = $rs
     [void]$ps.AddScript((Get-MailWorkerScript)).AddArgument($user).AddArgument($secure).AddArgument($sync)
@@ -2809,7 +2811,7 @@ function global:Start-MailRun([string]$user, [System.Security.SecureString]$secu
     $t.Add_Tick({
         $r = $null
         if ($run.handle.IsCompleted) { try { $o = $run.ps.EndInvoke($run.handle); if ($o.Count -gt 0) { $r = $o[$o.Count - 1]; if ($r -is [psobject]) { $r = $r.BaseObject } } } catch {} }
-        elseif (([DateTime]::UtcNow - $run.start).TotalSeconds -ge 45) { $r = Get-MailLostResult $run.sync 'timed out' }
+        elseif (([DateTime]::UtcNow - $run.start).TotalSeconds -ge 45) { Stop-MailRunObjects $run; $r = Get-MailLostResult $run.sync 'timed out' }   # LJ M16-I1: close the socket first, then read the flags
         else { return }
         $t.Stop(); Stop-MailRunObjects $run
         if (-not ($r -is [hashtable])) { $r = Get-MailLostResult $run.sync 'no result' }

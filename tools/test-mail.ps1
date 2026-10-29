@@ -264,5 +264,24 @@ Check 'motion follows Windows animation setting' ($src -match 'ClientAreaAnimati
 Check 'exit stops the email check' ($src -match 'try \{ Stop-Mail \} catch \{\}')
 Check 'resume hooks the email check' ($src -match 'Resume-Mail')
 Check 'version 1.4.0' ($src -match "\`$global:AppVersion\s+= '1\.4\.0'")
+
+# --- polish round 3 (ClaudeCode L1: loginOk after a tagged OK; Lockjaw M16-I1: close before reading the flags) ---
+# dripstatus: LOGIN gets a tagged OK, then STATUS drips (a few untagged bytes, then the 45 s cap closes the socket)
+$fl = @{ loginSent = $false; loginOk = $false }; $m = New-Mock @('* OK ready', 'a1 OK Logged in', '* STATUS INBOX (UN')
+$thrown = $false; try { [void](Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray() $fl) } catch { $thrown = $true }
+Check 'CC L1 dripstatus: tagged OK to LOGIN sets loginOk' ($fl.loginSent -and $fl.loginOk -and $thrown)
+$r = Get-MailLostResult $fl 'timed out'; Check 'CC L1 dripstatus: cap after a good sign-in -> network retry, not a sign-in stop' ($r.kind -eq 'net' -and -not $r.unclear)
+$s = New-MailState; [void](Update-MailState $s $r $now); Check 'CC L1 dripstatus: ... polling continues with backoff' (-not $s.stopped -and -not $s.authUnclear -and (Get-MailNextDelaySec $s) -gt 0)
+$r = Get-MailLostResult $fl 'no result'; Check 'CC L1 dripstatus: lost result after a good sign-in -> network' ($r.kind -eq 'net')
+$fl = @{ loginSent = $false; loginOk = $false }; $m = New-Mock @('* OK ready', '* CAPABILITY IMAP4rev1')
+$thrown = $false; try { $x = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray() $fl } catch { $thrown = $true }
+Check 'CC L1: LOGIN sent, no tagged OK -> loginOk stays false' ($fl.loginSent -and -not $fl.loginOk)
+$r = Get-MailLostResult $fl 'timed out'; Check 'CC L1: cap with LOGIN sent but no OK is still an unclear sign-in failure' ($r.kind -eq 'auth' -and $r.unclear)
+foreach ($c in @(@('NO', 'a1 NO [AUTHENTICATIONFAILED] bad'), @('BAD', 'a1 BAD syntax'))) { $fl = @{ loginSent = $false; loginOk = $false }; $m = New-Mock @('* OK ready', $c[1])
+    $r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray() $fl
+    Check "CC L1: $($c[0]) to LOGIN stays a clear failure, loginOk false" ($r.kind -eq 'auth' -and -not $r.unclear -and -not $fl.loginOk) }
+Check 'CC L1: Start-MailRun starts loginOk false' ($sr2 -match 'loginOk = \$false')
+$capLine = @($sr2 -split "`n" | Where-Object { $_ -match "'timed out'" })
+Check 'LJ M16-I1: on the cap tick Stop-MailRunObjects runs before Get-MailLostResult' ($capLine.Count -eq 1 -and $capLine[0].IndexOf('Stop-MailRunObjects $run') -ge 0 -and $capLine[0].IndexOf('Stop-MailRunObjects $run') -lt $capLine[0].IndexOf('Get-MailLostResult $run.sync'))
 ""
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
