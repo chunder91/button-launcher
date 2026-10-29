@@ -3297,8 +3297,8 @@ $global:MailDialogXaml = @'
         <Border x:Name="Focus" Height="2" VerticalAlignment="Bottom" Background="#22C55E" CornerRadius="0,0,6,6" Visibility="Hidden" IsHitTestVisible="False"/>
         <ContentPresenter IsHitTestVisible="False" Margin="10,0,28,0" VerticalAlignment="Center" HorizontalAlignment="Left" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
         <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" VerticalOffset="2" AllowsTransparency="True" Focusable="False" PopupAnimation="None">
-          <Grid Margin="0,0,4,6"><Border Margin="1,3,-3,-5" CornerRadius="10" Background="#40000000" IsHitTestVisible="False"/><!-- a static shadow: the launcher never uses bitmap effects -->
-            <Border MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" Background="#2B2B30" BorderBrush="#1FFFFFFF" BorderThickness="1" CornerRadius="8" Padding="4">
+          <Grid Margin="1"><Border Margin="-1" CornerRadius="9" BorderBrush="#40000000" BorderThickness="1" IsHitTestVisible="False"/><!-- Kern: 1 px dark hairline ring (no bitmap effects) -->
+            <Border MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" Background="#2B2B30" BorderBrush="#59FFFFFF" BorderThickness="1" CornerRadius="8" Padding="4">
             <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}" VerticalScrollBarVisibility="Auto"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
           </Border></Grid>
         </Popup>
