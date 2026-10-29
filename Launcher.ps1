@@ -306,13 +306,14 @@ function global:Play-Click {
 }
 
 # All tile motion runs as a WPF Storyboard of 150 ms or less. Nothing waits on it: the launch has already happened.
-function global:Start-Anim($target, $prop, $to, [double]$ms, [switch]$Ease) {
+function global:Start-Anim($target, $prop, $to, [double]$ms, [switch]$Ease, [scriptblock]$OnDone) {
     $a = if ($to -is [System.Windows.Media.Color]) { New-Object System.Windows.Media.Animation.ColorAnimation } else { New-Object System.Windows.Media.Animation.DoubleAnimation }
     $a.To = $to; $a.Duration = [System.Windows.Duration][TimeSpan]::FromMilliseconds([Math]::Min(150, $ms))
     if ($Ease) { $ce = New-Object System.Windows.Media.Animation.CubicEase; $ce.EasingMode = 'EaseOut'; $a.EasingFunction = $ce }
     $sb = New-Object System.Windows.Media.Animation.Storyboard
     [System.Windows.Media.Animation.Storyboard]::SetTarget($a, $target)
     [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($a, (New-Object System.Windows.PropertyPath $prop))
+    if ($OnDone) { $sb.Add_Completed($OnDone) }
     [void]$sb.Children.Add($a); $sb.Begin()
 }
 function global:Start-Flash($flash) {   # launch flash: white 45%, 60 ms in, 240 ms out (starts after Start-Process returned)
@@ -435,7 +436,10 @@ function global:New-Tile($p, $btn) {
     $toHover = { $tile.Effect = $shadow
         Start-Anim $lift $yProp -1 120 -Ease; Start-Anim $shadow ([System.Windows.Media.Effects.DropShadowEffect]::OpacityProperty) 0.35 120 -Ease
         Start-Anim $fill $colorProp $hoverC 120 -Ease }.GetNewClosure()
-    $toRest = { Start-Anim $lift $yProp 0 120 -Ease; Start-Anim $fill $colorProp $base 120 -Ease; $tile.Effect = $null }.GetNewClosure()
+    # MB-N1: the shadow fades out, then the effect is removed (only if the pointer didn't come back meanwhile).
+    $dropFx = { if (-not $tile.IsMouseOver -and $shadow.Opacity -le 0.001) { $tile.Effect = $null } }.GetNewClosure()
+    $toRest = { Start-Anim $lift $yProp 0 120 -Ease; Start-Anim $fill $colorProp $base 120 -Ease
+        Start-Anim $shadow ([System.Windows.Media.Effects.DropShadowEffect]::OpacityProperty) 0 120 -Ease -OnDone $dropFx }.GetNewClosure()
     $run = {
         $ok = Invoke-Button $btn                   # launch first; the flash never delays it
         if ($ok -eq $true) { Start-Flash $flash } }.GetNewClosure()

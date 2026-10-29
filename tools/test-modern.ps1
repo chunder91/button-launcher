@@ -48,6 +48,7 @@ Check 'square-panel fallback' ($src -match '\[bool\]\$global:cfg\.squarePanels' 
 Check 'restart confirm default No kept' ($src -match "\[System\.Windows\.MessageBox\]::Show\(\`$cText, \`$cTitle, 'YesNo', 'Warning', 'No'\)")
 Check 'ScreenConnect admin prompt kept' ($src -match "function global:Restart-ScreenConnect" -and $src -match "RunAs")
 Check 'MB-M1: Enter/Space ignore key repeat' ($src -match "\(\`$_\.Key -eq 'Enter' -or \`$_\.Key -eq 'Space'\) -and -not \`$_\.IsRepeat")
+Check 'MB-N1: shadow fades to 0 then the effect is removed' ($src -match 'OpacityProperty\) 0 120 -Ease -OnDone \$dropFx' -and $src -match '\$sb\.Add_Completed\(\$OnDone\)')
 # Default order + migration
 $def = Get-Content (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
 $bl = @($def.panels[1].buttons | ForEach-Object { ([string]$_.label) -replace "`n", ' ' })
