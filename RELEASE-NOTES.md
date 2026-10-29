@@ -31,9 +31,9 @@ The launcher isn't signed with a paid certificate, so the first time you run a d
 - **Ctrl+Alt+L.** Press Ctrl+Alt+L anywhere to bring the launcher to the front. If another program already uses that shortcut, the tray icon still works.
 - **Show desktop (Windows key + D)** may hide the launcher like any other window. Press Ctrl+Alt+L or click the tray icon to bring it back.
 
-### New: one-panel layout (optional)
-You can switch from the two separate panels to **one tall panel docked to the edge of the screen**. Your top buttons sit at the top, your bottom buttons and the Restarts sit at the bottom, and the space in between shows your desktop. Clicks in that empty space go straight through to whatever is behind it.
-- **Switch layouts:** unlock the panels, right-click a panel, choose **Setup > Layout > One panel, docked to the edge** (or **Two panels** to go back), then **Setup > Reload**. Two panels stays the default.
+### New: one-panel layout (now the default)
+New installs open as **one tall panel docked to the edge of the screen**. If you already chose a layout, it is kept. Your top buttons sit at the top, your bottom buttons and the Restarts sit at the bottom, and the space in between shows your desktop. Clicks in that empty space go straight through to whatever is behind it.
+- **Switch layouts:** unlock the panels, right-click a panel, choose **Setup > Layout > One panel, docked to the edge** (or **Two panels** to go back), then **Setup > Reload**. Two panels are still available the same way.
 - **Your own icons in the middle.** The middle starts empty. To add an icon, unlock, right-click the middle and choose **Add icon...**. It can be a program, website, file or script, and it shows that program's own icon.
 - **Remove an icon:** unlock, right-click the icon and choose **Remove this icon**. An **Undo** button shows for 5 seconds in case you didn't mean it.
 - **Move icons:** unlock, then drag an icon onto another spot. You can also right-click it and choose **Move earlier** or **Move later**.

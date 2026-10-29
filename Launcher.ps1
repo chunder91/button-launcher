@@ -1153,7 +1153,7 @@ function global:New-PanelFromMenu {
 
 # ================= One-panel layout ("layout": "single"), tray icon and Ctrl+Alt+L =================
 # Pure helpers first (tools/test-onepanel.ps1 runs these without Windows).
-function global:Get-LayoutMode($cfg) { if ([string]$cfg.layout -eq 'single') { 'single' } else { 'two' } }
+function global:Get-LayoutMode($cfg) { if ([string]$cfg.layout -eq 'two') { 'two' } else { 'single' } }   # one panel is the default; a saved 'two' is kept
 function global:Get-MiddleHint([int]$count, [bool]$locked) {   # empty + unlocked: a subtle hint; locked: nothing
     if ($count -eq 0 -and -not $locked) { return 'Unlock and right-click to add icons' }
     return $null

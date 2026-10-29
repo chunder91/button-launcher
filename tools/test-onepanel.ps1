@@ -11,11 +11,13 @@ foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Get-Mi
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 $global:PathProbe = @{ DosDevice = { param($d) '\Device\HarddiskVolume3' }; Attr = { param($p) $null } }   # R6-L2 probes: plain local volume, no special attributes
 # Layout setting
-Check "layout default is 'two'" ((Get-LayoutMode ([pscustomobject]@{})) -eq 'two')
+Check "layout default (missing setting) is 'single'" ((Get-LayoutMode ([pscustomobject]@{})) -eq 'single')
+Check "saved layout 'two' is kept" ((Get-LayoutMode ([pscustomobject]@{ layout = 'two' })) -eq 'two')
 Check "layout 'single'" ((Get-LayoutMode ([pscustomobject]@{ layout = 'single' })) -eq 'single')
-Check "unknown layout falls back to 'two'" ((Get-LayoutMode ([pscustomobject]@{ layout = 'sideways' })) -eq 'two')
+Check "unknown layout falls back to 'single'" ((Get-LayoutMode ([pscustomobject]@{ layout = 'sideways' })) -eq 'single')
 $def = Get-Content (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
-Check "buttons.default.json: layout 'two'" ($def.layout -eq 'two')
+Check "buttons.default.json: layout 'single'" ($def.layout -eq 'single')
+Check 'docs: one panel default, two panels under Setup > Layout' ((Get-Content (Join-Path $root 'README.txt') -Raw) -match 'Setup > Layout > Two panels' -and (Get-Content (Join-Path $root 'RELEASE-NOTES.md') -Raw) -match 'one-panel layout \(now the default\)')
 Check 'buttons.default.json: middle starts empty, 2 columns' ($def.middle -and @($def.middle.items).Count -eq 0 -and $def.middle.columns -eq 2)
 # Middle schema: same target types as tiles
 $m = New-MiddleState ([pscustomobject]@{ middle = [pscustomobject]@{ columns = 9; items = @(

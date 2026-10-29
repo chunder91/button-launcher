@@ -4,8 +4,9 @@ BUTTON LAUNCHER
 RUN IT
   Installed: Start menu > the launcher's name (or type it in Windows search).
   From this folder: double-click ButtonLauncher.exe (or "Start Launcher.vbs").
-  Starting it again while it's running just brings the panels to the front. Two button
-  panels open on the right side of the screen. Right-click any panel for
+  Starting it again while it's running just brings the panels to the front. One tall
+  panel opens docked to the right edge of the screen (two separate panels are
+  still available: Setup > Layout > Two panels). Right-click any panel for
   options.
   If Windows warns about the file the first time: right-click it > Properties >
   tick "Unblock" > OK. (Do this for Launcher.ps1 too.)
@@ -62,7 +63,11 @@ BUTTON CLICKS
   default). For your own sound, put a file named click.wav in this folder.
 
 PANELS
-  There are two panels, Top and Bottom. Each one is pinned to a spot on the
+  By default the buttons sit in one tall panel docked to the edge: Top buttons
+  at the top, Bottom buttons and the Restarts at the bottom, your own icons in
+  the middle. To use two separate panels instead: unlock, right-click a panel >
+  Setup > Layout > Two panels, then Setup > Reload.
+  In the two-panel layout there are two panels, Top and Bottom. Each one is pinned to a spot on the
   screen (an edge or corner) by percent, not pixels, so it lands in the same
   place on any screen size or scaling (100/125/150/175%). Panels get bigger or
   smaller with the screen, never sit under the taskbar (wherever it is, even
