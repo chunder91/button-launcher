@@ -19,7 +19,9 @@ $zip = Join-Path $env:TEMP ("bl-" + [guid]::NewGuid() + '.zip')
 $work = $null
 try {   # CC-L7: temp stage/zip/work dirs are always cleaned up
 New-Item -ItemType Directory $stage | Out-Null
-foreach ($f in 'Launcher.ps1','buttons.json','Start Launcher.vbs','Start Launcher.cmd','README.txt','Build-Installer.ps1') {
+$AppVersion = '1.1.0'
+if (-not (Test-Path -LiteralPath (Join-Path $here 'ButtonLauncher.exe'))) { throw 'ButtonLauncher.exe is missing from this folder (build it with exe/build-exe.sh).' }
+foreach ($f in 'Launcher.ps1','buttons.json','ButtonLauncher.exe','Start Launcher.vbs','Start Launcher.cmd','README.txt','Build-Installer.ps1') {
     if (Test-Path (Join-Path $here $f)) { Copy-Item (Join-Path $here $f) $stage } }
 if (Test-Path (Join-Path $here 'images')) { Copy-Item -LiteralPath (Join-Path $here 'images') -Destination (Join-Path $stage 'images') -Recurse -Force }
 # Kern-2: make sure every picture a button uses actually ships. Stop the build if one is missing.
@@ -36,20 +38,26 @@ $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($zip))
 # $PSScriptRoot and refuses to delete anything that isn't exactly <LOCALAPPDATA>\Programs\<AppName>
 # containing Launcher.ps1.
 $uninstTemplate = @'
+param([switch]$Quiet)
+Add-Type -AssemblyName PresentationFramework
 $AppName = '__NAME__'
 $dest = $PSScriptRoot
 $expected = Join-Path $env:LOCALAPPDATA ('Programs\' + $AppName)
 $ok = $AppName -and ($AppName -match '^[A-Za-z0-9 _-]+$') -and $dest -and
       ([IO.Path]::GetFullPath($dest).TrimEnd('\') -ieq [IO.Path]::GetFullPath($expected).TrimEnd('\')) -and
       (Test-Path -LiteralPath (Join-Path $dest 'Launcher.ps1'))
-if (-not $ok) { [System.Windows.MessageBox]::Show("Uninstall stopped: this doesn't look like the $AppName install folder.`n$dest", 'Uninstall') | Out-Null; exit 1 }
-if ([System.Windows.MessageBox]::Show("Remove $AppName?", 'Uninstall', 'YesNo') -ne 'Yes') { exit }
+if (-not $ok) { if (-not $Quiet) { [System.Windows.MessageBox]::Show("Uninstall stopped: this doesn't look like the $AppName install folder.`n$dest", 'Uninstall') | Out-Null }; exit 1 }
+if (-not $Quiet -and [System.Windows.MessageBox]::Show("Remove $AppName?", 'Uninstall', 'YesNo') -ne 'Yes') { exit }
 $pat = '*' + $dest + '\Launcher.ps1*'
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $_.CommandLine -like $pat } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 foreach ($l in @((Join-Path ([Environment]::GetFolderPath('Programs')) "$AppName.lnk"), (Join-Path ([Environment]::GetFolderPath('Desktop')) "$AppName.lnk"),
                  (Join-Path ([Environment]::GetFolderPath('Startup')) "$AppName.lnk"), (Join-Path ([Environment]::GetFolderPath('Programs')) "Uninstall $AppName.lnk"))) {
     Remove-Item -LiteralPath $l -ErrorAction SilentlyContinue }
-Remove-Item -LiteralPath ('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\' + $AppName) -Recurse -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ButtonLauncher' -Recurse -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath ('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\' + $AppName) -Recurse -ErrorAction SilentlyContinue   # older builds
+$run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$rv = (Get-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue).ButtonLauncher
+if ($rv -and $rv.IndexOf($dest, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Remove-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue }
 # Delete the folder from a child PowerShell after this script exits (no cmd.exe, -LiteralPath only).
 $q = $dest.Replace("'", "''")
 $cmd = "Start-Sleep -Seconds 2; Remove-Item -LiteralPath '$q' -Recurse -Force -ErrorAction SilentlyContinue"
@@ -59,11 +67,12 @@ Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile -Exec
 
 # 2. Self-contained install script (payload embedded)
 $install = @'
+param([switch]$Desktop, [switch]$NoAutostart)   # defaults: no desktop shortcut unless chosen, autostart ON
 Add-Type -AssemblyName PresentationFramework, System.IO.Compression.FileSystem
 $AppName = '__NAME__'
 $dest = Join-Path $env:LOCALAPPDATA ("Programs\" + $AppName)
-$startup = [System.Windows.MessageBox]::Show("Install $AppName for this user?`n`nStart it automatically when Windows starts?`n`nYes = install + start with Windows`nNo = install only`nCancel = don't install", "$AppName Setup", 'YesNoCancel', 'Question')
-if ($startup -eq 'Cancel') { exit }
+if ([System.Windows.MessageBox]::Show("Install $AppName for this user?`n`nIt goes in the Start menu and starts with Windows (you can turn that off: unlock, right-click a panel > Start with Windows).", "$AppName Setup", 'OKCancel', 'Question') -ne 'OK') { exit }
+if (-not $Desktop) { $Desktop = ([System.Windows.MessageBox]::Show("Also put a shortcut on the desktop?", "$AppName Setup", 'YesNo', 'Question', 'No') -eq 'Yes') }
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*$dest\Launcher.ps1*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 New-Item -ItemType Directory -Force $dest | Out-Null
 $zip = Join-Path $env:TEMP ("bl-payload-" + [guid]::NewGuid() + ".zip")   # LJ-I4/CC-L7: unpredictable name
@@ -80,29 +89,43 @@ Get-ChildItem $dest -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
 
 # Uninstall.ps1 comes from the literal template built below (see __UNINST_B64__).
 $uninst = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__UNINST_B64__')).Replace('__NAME__', $AppName)
-Set-Content (Join-Path $dest 'Uninstall.ps1') ("Add-Type -AssemblyName PresentationFramework`r`n" + $uninst) -Encoding UTF8
+Set-Content (Join-Path $dest 'Uninstall.ps1') $uninst -Encoding UTF8
 $unCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest\Uninstall.ps1`""
 
 $ws = New-Object -ComObject WScript.Shell
+$exe = Join-Path $dest 'ButtonLauncher.exe'
 function Make-Link($path, $target, $a) {
     $l = $ws.CreateShortcut($path); $l.TargetPath = $target; $l.Arguments = $a; $l.WorkingDirectory = $dest
-    $l.IconLocation = "$env:SystemRoot\System32\imageres.dll,15"; $l.Save() }
-$vbs = Join-Path $dest 'Start Launcher.vbs'
-Make-Link "$([Environment]::GetFolderPath('Programs'))\$AppName.lnk" 'wscript.exe' "`"$vbs`""
-Make-Link "$([Environment]::GetFolderPath('Desktop'))\$AppName.lnk" 'wscript.exe' "`"$vbs`""
-Make-Link "$([Environment]::GetFolderPath('Programs'))\Uninstall $AppName.lnk" 'powershell.exe' "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest\Uninstall.ps1`""
-if ($startup -eq 'Yes') { Make-Link "$([Environment]::GetFolderPath('Startup'))\$AppName.lnk" 'wscript.exe' "`"$vbs`"" }
+    $l.IconLocation = "$exe,0"; $l.Description = $AppName; $l.Save() }
+$progs = [Environment]::GetFolderPath('Programs')   # %APPDATA%\Microsoft\Windows\Start Menu\Programs -> shows in Windows search
+Make-Link (Join-Path $progs "$AppName.lnk") $exe ''
+Make-Link (Join-Path $progs "Uninstall $AppName.lnk") 'powershell.exe' "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest\Uninstall.ps1`""
+$deskLnk = Join-Path ([Environment]::GetFolderPath('Desktop')) "$AppName.lnk"
+if ($Desktop) { Make-Link $deskLnk $exe '' } else { Remove-Item -LiteralPath $deskLnk -ErrorAction SilentlyContinue }
+Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath('Startup')) "$AppName.lnk") -ErrorAction SilentlyContinue   # older builds used the Startup folder
 
-$k = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$AppName"
-New-Item $k -Force | Out-Null
-Set-ItemProperty $k DisplayName $AppName; Set-ItemProperty $k UninstallString $unCmd
-Set-ItemProperty $k InstallLocation $dest; Set-ItemProperty $k Publisher 'Charles Cipolla'; Set-ItemProperty $k NoModify 1; Set-ItemProperty $k NoRepair 1
+# Start with Windows: per-user Run key, ON by default
+$run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+if ($NoAutostart) { Remove-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue }
+else { New-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -Value ('"' + $exe + '"') -PropertyType String -Force | Out-Null }
 
-Start-Process wscript.exe "`"$vbs`""
-[System.Windows.MessageBox]::Show("$AppName is installed.`nShortcuts are on the desktop and in the Start menu.`nUninstall from Settings > Apps or the Start menu.", "$AppName Setup") | Out-Null
+# Installed apps entry
+Remove-Item -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$AppName" -Recurse -ErrorAction SilentlyContinue   # older builds
+$k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ButtonLauncher'
+New-Item -Path $k -Force | Out-Null
+$kb = [int][Math]::Ceiling(((Get-ChildItem -LiteralPath $dest -Recurse -File | Measure-Object Length -Sum).Sum) / 1KB)
+$vals = [ordered]@{ DisplayName = $AppName; DisplayVersion = '__VERSION__'; Publisher = 'Charles Cipolla'; DisplayIcon = "$exe,0"
+          InstallLocation = $dest; UninstallString = $unCmd; QuietUninstallString = "$unCmd -Quiet" }
+foreach ($n in $vals.Keys) { New-ItemProperty -LiteralPath $k -Name $n -Value $vals[$n] -PropertyType String -Force | Out-Null }
+foreach ($n in 'NoModify','NoRepair') { New-ItemProperty -LiteralPath $k -Name $n -Value 1 -PropertyType DWord -Force | Out-Null }
+New-ItemProperty -LiteralPath $k -Name 'EstimatedSize' -Value $kb -PropertyType DWord -Force | Out-Null
+
+Start-Process -FilePath $exe -WorkingDirectory $dest
+$where = if ($Desktop) { 'the Start menu and the desktop' } else { 'the Start menu' }
+[System.Windows.MessageBox]::Show("$AppName is installed.`nFind it in $where (type its name in Windows search).`nUninstall from Settings > Apps.", "$AppName Setup") | Out-Null
 '@
 $unB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($uninstTemplate))
-$install = $install.Replace('__NAME__', $safe).Replace('__B64__', $b64).Replace('__UNINST_B64__', $unB64)   # $safe is allow-listed: no quotes possible
+$install = $install.Replace('__NAME__', $safe).Replace('__B64__', $b64).Replace('__UNINST_B64__', $unB64).Replace('__VERSION__', $AppVersion)   # $safe is allow-listed: no quotes possible
 $ps1Name = "$safe Setup.ps1"
 $ps1 = Join-Path $OutDir $ps1Name
 [IO.File]::WriteAllText($ps1, $install, (New-Object Text.UTF8Encoding $true))

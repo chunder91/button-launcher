@@ -2,7 +2,9 @@ BUTTON LAUNCHER
 ===============
 
 RUN IT
-  Double-click "Start Launcher.vbs" (or "Start Launcher.cmd"). Two button
+  Installed: Start menu > the launcher's name (or type it in Windows search).
+  From this folder: double-click ButtonLauncher.exe (or "Start Launcher.vbs").
+  Starting it again while it's running just brings the panels to the front. Two button
   panels open on the right side of the screen. Right-click any panel for
   options.
   If Windows warns about the file the first time: right-click it > Properties >
@@ -140,3 +142,16 @@ SAFETY NOTES
   - If Windows shows an admin prompt when you run "<name> Setup.exe", click
     No. The installer is per-user and doesn't need admin; saying Yes would
     install it into the admin account instead.
+
+INSTALL (per-user, no admin)
+  Setup puts the launcher in %LOCALAPPDATA%\Programs\<name>, adds a Start menu
+  shortcut, and lists it in Settings > Apps (Button Launcher) with an uninstall.
+  It asks once about a desktop shortcut (default No). Command line flags for
+  the "<name> Setup.ps1" fallback: -Desktop, -NoAutostart.
+  START WITH WINDOWS is ON by default (HKCU Run value "ButtonLauncher").
+  To change it: unlock, right-click a panel > "Start with Windows".
+  Uninstall removes the shortcuts, the Run value, the Settings > Apps entry
+  and the launcher's own folder only.
+  ButtonLauncher.exe and Setup.exe are not code-signed, so Windows SmartScreen
+  may say "Windows protected your PC" the first time: click "More info" >
+  "Run anyway" (only for copies you got from a trusted source).
