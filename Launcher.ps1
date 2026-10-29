@@ -31,6 +31,7 @@ $global:RaisedBrush  = $null
 $global:SunkenBrush  = $null
 $global:app          = $null
 $global:relayoutTimer = $null
+$global:labelSink    = $null                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
     if ($err -is [Exception]) { $ex = $err; $trace = $err.StackTrace } else { $ex = $err.Exception; $trace = $err.ScriptStackTrace }
@@ -216,6 +217,8 @@ function global:New-Label($text, $fg, $size) {
     $tb = New-Object System.Windows.Controls.TextBlock
     $tb.Text = ($text -replace '\\n', "`n"); $tb.Foreground = Brush $fg
     $tb.FontFamily = 'Arial'; $tb.FontWeight = 'Bold'; $tb.FontSize = $size
+    $tb.Tag = [double]$size                                  # design size; Apply-MinFont enforces the floor after scaling
+    if ($global:labelSink -ne $null) { [void]$global:labelSink.Add($tb) }
     $tb.TextAlignment = 'Center'; $tb.TextWrapping = 'Wrap'
     $tb.HorizontalAlignment = 'Center'; $tb.VerticalAlignment = 'Center'
     $fx = New-Object System.Windows.Media.Effects.DropShadowEffect
@@ -226,6 +229,16 @@ function global:New-Label($text, $fg, $size) {
 
 
 # ---------- button visual states: hover / press (sunken bevel) / launch flash / click sound ----------
+# Kern-3/UX-6: label floor of 12 DIP (13 for 3+ line labels) on screen, after the panel's scale is applied.
+function global:Apply-MinFont($p) {
+    if (-not $p.labels) { return }
+    $s = [Math]::Max(0.1, [double]$p.scale.ScaleX)
+    foreach ($tb in $p.labels) {
+        $floor = if (([string]$tb.Text).Split("`n").Count -ge 3) { 13.0 } else { 12.0 }
+        $tb.FontSize = [Math]::Max([double]$tb.Tag, $floor / $s)
+    }
+}
+
 function global:New-BevelBrush($sunken) {
     $light = [System.Windows.Media.Color]::FromArgb(200,255,255,255); $dark = [System.Windows.Media.Color]::FromArgb(200,40,40,40)
     $a = if ($sunken) { $dark } else { $light }; $b = if ($sunken) { $light } else { $dark }
@@ -503,11 +516,11 @@ function global:Layout-Panel($p) {
     $maxW = if ($pc.maxWidth) { [double]$pc.maxWidth } else { 560 }
     $wDip = [Math]::Max($minW, [Math]::Min($maxW, ($wa.W * $pct / 100.0) / $dpi))
     $s = $wDip / $global:BaseWidth
-    $p.scale.ScaleX = $s; $p.scale.ScaleY = $s
+    $p.scale.ScaleX = $s; $p.scale.ScaleY = $s; Apply-MinFont $p
     $p.win.UpdateLayout()
     $hPx = $p.win.ActualHeight * $dpi
     $maxH = $wa.H
-    if ($hPx -gt $maxH) { $s = $s * $maxH / $hPx; $p.scale.ScaleX = $s; $p.scale.ScaleY = $s; $p.win.UpdateLayout() }
+    if ($hPx -gt $maxH) { $s = $s * $maxH / $hPx; $p.scale.ScaleX = $s; $p.scale.ScaleY = $s; Apply-MinFont $p; $p.win.UpdateLayout() }
     # Use the window's real device-pixel size (no DIP rounding guesses)
     $wPx = [int][Math]::Round($p.win.ActualWidth * $dpi); $hPx = [int][Math]::Round($p.win.ActualHeight * $dpi)
     $rr = New-Object BL.Native+RECT
@@ -638,6 +651,7 @@ function global:Button-Menu($p, $btn) {
 
 function global:Build-Panel($p) {
     $stack = $p.stack; $stack.Children.Clear()
+    $global:labelSink = New-Object System.Collections.ArrayList
     $pendingHalf = $null
     foreach ($btn in $p.items) {
         $h = if ($btn.height) { [double]$btn.height } else { 80 }
@@ -660,6 +674,7 @@ function global:Build-Panel($p) {
         $e = New-Object System.Windows.Controls.TextBlock; $e.Text = 'Empty panel - right-click to add a button'; $e.Foreground = Brush '#AAAAAA'
         $e.Margin = '10,20'; $e.TextWrapping = 'Wrap'; [void]$stack.Children.Add($e)
     }
+    $p.labels = $global:labelSink; $global:labelSink = $null; Apply-MinFont $p
     $pm = New-Object System.Windows.Controls.ContextMenu; Panel-Menu $p $pm; $p.win.ContextMenu = $pm
 }
 
