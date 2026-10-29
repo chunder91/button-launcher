@@ -1,0 +1,234 @@
+{
+  "title": "Launcher",
+  "panels": [
+    {
+      "name": "Top",
+      "alwaysOnTop": false,
+      "background": "#000000",
+      "buttons": [
+        {
+          "label": "RED DOG\nBACK\nOFFICE",
+          "bg": "#3EC3EE",
+          "fg": "#FFFFFF",
+          "width": "full",
+          "height": 165,
+          "fontSize": 30,
+          "type": "program",
+          "target": "",
+          "args": "",
+          "detect": {
+            "paths": [
+              "%ProgramFiles%\\Jartrek*\\*Backoffice*.exe",
+              "%ProgramFiles%\\Jartrek*\\*\\*Backoffice*.exe",
+              "%ProgramFiles%\\Red Dog*\\*Backoffice*.exe",
+              "%ProgramFiles%\\RedDog*\\*Backoffice*.exe",
+              "%ProgramFiles%\\Red Dog*\\*\\*Backoffice*.exe",
+              "%ProgramFiles(x86)%\\Jartrek*\\*Backoffice*.exe",
+              "%ProgramFiles(x86)%\\Jartrek*\\*\\*Backoffice*.exe",
+              "%ProgramFiles(x86)%\\Red Dog*\\*Backoffice*.exe",
+              "%ProgramFiles(x86)%\\RedDog*\\*Backoffice*.exe",
+              "%ProgramFiles(x86)%\\Red Dog*\\*\\*Backoffice*.exe",
+              "C:\\Jartrek\\*Backoffice*.exe",
+              "C:\\Jartrek\\*\\*Backoffice*.exe",
+              "C:\\RedDog\\*Backoffice*.exe",
+              "C:\\RedDog\\*\\*Backoffice*.exe"
+            ],
+            "lnkNames": [
+              "Red Dog Backoffice",
+              "Red Dog Back Office",
+              "RedDog Backoffice"
+            ]
+          },
+          "askTitle": "Pick the Red Dog program",
+          "image": "images/reddog.png",
+          "imageMode": "left",
+          "runAsAdmin": false
+        },
+        {
+          "label": "VIEW REGISTER",
+          "bg": "#0E8A55",
+          "fg": "#FFFFFF",
+          "width": "full",
+          "height": 80,
+          "fontSize": 22,
+          "type": "program",
+          "target": "",
+          "args": "",
+          "detect": {
+            "paths": [
+              "%ProgramFiles%\\uvnc bvba\\UltraVNC\\vncviewer.exe",
+              "%ProgramFiles%\\UltraVNC\\vncviewer.exe",
+              "%ProgramFiles(x86)%\\uvnc bvba\\UltraVNC\\vncviewer.exe",
+              "%ProgramFiles(x86)%\\UltraVNC\\vncviewer.exe"
+            ],
+            "lnkNames": [
+              "UltraVNC Viewer"
+            ]
+          },
+          "askTitle": "Pick the UltraVNC Viewer (vncviewer.exe)",
+          "image": "images/register.png",
+          "imageMode": "left",
+          "runAsAdmin": false
+        },
+        {
+          "label": "INTERNET",
+          "bg": "#B48CF5",
+          "fg": "#FFFFFF",
+          "width": "half",
+          "height": 80,
+          "fontSize": 18,
+          "type": "website",
+          "target": "https://www.google.com",
+          "image": "images/globe.png",
+          "imageMode": "above",
+          "args": "",
+          "runAsAdmin": false
+        },
+        {
+          "label": "EMAIL",
+          "bg": "#FFFF00",
+          "fg": "#000000",
+          "width": "half",
+          "height": 80,
+          "fontSize": 18,
+          "type": "website",
+          "target": "mailto:",
+          "image": "images/email.png",
+          "imageMode": "above",
+          "args": "",
+          "runAsAdmin": false
+        }
+      ],
+      "anchor": "top-right",
+      "offsetX": 0,
+      "offsetY": 0,
+      "monitor": -1,
+      "size": "Medium",
+      "minWidth": 180,
+      "maxWidth": 560,
+      "gap": 0
+    },
+    {
+      "name": "Bottom",
+      "alwaysOnTop": false,
+      "background": "#000000",
+      "buttons": [
+        {
+          "label": "BACK OFFICE\nUSER GUIDE\nVERSION 11",
+          "bg": "#7F7F7F",
+          "fg": "#FFFFFF",
+          "width": "half",
+          "height": 82,
+          "fontSize": 11,
+          "type": "file",
+          "target": "",
+          "askTitle": "Pick the Back Office User Guide (PDF)",
+          "askFilter": "PDF files|*.pdf|All files|*.*",
+          "image": "images/guide.png",
+          "imageMode": "above",
+          "args": "",
+          "runAsAdmin": false
+        },
+        {
+          "label": "REGISTER\nUSER GUIDE\nVERSION 11",
+          "bg": "#7F7F7F",
+          "fg": "#FFFFFF",
+          "width": "half",
+          "height": 82,
+          "fontSize": 11,
+          "type": "file",
+          "target": "",
+          "askTitle": "Pick the Register User Guide (PDF)",
+          "askFilter": "PDF files|*.pdf|All files|*.*",
+          "image": "images/guide.png",
+          "imageMode": "above",
+          "args": "",
+          "runAsAdmin": false
+        },
+        {
+          "label": "PLCE",
+          "bg": "#FF0000",
+          "fg": "#FFC000",
+          "width": "half",
+          "height": 82,
+          "fontSize": 28,
+          "type": "website",
+          "target": "https://www.pa.gov/agencies/psp/contact-psp/bureau-and-office-directory/liquor-control-enforcement",
+          "image": "images/badge.png",
+          "imageMode": "left",
+          "args": "",
+          "runAsAdmin": false
+        },
+        {
+          "label": "DEPARTMENT\nOF\nREVENUE",
+          "bg": "#F0E68C",
+          "fg": "#5A4A00",
+          "width": "half",
+          "height": 82,
+          "fontSize": 10,
+          "type": "website",
+          "target": "https://www.pa.gov/agencies/revenue",
+          "image": "images/revenue.png",
+          "imageMode": "above",
+          "args": "",
+          "runAsAdmin": false
+        },
+        {
+          "label": "RESTART\nSCREEN CONNECT",
+          "bg": "#FA8072",
+          "fg": "#FFFFFF",
+          "width": "full",
+          "height": 82,
+          "fontSize": 18,
+          "type": "builtin",
+          "action": "restart-screenconnect",
+          "target": "",
+          "image": "images/screenconnect.png",
+          "imageMode": "left",
+          "args": "",
+          "runAsAdmin": false
+        },
+        {
+          "label": "START\nJARTREK\nSECURITY",
+          "bg": "#DAA520",
+          "fg": "#FFFFFF",
+          "width": "half",
+          "height": 85,
+          "fontSize": 11,
+          "type": "program",
+          "target": "TODO: set the Jartrek Security program",
+          "image": "images/security.png",
+          "imageMode": "above",
+          "args": "",
+          "runAsAdmin": false
+        },
+        {
+          "label": "RESTART\nCOMPUTER",
+          "bg": "#000000",
+          "fg": "#FFFFFF",
+          "width": "half",
+          "height": 85,
+          "fontSize": 12,
+          "type": "builtin",
+          "action": "restart-computer",
+          "target": "",
+          "confirm": "Restart this computer now? Unsaved work in open programs will be lost.",
+          "image": "images/power.png",
+          "imageMode": "above",
+          "args": "",
+          "runAsAdmin": false
+        }
+      ],
+      "anchor": "bottom-right",
+      "offsetX": 0,
+      "offsetY": 0,
+      "monitor": -1,
+      "size": "Medium",
+      "minWidth": 180,
+      "maxWidth": 560,
+      "gap": 0
+    }
+  ],
+  "locked": true,
+  "clickSound": false
+}

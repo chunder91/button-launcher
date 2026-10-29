@@ -1,0 +1,5 @@
+*.zip
+*.exe
+build/
+dist/
+launcher-error.log
