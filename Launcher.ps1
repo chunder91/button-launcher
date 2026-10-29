@@ -1182,10 +1182,12 @@ function global:Show-UndoToast($text, $undo) {
     [System.Windows.Controls.DockPanel]::SetDock($ub, 'Right'); [void]$dp.Children.Add($ub)
     $tx = New-Label $text '#FFFFFF' 12; $tx.TextTrimming = 'CharacterEllipsis'; $tx.TextWrapping = 'NoWrap'; [void]$dp.Children.Add($tx)
     $t.Child = $dp; $t.Visibility = 'Visible'
-    $timer = New-Object System.Windows.Threading.DispatcherTimer; $timer.Interval = [TimeSpan]::FromSeconds(5)
-    $timer.Add_Tick({ $timer.Stop(); $t.Visibility = 'Collapsed' }.GetNewClosure())
-    $ub.Add_Click({ $timer.Stop(); $t.Visibility = 'Collapsed'; & $undo }.GetNewClosure())
-    $timer.Start()
+    # CC OP-L1: one shared timer, restarted on every Remove, so an older toast's timer can't hide a newer toast early
+    if (-not $global:toastTimer) {
+        $global:toastTimer = New-Object System.Windows.Threading.DispatcherTimer; $global:toastTimer.Interval = [TimeSpan]::FromSeconds(5)
+        $global:toastTimer.Add_Tick({ $global:toastTimer.Stop(); if ($global:single -and $global:single.toast) { $global:single.toast.Visibility = 'Collapsed' } }) }
+    $ub.Add_Click({ $global:toastTimer.Stop(); $t.Visibility = 'Collapsed'; & $undo }.GetNewClosure())
+    $global:toastTimer.Stop(); $global:toastTimer.Start()
 }
 function global:Add-ChipFromMenu([int]$at = -1) {
     $nb = New-DefaultChip

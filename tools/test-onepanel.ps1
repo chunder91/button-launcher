@@ -97,4 +97,7 @@ Check 'OP-N1: tray and its app.ico Icon each disposed once, even when cleanup ru
 Check 'OP-N1: app.ico Icon kept in $global:trayIcon' ($src -match '\$global:trayIcon = New-Object System\.Drawing\.Icon \$ico; \$ni\.Icon = \$global:trayIcon')
 # OP-M1: tray + hotkey cleaned up even when startup fails after Start-TrayAndHotkey; cleanup safe to run twice
 Check 'OP-M1: main try has finally { Stop-TrayAndHotkey }' ($src -match "(?s)Write-LauncherError 'starting up' \`$_\s+exit 1\s+\}\s+finally \{ Stop-TrayAndHotkey \}")
+# CC OP-L1: one shared Undo timer, restarted on every Remove
+$ut = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-UndoToast' }, $true).Extent.Text
+Check 'CC OP-L1: Undo toast uses one shared timer, restarted each time' ($ut -match 'if \(-not \$global:toastTimer\)' -and $ut -match '\$global:toastTimer\.Stop\(\); \$global:toastTimer\.Start\(\)' -and ([regex]::Matches($ut, 'New-Object System\.Windows\.Threading\.DispatcherTimer')).Count -eq 1 -and $ut -notmatch '\$timer\b')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
