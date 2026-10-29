@@ -545,6 +545,7 @@ function global:Snap-Anchor($p) {
 
 function global:Apply-Lock {
     $locked = [bool]$global:cfg.locked
+    foreach ($p in $global:panels) { Build-Panel $p }   # UX-1: menus differ when locked, so rebuild them
     foreach ($p in $global:panels) {
         $p.grip.Visibility = if ($locked) { 'Collapsed' } else { 'Visible' }
         $p.edge.Padding = if ($locked) { '2' } else { '4' }
@@ -573,7 +574,15 @@ function global:Add-MenuItem($menu, $text, $action) {
     $mi = New-Object System.Windows.Controls.MenuItem; $mi.Header = $text; $mi.Add_Click($action); [void]$menu.Items.Add($mi); return $mi
 }
 
+# UX-1: while locked, right-click offers only "Unlock to edit..." and "Close this panel".
+function global:Locked-Menu($p, $menu) {
+    [void](Add-MenuItem $menu 'Unlock to edit...' { $global:cfg.locked = $false; Save-Config; Apply-Lock })
+    [void]$menu.Items.Add((New-Object System.Windows.Controls.Separator))
+    [void](Add-MenuItem $menu 'Close this panel' { $p.win.Close() }.GetNewClosure())
+}
+
 function global:Panel-Menu($p, $menu) {
+    if ([bool]$global:cfg.locked) { Locked-Menu $p $menu; return }
     [void](Add-MenuItem $menu 'Add new button at end...' { $nb = New-DefaultButton; if (Edit-Button $nb) { [void]$p.items.Add($nb); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
     $top = Add-MenuItem $menu 'Always on top' { $p.cfg.alwaysOnTop = -not [bool]$p.cfg.alwaysOnTop; $p.win.Topmost = [bool]$p.cfg.alwaysOnTop; Save-Config }.GetNewClosure()
     $top.IsCheckable = $true; $top.IsChecked = [bool]$p.cfg.alwaysOnTop
@@ -609,6 +618,7 @@ function global:Panel-Menu($p, $menu) {
 
 function global:Button-Menu($p, $btn) {
     $m = New-Object System.Windows.Controls.ContextMenu
+    if ([bool]$global:cfg.locked) { Locked-Menu $p $m; return $m }
     [void](Add-MenuItem $m 'Edit this button...' { if (Edit-Button $btn) { Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
     [void](Add-MenuItem $m 'Move up' { $i = $p.items.IndexOf($btn); if ($i -gt 0) { $p.items.RemoveAt($i); $p.items.Insert($i - 1, $btn); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
     [void](Add-MenuItem $m 'Move down' { $i = $p.items.IndexOf($btn); if ($i -lt $p.items.Count - 1) { $p.items.RemoveAt($i); $p.items.Insert($i + 1, $btn); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
@@ -750,8 +760,7 @@ try {
     $global:relayoutTimer.Add_Tick({ $global:relayoutTimer.Stop(); foreach ($o in $global:panels) { Layout-Panel $o } })
 
     foreach ($pc in @($global:cfg.panels)) { [void](Open-Panel $pc) }
-    foreach ($o in $global:panels) { Build-Panel $o }   # second pass: menus know every panel
-    Apply-Lock                                          # tool-window style + place every panel
+    Apply-Lock                                          # builds every panel (menus know every panel) + tool-window style + placement
     if ($global:panels.Count -eq 0) { throw 'No panels could be opened.' }
     [void]$global:app.Run()
 }
