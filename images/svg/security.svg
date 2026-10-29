@@ -1,2 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256"><path stroke="#FFFFFF" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round" d="M32 44 V32 Q32 14 50 14 Q68 14 68 32 V44"/><rect x="20" y="44" width="60" height="46" rx="8" fill="#FFFFFF"/>
-<circle cx="50" cy="62" r="7" fill="#DAA520"/><rect x="47" y="64" width="6" height="14" fill="#DAA520"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <title>Start Jartrek Security (line glyph, set A)</title>
+  <g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 1px #000 a40 drop at 1,1 (matches the label shadow) -->
+    <path d="M6 11h12v10H6z M8 11V8a4 4 0 0 1 8 0v3 M12 15v2" stroke="#000000" stroke-opacity="0.4" transform="translate(1 1)"/>
+    <path d="M6 11h12v10H6z M8 11V8a4 4 0 0 1 8 0v3 M12 15v2" stroke="#FFFFFF"/>
+  </g>
+</svg>

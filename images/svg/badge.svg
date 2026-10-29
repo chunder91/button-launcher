@@ -1,2 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256"><path fill="#FFC000" d="M50 8 L86 22 V48 Q86 78 50 94 Q14 78 14 48 V22 Z"/>
-<path fill="#FF0000" d="M50 28 L56 42 L71 43 L59 53 L63 68 L50 60 L37 68 L41 53 L29 43 L44 42 Z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <title>Plce (line glyph, set A)</title>
+  <g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 1px #000 a40 drop at 1,1 (matches the label shadow) -->
+    <path d="M12 3l7 3v5c0 4.6-3 8.2-7 10c-4-1.8-7-5.4-7-10V6z M12 8.6l1 2.1l2.3.3l-1.7 1.6l.4 2.3l-2-1.1l-2 1.1l.4-2.3l-1.7-1.6l2.3-.3z" stroke="#000000" stroke-opacity="0.4" transform="translate(1 1)"/>
+    <path d="M12 3l7 3v5c0 4.6-3 8.2-7 10c-4-1.8-7-5.4-7-10V6z M12 8.6l1 2.1l2.3.3l-1.7 1.6l.4 2.3l-2-1.1l-2 1.1l.4-2.3l-1.7-1.6l2.3-.3z" stroke="#FFFFFF"/>
+  </g>
+</svg>

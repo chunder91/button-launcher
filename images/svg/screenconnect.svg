@@ -1,2 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="256" height="256"><rect x="8" y="12" width="84" height="58" rx="6" stroke="#FFFFFF" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path stroke="#FFFFFF" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round" d="M50 70 V82 M32 88 H68"/>
-<path stroke="#FFFFFF" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round" d="M66 41 A16 16 0 1 1 60 28"/><path fill="#FFFFFF" d="M54 20 L68 24 L60 36 Z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <title>Restart Screen Connect (line glyph, set A)</title>
+  <g fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 1px #000 a40 drop at 1,1 (matches the label shadow) -->
+    <path d="M3 4h18v12H3z M8 20h8 M12 16v4 M15 10a3 3 0 1 1-.9-2.1 M14.6 5.9v2.2h-2.2" stroke="#000000" stroke-opacity="0.4" transform="translate(1 1)"/>
+    <path d="M3 4h18v12H3z M8 20h8 M12 16v4 M15 10a3 3 0 1 1-.9-2.1 M14.6 5.9v2.2h-2.2" stroke="#FFFFFF"/>
+  </g>
+</svg>
