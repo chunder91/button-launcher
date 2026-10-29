@@ -100,4 +100,9 @@ Check 'OP-M1: main try has finally { Stop-TrayAndHotkey }' ($src -match "(?s)Wri
 # CC OP-L1: one shared Undo timer, restarted on every Remove
 $ut = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-UndoToast' }, $true).Extent.Text
 Check 'CC OP-L1: Undo toast uses one shared timer, restarted each time' ($ut -match 'if \(-not \$global:toastTimer\)' -and $ut -match '\$global:toastTimer\.Stop\(\); \$global:toastTimer\.Start\(\)' -and ([regex]::Matches($ut, 'New-Object System\.Windows\.Threading\.DispatcherTimer')).Count -eq 1 -and $ut -notmatch '\$timer\b')
+# OP-L2: chips capture on press and launch only on a release inside, after their own press
+$nc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-Chip' }, $true).Extent.Text
+Check 'OP-L2: chip captures the mouse on press' ($nc -match 'Add_MouseLeftButtonDown\(\{ \$st\.down = \$true;[^}]*\[void\]\$chip\.CaptureMouse\(\)')
+Check 'OP-L2: release launches only after own press, inside the chip' ($nc -match '(?s)if \(-not \$st\.down\) \{ return \}; \$st\.down = \$false; \$chip\.ReleaseMouseCapture\(\).*?\$inside = .*?if \(\$inside -and -not \$st\.dragged\) \{ \$ok = Invoke-Button')
+Check 'OP-L2: lost capture clears the press; drag releases capture' ($nc -match 'Add_LostMouseCapture\(\{ \$st\.down = \$false \}' -and $nc -match '\$st\.dragged = \$true; \$st\.down = \$false; \$chip\.ReleaseMouseCapture\(\)')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

@@ -1145,18 +1145,21 @@ function global:New-Chip($btn, [int]$index) {
     if ((Is-Todo $ct) -or ((Test-LocalFixedPath $ct) -and -not (Test-ButtonSetUpQuick $btn))) { [void]$g.Children.Add((New-MissingDot 'Not set up on this PC yet')) }
     $chip.Child = $g
     $st = @{ down = $false; start = $null; dragged = $false }
-    $chip.Add_MouseLeftButtonDown({ $st.down = $true; $st.dragged = $false; $st.start = $_.GetPosition($null); $_.Handled = $true; Play-Click }.GetNewClosure())
+    # OP-L2: like tiles, capture on press; launch only on a release inside this chip that follows its own press
+    $chip.Add_MouseLeftButtonDown({ $st.down = $true; $st.dragged = $false; $st.start = $_.GetPosition($null); [void]$chip.CaptureMouse(); $_.Handled = $true; Play-Click }.GetNewClosure())
     $chip.Add_MouseMove({
         if (-not $st.down -or [bool]$global:cfg.locked -or $_.LeftButton -ne 'Pressed') { return }
         $pt = $_.GetPosition($null)
         if ([Math]::Abs($pt.X - $st.start.X) -gt 4 -or [Math]::Abs($pt.Y - $st.start.Y) -gt 4) {   # edit mode: the whole chip drags
-            $st.dragged = $true; $st.down = $false
+            $st.dragged = $true; $st.down = $false; $chip.ReleaseMouseCapture()
             [void][System.Windows.DragDrop]::DoDragDrop($chip, ('bl-chip:' + $index), [System.Windows.DragDropEffects]::Move) }
     }.GetNewClosure())
     $chip.Add_MouseLeftButtonUp({
-        if (-not $st.down) { return }; $st.down = $false; $_.Handled = $true
-        if (-not $st.dragged) { $ok = Invoke-Button $btn; if ($ok -eq $true) { Start-Flash $flash } }
+        if (-not $st.down) { return }; $st.down = $false; $chip.ReleaseMouseCapture(); $_.Handled = $true
+        $pos = $_.GetPosition($chip); $inside = ($pos.X -ge 0 -and $pos.Y -ge 0 -and $pos.X -le $chip.ActualWidth -and $pos.Y -le $chip.ActualHeight)
+        if ($inside -and -not $st.dragged) { $ok = Invoke-Button $btn; if ($ok -eq $true) { Start-Flash $flash } }
     }.GetNewClosure())
+    $chip.Add_LostMouseCapture({ $st.down = $false }.GetNewClosure())
     $chip.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; $ok = Invoke-Button $btn; if ($ok -eq $true) { Start-Flash $flash } } }.GetNewClosure())
     $chip.Add_Drop({
         $d = [string]$_.Data.GetData([string])
