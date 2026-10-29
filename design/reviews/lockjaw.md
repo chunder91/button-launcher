@@ -748,3 +748,48 @@ Every delete in launcher.nsi at 01e6eb0:
 - **Storage facts.**
   - The password is stored with DPAPI CurrentUser plus app entropy in vnc-viewonly.dat beside buttons.json (:1934-1956).
   - It is passed to the viewer only as the DES-obfuscated value in a temp c.vnc file, in a per-user-ACL folder that is deleted after launch (:1999).
+
+## v1.3.0 delta 6 (Oct 29, 2026): ca190b6..fb2f584 + Setup-v1.3.0.exe 98c800da
+
+**Verdict: PASS.** 0 Critical, 0 High, 0 Medium, 0 Low, 0 Info new. No V8 findings. V7-L1 (weak view-only password, data) stays open and isn't re-rated.
+- Head: fb2f58498b57f165aea50a99e3dff2e486a08ee5. The delta is exactly fb2f584, which touches Launcher.ps1 and tools/test-vnc.ps1.
+- Exe sha256: 98c800dac5d375601d743a898d3f94b5caaf6619cd6da05d060eb1433bfc316c. It matches the claim.
+
+### Verified clean
+- **Display-only claim.**
+  - dnsName is a runtime-only bool computed in Merge-VncRows (Launcher.ps1:1898, 1900). It's true only when there is no user-typed name and a scan result supplied the name.
+  - Its only consumer is nameText in Get-VncRowView (:1921), which shortens display only. It is never persisted, because favourites and cache are saved from their own fields, and it's never read by connect, password or scan code.
+  - The connect target is still the validated host::port. The password-only-to-RFB-hosts rule and the confirm prompt are unaffected.
+  - nameFull still goes through Get-SafeText into a plain {Binding}, so nothing is parsed as XAML.
+- **Wording only.** The final status in Get-VncFoundText (:1904-1907) and the scan prompt text (:2190) changed. The prompt's default button, buttons and decline logic are unchanged.
+- **No diff in sensitive code.** The password flow, scan safeguards (allowlist, /22 cap, RFB check), network key, launch, elevation, confirm, Start-Process, Test-LocalFixedPath, BL.Native, sockets, UNC handling and VNC auth are all unchanged.
+- **Installer.**
+  - installer/ and Build-Installer.ps1 are unchanged.
+  - The 7z payload has 28 files. 26 are byte-identical to fb2f584, and the other 2 are build-generated: ButtonLauncher.exe.sha256 and shipped-images.txt.
+  - ButtonLauncher.exe is a72fa22a...e2715e, which matches the committed hash.
+- **Leak check (my own run).**
+  - gitleaks --redact found no leaks in the delta or the payload.
+  - The grep for the plaintext password and its DES hex found 0 hits at head, 0 in the delta and 0 in the payload.
+
+## v1.3.0 delta 7 (Oct 29, 2026): fb2f584..6e7f6dc + Setup-v1.3.0.exe af9fede5
+
+**Verdict: PASS.** 0 Critical, 0 High, 0 Medium, 0 Low, 0 Info new. No V9 findings. V7-L1 (weak view-only password, data) stays open and unchanged.
+- Head: 6e7f6dc4becef6ccb99a4747537206c9a13c99da. The delta is exactly 0165ff7 and 6e7f6dc, touching Launcher.ps1 and tools/test-vnc.ps1.
+- Exe sha256: af9fede5f56f5c96b68b543a3175fbd51b05324bdbe0f12e938a5789d6aa7172. It matches the claim.
+
+### Verified clean
+- **String-only hunks.** All 14 hunks in Launcher.ps1 are literal strings only: lines 2077, 2190, 2205, 2218, 2253, 2371, 2406, 2427, 2454-2456, 2473, 2486 and 2536.
+  - The format placeholders and arguments are unchanged.
+  - The XAML edits are constant attribute text: AutomationProperties.Name="Computers" and the Rescan ToolTip.
+- **Prompts.** The confirm and scan prompt defaults, buttons and branches are byte-identical apart from the text. That covers `$(if ($Ask) {'Yes'} else {'No'})` and the Remove prompt default No.
+- **No change to sensitive code.** The password flow, scan safeguards, network key, launch, elevation, confirm, Start-Process, Test-LocalFixedPath, BL.Native, sockets, UNC handling and VNC auth are all untouched.
+- **Tests.**
+  - test-vnc.ps1 updates the expected strings and keeps every security assertion: the YesNo default logic, confirmedRanges, the fav-only Remove and the IsEnabled check.
+  - It adds two wording checks.
+- **Installer.**
+  - installer/ and Build-Installer.ps1 are unchanged.
+  - The 7z payload has 28 files. 26 are byte-identical to 6e7f6dc, and the other 2 are build-generated: ButtonLauncher.exe.sha256 and shipped-images.txt.
+  - ButtonLauncher.exe is a72fa22a...e2715e, which matches the committed hash.
+- **Leak check (own run).**
+  - gitleaks --redact found no leaks in the delta or the payload.
+  - The grep for the plaintext password and its DES hex found 0 hits at head, 0 in the delta and 0 in the payload.

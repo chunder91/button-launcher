@@ -34,20 +34,11 @@ Motion is off when `[System.Windows.SystemParameters]::ClientAreaAnimation -eq $
 - Shown for: login failed, and offline (or a poll error) for 2 polls in a row (6 min), so one network blip doesn't show it. Not configured or disabled shows nothing. Checking shows nothing new (the last state holds).
 - The tooltip explains each state.
 
-## 6. Tooltip (provisional, for Squint's UX pass)
-| State | Text |
-|---|---|
-| N unread (1-99) | "3 unread in Inbox - last checked 9:41 AM" |
-| 99+ | "128 unread in Inbox - last checked 9:41 AM" |
-| 0 | "No unread mail - last checked 9:41 AM" |
-| Checking (first poll) | "Checking mail..." |
-| Login failed | "Can't sign in to mail - check Setup" |
-| Offline | "Offline - last checked 9:41 AM" |
-| Disabled / not set up | "Open email" (the normal tile tooltip, no mail line) |
-Times are ET h:mm AM/PM. The tooltip uses the launcher tooltip style.
+## 6. Tooltip - SUPERSEDED
+Superseded by Squint's table in `squint.md` > "Tooltip copy (replaces section 6)" and its status-line wording. Use that copy as final. Visual only: launcher tooltip style; line 1 stays `Open email`, the email line goes under it.
 
 ## 7. Notification style setting (Pulse / Flash / Badge only)
-Setting label (provisional, Squint): **"New mail alert: Pulse / Flash / Badge only"**, **default Pulse**. All three show the count badge.
+Setting (Squint's version, final): checkbox `Show unread email count on the Email button` (off by default), then **`When new mail arrives:`** Pulse the number (default) / Flash the button 3 times / Just show the number. These map to (a) Pulse, (b) Flash, (c) Badge only below. All three show the count badge.
 
 ### (a) Pulse
 As in section 2.
@@ -100,3 +91,33 @@ Sine-interpolate the frames between the keyframes. 3-frame pulse strip: 150 / 75
 | 2500-4000 | rest + badge, hold |
 **(c) Badge-only GIF:** 0-1000 ms no badge, then the badge "3" at 1000 ms (opacity 0→1 over 120 ms: frames at 1000 = 0, 1050 = 0.42, 1100 = 0.83, 1150 = 1), hold to 3000.
 Use Segoe UI Variable, or Inter SemiBold labelled "font substitute".
+
+## Kern check - Smudge mockups (2026-10-29)
+**Verdict: OK to show Charles** - size, position, colours, pulse and flash timing all match the spec; 2 Minors to fix in a re-render (tooltip copy and top inset), neither changes what Charles is choosing between.
+Measured in python3/PIL on the stills and on GIF frame durations (`ImageSequence`). Every GIF has a 1000 ms before-still lead, so GIF time = spec time + 1000.
+- Badge size: the pill core measures 16-17 x 16-17 (1 digit), 22-24 (2 digits), 28-29 (99+) wide at both 100% and 150% (divided by 1.5), which is 18 / 24 / 30 once anti-aliasing and the ring are counted. Pass.
+- Position: the badge centre sits on the 32 px icon box's top-right point (x +0, y +0 within 0.5 DIP) at 100% and 150%. Pass.
+- Colours: fill #111111, number #FACC15 (anti-aliased to #F3C614): 12.33:1. Fill vs the rest bottom #D9B113: 9.0:1. Pass.
+- Pulse: frames are 50 ms (20 fps). Appear 0-150 ms, peaks at 650-800 ms, 1850-2000, 3050-3200 (period 1200 ms), 3 cycles, hold from 3750 ms. At the peak the fill blends to #493D17 (= 75% opacity), and the number still reads 6.99:1 on it and the fill is 5.22:1 on the tile. Pass.
+- Flash: durations on 500 / off 500 / on 500 / off 500 / on 500, then a 2500 ms hold. That's 3 flashes at 1.0 Hz (period 1000 ms), well under 3 Hz. Flash state measures #C1950C top to #AE890A bottom (GIF palette for #C49A0C to #A8850A). Label #111 on it: 6.81:1 top, 5.74:1 bottom; rest 12.69 / 9.02. Pass.
+- Error ring: 8 x 8 at the badge centre, darkest #4A4A4A, 5.78:1 on the rest top and 4.33:1 on the rest bottom. No count, no pulse. Pass.
+- 99+: present at 100% and 150% (`v140-badge-99plus-150.png`). Pass.
+- Known deviations: Selawik for Segoe OK; 32 px icons are the spec value OK; GIF banding OK; hard flash edges OK (the spec allows DiscreteObjectKeyFrame), but see Minor 3.
+
+1. **Minor - tooltip still shows the superseded copy** ("3 unread in Inbox - last checked 9:41 AM", one line). Fix: re-render still-tooltip-3-100/150 with two lines: `Open email` then `3 unread emails in Inbox. Checked 9:41 AM.` (Squint's table). Crop: `kern/assets/button-launcher/v140-tooltip-old-copy.png`.
+2. **Minor - badge top inset is 3 DIP, not >= 4** (ring outer edge about 1.5 DIP from the tile top). That's my spec's fault: icon top - 8 with 12 px top padding lands at 3. Fix (spec and build): badge Margin top = icon top - 6 (the centre sits 2 DIP below the icon corner); horizontal stays icon right - 8. Re-render the stills. Crop: `v140-badge-inset-100.png`.
+3. **Minor - flash edges hard.** OK for the mockup and allowed. For the build, prefer the 60 ms opacity ramp on the overlay at each edge (it doesn't change the 1 Hz rate) so the swap reads as a blink, not a jump. Crop: `v140-flash-on-off.png`.
+Other crops: `v140-pulse-rest-peak-rest.png`, `v140-error-ring-150.png`.
+
+## Setup dialog (D2)
+Title `Unread email count` (Squint's copy and flow in squint.md; this is visual only). Tokens match v1.3.0 combined.md Minor 6. Contrast is measured against both window gradient stops (#26262C / #16161A).
+- **Window:** width 440, SizeToContent Height (about 460 with the result line, 420 without; MinHeight 380). ResizeMode NoResize, WindowStartupLocation CenterOwner. Background LinearGradient vertical #26262C to #16161A, 1 px #FFFFFF 12% border, CornerRadius 12 if custom chrome, otherwise the standard title bar. Padding 16.
+- **Grid:** single column, content width 408. Label to its control 8. Between rows 16. Between groups (account / warning / alert style / buttons) 24. Section heading `When new mail arrives:` 14 SemiBold.
+- **Type:** Segoe UI Variable Text. Labels 14 Regular #FFFFFF (15.04 / 18.04:1). Intro and helper text 13 Regular #B4B4BC (7.30 / 8.76:1), TextWrapping Wrap. Nothing under 12.
+- **Inputs (Email address, Password):** height 32, CornerRadius 6, fill #FFFFFF 6% (#333339 / #242428), 1 px #FFFFFF 12% stroke, padding 10,0. Text 14 white. The `@jartrek.net` suffix is a fixed 14 #B4B4BC TextBlock inside the box at the right, 8 from the edge. Placeholder #9A9AA4 (4.50:1 on the light input fill). Rest bottom line 1 px #FFFFFF 40% (3.67:1, so the field edge passes 3:1, since the 12% stroke alone is 1.46:1). Focus: 2 px #22C55E bottom line (6.60 / 7.92:1). Error (after a failed Test): 2 px #F87171 bottom line (5.44:1). Disabled: whole control 45% opacity.
+- **Checkbox** (`Show unread email count on the Email button`): box 18 x 18, CornerRadius 4, 10 gap to the 14 px label, row height 24. Unchecked: transparent fill, 1.5 px #FFFFFF 55% stroke (5.56:1). Hover: fill #FFFFFF 8%. Checked: fill #22C55E, no stroke, check glyph 12 px 2 px stroke #111111 (8.4:1 on the green; the green is 6.60:1 on the window). Focus: 2 px #FFFFFF ring 2 px outside.
+- **Radios** (Pulse the number / Flash the button 3 times / Just show the number): outer 18 diameter, 1.5 px #FFFFFF 55% stroke unchecked. Checked: stroke #22C55E 1.5 px and an 8 px #22C55E centre dot. 10 gap to the label, rows 28 high (no extra margin), indented 0 under the heading. Same focus ring.
+- **Shared-PC warning:** a strip, CornerRadius 8, fill #F59E0B 12% over the window, 1 px #F59E0B 35% stroke, padding 10,8. 16 px Fluent `Warning` (color) icon, 8 gap, text 13 #FBBF24 (7.26:1 on its strip; 9.01:1 on the window).
+- **Test result line:** directly under the Test button row's left side or the inputs, 8 above the buttons, min height 20, 16 px icon + 8 gap + 13 px text, wraps. Success: #4ADE80 with Fluent `CheckmarkCircle` filled #22C55E (8.63 / 10.36:1). Sign-in error: #F87171 with `ErrorCircle` (5.44 / 6.52:1). Offline: #FBBF24 with `WifiOff` (9.01 / 10.81:1). Checking: 13 #B4B4BC `Testing...` with a 16 px ProgressRing or no icon. AutomationProperties.LiveSetting Polite. No fills behind the line.
+- **Buttons:** 32 high, CornerRadius 10, MinWidth 88, padding 16,0, 8 apart. Row right-aligned at the bottom: **Test** (secondary, left of the group) / **Save** (primary green #0E7A4B to #0A5A38, 14 SemiBold white 5.38:1; hover #187F52 to #0B643E; pressed #0D6E44 to #0A5333) / **Cancel** (secondary #2E2E2E to #1E1E1E with the 28% to 6% white rim, 14 Regular white). Save is IsDefault, Cancel IsCancel. Save disabled until a good Test: 45% opacity, no hover. Turning off: the confirm uses the same dialog shell at 380 wide with No (primary, default) and Yes, turn off (secondary).
+- Scale: all values DIP; UseLayoutRounding on. At 150% the window is 660 px wide. Re-measure on real Windows captures.
