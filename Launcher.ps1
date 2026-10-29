@@ -45,6 +45,7 @@ $global:middle       = $null                                      # middle icons
 $global:tray         = $null
 $global:hotkeySrc    = $null
 $global:hotkeyOk     = $false
+$global:iconCache    = @{}                                         # OP-L1: chip icons extracted once per target
 $global:AppVersion   = '1.2.0'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
@@ -1071,19 +1072,52 @@ function global:New-MiddleState($cfg) {   # normalises buttons.json "middle": { 
 function global:New-DefaultChip { [pscustomobject]@{ label = 'New icon'; type = 'program'; target = 'TODO: set a target'; args = ''; image = 'icon' } }
 
 # ---------- chips ----------
-function global:Get-ChipIcon($btn) {   # the target's own icon, else a Set A icon for its type
+# OP-L1: only touch local fixed-drive paths when drawing. Opening a UNC path, a \\?\UNC or \\.\ device path, or a mapped
+# network drive (or a .lnk that points or takes its icon from one) makes Windows send NTLM credentials to that server.
+function global:Get-DriveTypeName([string]$root) { ([IO.DriveInfo]::new($root)).DriveType.ToString() }
+function global:Test-LocalFixedPath([string]$path, [scriptblock]$DriveType) {
+    if (-not $DriveType) { $DriveType = { param($r) Get-DriveTypeName $r } }
+    $x = ([string]$path).Trim().Trim('"')
+    if (-not $x) { return $false }
+    if ($x.StartsWith('\\') -or $x.StartsWith('//') -or $x.StartsWith('\/') -or $x.StartsWith('/\')) { return $false }   # UNC, \\?\, \\?\UNC, \\.\
+    if ($x -notmatch '^[A-Za-z]:[\\/]') { return $false }                                     # relative or odd paths: no
+    try { $t = [string](& $DriveType ($x.Substring(0, 2) + '\')) } catch { return $false }
+    return ($t -eq 'Fixed')
+}
+function global:Test-SafeIconSource([string]$t, [scriptblock]$DriveType, [scriptblock]$ReadLnk) {
+    if (-not (Test-LocalFixedPath $t $DriveType)) { return $false }
+    if ($t -notmatch '(?i)\.lnk$') { return $true }
+    if (-not $ReadLnk) { $ReadLnk = { param($l) $sc = (New-Object -ComObject WScript.Shell).CreateShortcut($l); @{ target = $sc.TargetPath; icon = $sc.IconLocation } } }
+    try { $info = & $ReadLnk $t } catch { return $false }                                     # the .lnk itself is local (checked above)
+    $lt = Expand ([string]$info.target)
+    $li = Expand ((([string]$info.icon) -replace ',\s*-?\d+\s*$', '').Trim())
+    if ($lt -and -not (Test-LocalFixedPath $lt $DriveType)) { return $false }
+    if ($li -and -not (Test-LocalFixedPath $li $DriveType)) { return $false }
+    return $true
+}
+function global:Get-ChipFallbackPic([string]$kind) {
+    switch ($kind) { 'website' { 'images/globe.png' } 'file' { 'images/guide.png' } 'script' { 'images/screenconnect.png' } default { 'images/register.png' } }
+}
+function global:Get-ChipIcon($btn) {   # the target's own icon (local fixed drives only, cached), else a Set A icon for its type
     $kind = Get-ButtonType $btn
-    if ($btn.image -and [string]$btn.image -ne 'icon') { $s = Get-PicSource $btn 32; if ($s) { return $s } }
+    $im = [string]$btn.image
+    if ($im -and $im -ne 'icon') {
+        $ip = Resolve-Img $im
+        if (Test-LocalFixedPath $ip) { $s = Get-PicSource $btn 32; if ($s) { return $s } } }
     if ($kind -ne 'website') {
         $t = Expand $btn.target
-        if ($t -and -not (Is-Todo $t) -and (Test-Path -LiteralPath $t -PathType Leaf)) {
-            try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($t)
-                  $bs = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
-                  $ico.Dispose(); $bs.Freeze(); return $bs } catch {}
-        }
+        if ($t -and -not (Is-Todo $t)) {
+            if ($global:iconCache.ContainsKey($t)) { if ($global:iconCache[$t]) { return $global:iconCache[$t] } }
+            else {
+                $bs = $null
+                if ((Test-SafeIconSource $t) -and (Test-Path -LiteralPath $t -PathType Leaf)) {
+                    try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($t)
+                          $bs = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
+                          $ico.Dispose(); $bs.Freeze() } catch { $bs = $null } }
+                $global:iconCache[$t] = $bs                                                     # extracted once per target, not on every draw
+                if ($bs) { return $bs } } }
     }
-    $fb = switch ($kind) { 'website' { 'images/globe.png' } 'file' { 'images/guide.png' } 'script' { 'images/screenconnect.png' } default { 'images/register.png' } }
-    return Get-PicSource ([pscustomobject]@{ image = $fb }) 32
+    return Get-PicSource ([pscustomobject]@{ image = (Get-ChipFallbackPic $kind) }) 32
 }
 function global:New-Chip($btn, [int]$index) {
     $chip = New-Object System.Windows.Controls.Border; $chip.Height = 64; $chip.Margin = '3'; $chip.CornerRadius = '8'
@@ -1105,7 +1139,8 @@ function global:New-Chip($btn, [int]$index) {
         $eo = New-Object System.Windows.Shapes.Rectangle; $eo.IsHitTestVisible = $false; $eo.Stroke = Brush '#99FFFFFF'; $eo.StrokeThickness = 2
         $eo.StrokeDashArray = New-Object System.Windows.Media.DoubleCollection (,[double[]](4, 3)); $eo.RadiusX = 6; $eo.RadiusY = 6; $eo.Margin = '2'
         [void]$g.Children.Add($eo) }
-    if (-not (Test-ButtonSetUpQuick $btn)) { [void]$g.Children.Add((New-MissingDot 'Not set up on this PC yet')) }
+    $ct = Expand $btn.target   # OP-L1: no existence check on network paths while drawing
+    if ((Is-Todo $ct) -or ((Test-LocalFixedPath $ct) -and -not (Test-ButtonSetUpQuick $btn))) { [void]$g.Children.Add((New-MissingDot 'Not set up on this PC yet')) }
     $chip.Child = $g
     $st = @{ down = $false; start = $null; dragged = $false }
     $chip.Add_MouseLeftButtonDown({ $st.down = $true; $st.dragged = $false; $st.start = $_.GetPosition($null); $_.Handled = $true; Play-Click }.GetNewClosure())

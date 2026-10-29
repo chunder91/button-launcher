@@ -6,7 +6,7 @@ $fail = 0
 function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"; $script:fail++ } }
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
-foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState') {
+foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-ChipFallbackPic') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 # Layout setting
@@ -42,6 +42,26 @@ foreach ($c in @(@('Price List.pdf', 'file', 'Price List'), @('Daily Backup.ps1'
     $got = Get-ChipLabel ([pscustomobject]@{ label = $c[0]; type = $c[1]; target = 'x' })
     Check ("chip label '{0}' -> '{1}'" -f ($c[0] -replace "`n", '|'), $got) ($got -ceq $c[2]) }
 Check 'chip label from target when empty' ((Get-ChipLabel ([pscustomobject]@{ label = ''; type = 'script'; target = 'C:\Scripts\Daily Backup.ps1' })) -eq 'Daily Backup')
+# OP-L1: icon extraction only for local fixed-drive paths (drive types mocked: C fixed, Z mapped network, E removable)
+$dt = { param($r) switch ($r.Substring(0, 1).ToUpperInvariant()) { 'C' { 'Fixed' } 'D' { 'Fixed' } 'Z' { 'Network' } 'E' { 'Removable' } 'Q' { throw 'no such drive' } default { 'NoRootDirectory' } } }
+foreach ($c in @(@('C:\Program Files\App\app.exe', $true), @('d:/tools/x.exe', $true), @('\\server\share\app.exe', $false), @('//server/share/app.exe', $false),
+                 @('\\?\UNC\server\share\app.exe', $false), @('\\?\C:\app.exe', $false), @('\\.\pipe\x', $false), @('\\.\C:\app.exe', $false),
+                 @('Z:\apps\app.exe', $false), @('E:\usb\app.exe', $false), @('Q:\gone.exe', $false), @('notepad.exe', $false), @('', $false), @('"C:\x y\a.exe"', $true))) {
+    Check ("local fixed path '{0}' -> {1}" -f $c[0], $c[1]) ((Test-LocalFixedPath $c[0] $dt) -eq $c[1]) }
+$lnk = { param($l) switch -Wildcard ($l) { '*local.lnk' { @{ target = 'C:\App\app.exe'; icon = 'C:\App\app.exe,0' } } '*unctarget.lnk' { @{ target = '\\srv\s\app.exe'; icon = '' } }
+                                           '*uncicon.lnk' { @{ target = 'C:\App\app.exe'; icon = '\\srv\s\icons.dll,3' } } '*mapped.lnk' { @{ target = 'Z:\app.exe'; icon = ',0' } } default { @{ target = ''; icon = '' } } } }
+$script:lnkRead = 0; $lnkCount = { param($l) $script:lnkRead++; & $lnk $l }
+Check 'lnk: local lnk, local target + icon -> extract' (Test-SafeIconSource 'C:\Users\a\Desktop\local.lnk' $dt $lnkCount)
+Check 'lnk: target on a share -> fallback' (-not (Test-SafeIconSource 'C:\d\unctarget.lnk' $dt $lnk))
+Check 'lnk: icon location on a share -> fallback' (-not (Test-SafeIconSource 'C:\d\uncicon.lnk' $dt $lnk))
+Check 'lnk: target on a mapped drive -> fallback' (-not (Test-SafeIconSource 'C:\d\mapped.lnk' $dt $lnk))
+$script:lnkRead = 0; [void](Test-SafeIconSource '\\srv\share\local.lnk' $dt $lnkCount); [void](Test-SafeIconSource 'Z:\local.lnk' $dt $lnkCount)
+Check 'lnk on a share or mapped drive is never read' ($script:lnkRead -eq 0)
+Check 'reader error -> fallback' (-not (Test-SafeIconSource 'C:\d\x.lnk' $dt { throw 'COM failed' }))
+foreach ($c in @(@('program', 'images/register.png'), @('file', 'images/guide.png'), @('script', 'images/screenconnect.png'), @('website', 'images/globe.png'))) {
+    Check ("fallback icon for {0}: {1}" -f $c[0], $c[1]) ((Get-ChipFallbackPic $c[0]) -eq $c[1] -and (Test-Path (Join-Path $root $c[1]))) }
+Check 'Get-ChipIcon checks Test-SafeIconSource before Test-Path and caches per target' ($src -match '\(Test-SafeIconSource \$t\) -and \(Test-Path -LiteralPath \$t -PathType Leaf\)' -and $src -match '\$global:iconCache\[\$t\] = \$bs')
+Check 'chip dot: no existence check on non-local paths' ($src -match '\(Test-LocalFixedPath \$ct\) -and -not \(Test-ButtonSetUpQuick \$btn\)')
 # Source checks
 Check 'click-through: middle Background $null when locked' ($src -match "\`$mid\.Background = if \(\`$locked\) \{ \`$null \}")
 Check 'single window uses per-pixel alpha' ($src -match '\$w\.AllowsTransparency = \$true; \$w\.Background = \$null')
