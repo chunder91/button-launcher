@@ -1,5 +1,5 @@
 // ButtonLauncher.exe - tiny starter for Launcher.ps1 (no console window).
-// Starts: powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File "<exe dir>\Launcher.ps1" [args]
+// Starts: %SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File "<exe dir>\Launcher.ps1" [args]
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -33,8 +33,16 @@ static class Program
         var sb = new StringBuilder("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File ");
         sb.Append(Quote(script));
         foreach (string a in args) { sb.Append(' ').Append(Quote(a)); }
-        string ps = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe");
-        if (!File.Exists(ps)) ps = "powershell.exe";
+        // R-M3: only the real Windows PowerShell 5.1. No bare "powershell.exe" fallback, which Windows could resolve
+        // from the user-writable install folder first.
+        string ps = Path.Combine(Environment.SystemDirectory, @"WindowsPowerShell\v1.0\powershell.exe");
+        if (!File.Exists(ps))
+        {
+            MessageBox.Show("Windows PowerShell was not found at:\n\n" + ps +
+                "\n\nButton Launcher needs Windows PowerShell 5.1, which is part of Windows.",
+                "Button Launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 3;
+        }
         var psi = new ProcessStartInfo(ps, sb.ToString())
         {
             UseShellExecute = false,
