@@ -132,6 +132,9 @@ $destRoot = [IO.Path]::GetFullPath($dest).TrimEnd('\', '/') + [IO.Path]::Directo
 foreach ($e in $z.Entries) {
     # LJ-N7: skip entries that are rooted, contain '..', or resolve outside $dest
     $en = $e.FullName
+    # R4-N1: ':' or other invalid characters in an entry name: skip and log it, don't stop the install
+    if ($en.IndexOf(':') -ge 0 -or $en.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0 -or $en.IndexOfAny([char[]]'*?"<>|') -ge 0) {
+        Add-Content -LiteralPath $instLog -Value ("{0}  skipped a payload entry with an invalid name: {1}" -f (Get-Date -Format s), $en) -ErrorAction SilentlyContinue; continue }
     if ([IO.Path]::IsPathRooted($en) -or $en -match '(^|[\\/])\.\.([\\/]|$)') { continue }
     $t = Join-Path $dest $en
     if (-not [IO.Path]::GetFullPath($t).StartsWith($destRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }

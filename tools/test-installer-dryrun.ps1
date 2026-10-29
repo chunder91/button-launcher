@@ -154,7 +154,7 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     Set-Content (Join-Path $dest 'buttons.json') '{"mine":1}'
     Write-Raw (Join-Path $dest 'images/my-own.png') 'mine'; Write-Raw (Join-Path $dest 'images/reddog.png') 'custom'
     $outside = Join-Path $env:LOCALAPPDATA 'escape.txt'
-    $instFile2 = New-TestInstaller @{ 'reddog.png' = 'png2'; 'globe.png' = 'g2'; 'my-own.png' = 'shipped' } @('../escape.txt', '../../escape.txt', 'images/../../escape.txt')
+    $instFile2 = New-TestInstaller @{ 'reddog.png' = 'png2'; 'globe.png' = 'g2'; 'my-own.png' = 'shipped' } @('../escape.txt', '../../escape.txt', 'images/../../escape.txt', 'images/bad:name.png', 'images/what?.png')
     & $instFile2
     $img = { param($n) [IO.File]::ReadAllText((Join-Path $dest "images/$n")) }
     Check ($p + 'upgrade: buttons.json kept') ((Get-Content (Join-Path $dest 'buttons.json') -Raw).Trim() -eq '{"mine":1}')
@@ -163,6 +163,7 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     Check ($p + 'upgrade: untouched shipped globe.png refreshed') ((& $img 'globe.png') -eq 'g2')
     $ilog = Join-Path $dest 'install.log'; $ltxt = if (Test-Path $ilog) { Get-Content $ilog -Raw } else { '' }
     Check ($p + 'upgrade: kept pictures logged') ($ltxt -match 'images/reddog\.png' -and $ltxt -match 'images/my-own\.png' -and $ltxt -notmatch 'globe')
+    Check ($p + 'R4-N1: invalid entry names skipped and logged, install continued') ($ltxt -match 'invalid name: images/bad:name\.png' -and $ltxt -match 'invalid name: images/what\?\.png' -and -not (Test-Path -LiteralPath (Join-Path $dest 'images/bad:name.png')) -and ((& $img 'globe.png') -eq 'g2'))
     Check ($p + 'LJ-N7: ../ entries not extracted outside') (-not (Test-Path $outside) -and -not (Test-Path (Join-Path $tb 'escape.txt')))
     & $instFile2   # a second run with the new manifest: reddog stays the user's
     # R4-L1: an install from before the manifest (no shipped-images.txt) refreshes pictures that still match a v1.1.0 hash
