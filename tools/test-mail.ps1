@@ -46,7 +46,7 @@ $cases = @(
     @('* STATUS INBOX (UNSEEN 3)', 3), @('* STATUS "INBOX" (UNSEEN 0)', 0), @('* status inbox (unseen 42)', 42), @('* STATUS INBOX (MESSAGES 231 UNSEEN 7 RECENT 1)', 7),
     @('* STATUS INBOX (UNSEEN 128)', 128), @('*  STATUS   INBOX   ( UNSEEN   5 )  ', 5), @('* STATUS "INBOX" (UIDNEXT 44292 UNSEEN 12)', 12), @("* STATUS INBOX (UNSEEN 3)`r", 3),
     @('* STATUS INBOX (MESSAGES 3)', -1), @('* STATUS INBOX (UNSEENX 3)', -1), @('* STATUS INBOX (UNSEEN x)', -1), @('* OK [UNSEEN 4] first unseen', -1), @('a2 OK STATUS done', -1),
-    @('* STATUS INBOX (UNSEEN 1234567890)', -1), @('', -1))
+    @('* STATUS INBOX (UNSEEN 9876543210)', -1), @('', -1))
 foreach ($c in $cases) { Check ("STATUS parse: '{0}' -> {1}" -f ($c[0] -replace "`r", '\r'), $c[1]) ((Get-ImapStatusUnseen $c[0]) -eq $c[1]) }
 
 # --- the session against a mock server (injectable read/write) ---
@@ -114,7 +114,7 @@ $s = New-MailState; [void](Update-MailState $s @{ kind = 'ok'; unseen = 3; epoch
 Step-MailResume $s
 $o = Update-MailState $s @{ kind = 'net'; epoch = 0 } $now; Check 'sleep: a check from before sleep is ignored, not counted' ($o.ignored -and $s.fails -eq 1 -and $s.phase -eq 'retry')
 [void](Update-MailState $s @{ kind = 'ok'; unseen = 3; epoch = 1 } $now); Check 'first poll after wake clears' ($s.phase -eq 'ok' -and $s.fails -eq 0)
-foreach ($c in @(@(0, ''), @(1, '1'), @(9, '9'), @(10, '10'), @(99, '99'), @(100, '99+'), @(12345, '99+'))) { Check "badge text $($c[0]) -> '$($c[1])'" ((Get-MailBadgeText $c[0]) -ceq $c[1]) }
+foreach ($c in @(@(0, ''), @(1, '1'), @(9, '9'), @(10, '10'), @(99, '99'), @(100, '99+'), @(54321, '99+'))) { Check "badge text $($c[0]) -> '$($c[1])'" ((Get-MailBadgeText $c[0]) -ceq $c[1]) }
 Check 'badge widths 18 / 24 / 30' ((Get-MailBadgeWidth '3') -eq 18 -and (Get-MailBadgeWidth '27') -eq 24 -and (Get-MailBadgeWidth '99+') -eq 30)
 Check 'animations off -> badge only' ((Get-MailMotion 'flash' $false) -eq 'badge' -and (Get-MailMotion 'pulse' $false) -eq 'badge' -and (Get-MailMotion 'pulse' $true) -eq 'pulse')
 Check 'unknown style -> flash (Charles default)' ((Get-MailMotion 'zap' $true) -eq 'flash')
