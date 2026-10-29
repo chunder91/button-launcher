@@ -89,7 +89,10 @@ foreach ($rn in @($KeyName, 'ButtonLauncher') | Select-Object -Unique) {   # onl
     if ($rv -and $rv.IndexOf($dest, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Remove-ItemProperty -LiteralPath $run -Name $rn -ErrorAction SilentlyContinue } }
 # Delete the folder from a child PowerShell after this script exits (no cmd.exe, -LiteralPath only).
 $q = $dest.Replace("'", "''")
-$cmd = "Start-Sleep -Seconds 2; Remove-Item -LiteralPath '$q' -Recurse -Force -ErrorAction SilentlyContinue"
+# LJ-N5: never follow a junction/symlink inside the folder. Unlink every reparse-point directory first (the link only,
+# not its target), then delete the rest. $del has no single quotes so it can be embedded below.
+$del = 'param($d) if (-not [IO.Directory]::Exists($d)) { return }; if (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [IO.Directory]::Delete($d, $false); return }; $st = New-Object System.Collections.Stack; $st.Push($d); while ($st.Count -gt 0) { $c = $st.Pop(); foreach ($s in [IO.Directory]::GetDirectories($c)) { if (([IO.File]::GetAttributes($s) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [IO.Directory]::Delete($s, $false) } else { $st.Push($s) } } }; [IO.Directory]::Delete($d, $true)'
+$cmd = "Start-Sleep -Seconds 2; try { & { $del } '$q' } catch { }"
 $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
 Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc"
 '@
