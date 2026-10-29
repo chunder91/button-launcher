@@ -86,7 +86,8 @@ foreach ($old in @('ButtonLauncher', $AppName) | Select-Object -Unique) {   # ol
 $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 foreach ($rn in @($KeyName, 'ButtonLauncher') | Select-Object -Unique) {   # only remove a Run value that starts this folder's exe
     $rv = (Get-ItemProperty -LiteralPath $run -Name $rn -ErrorAction SilentlyContinue).$rn
-    if ($rv -and $rv.IndexOf($dest, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Remove-ItemProperty -LiteralPath $run -Name $rn -ErrorAction SilentlyContinue } }
+    if ($rv -and ($rv -ieq ('"' + (Join-Path $dest 'ButtonLauncher.exe') + '"') -or $rv -ieq ('wscript.exe "' + (Join-Path $dest 'Start Launcher.vbs') + '"'))) {   # LJ-N6: exact command only
+        Remove-ItemProperty -LiteralPath $run -Name $rn -ErrorAction SilentlyContinue } }
 # Delete the folder from a child PowerShell after this script exits (no cmd.exe, -LiteralPath only).
 $q = $dest.Replace("'", "''")
 # LJ-N5: never follow a junction/symlink inside the folder. Unlink every reparse-point directory first (the link only,
@@ -145,7 +146,8 @@ Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath('Startup')) "$
 $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 if ($KeyName -ne 'ButtonLauncher') {   # older builds always used 'ButtonLauncher': drop it only if it starts this folder
     $rv = (Get-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue).ButtonLauncher
-    if ($rv -and $rv.IndexOf($dest, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Remove-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue } }
+    if ($rv -and ($rv -ieq ('"' + (Join-Path $dest 'ButtonLauncher.exe') + '"') -or $rv -ieq ('wscript.exe "' + (Join-Path $dest 'Start Launcher.vbs') + '"'))) {   # LJ-N6: exact command only
+        Remove-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue } }
 if ($NoAutostart) { Remove-ItemProperty -LiteralPath $run -Name $KeyName -ErrorAction SilentlyContinue }
 else { New-ItemProperty -LiteralPath $run -Name $KeyName -Value ('"' + $exe + '"') -PropertyType String -Force | Out-Null }
 
