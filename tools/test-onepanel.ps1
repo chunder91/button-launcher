@@ -78,7 +78,8 @@ function global:Get-Item { $script:gi++; Microsoft.PowerShell.Management\Get-Ite
 Check 'OP-L1/L3: non-local target -> fallback, file never touched, nothing cached' ((Get-ChipIcon $cb) -eq 'fallback' -and $script:gi -eq 0 -and $global:iconCache.Count -eq 0)
 Remove-Item Function:\global:Get-Item; Remove-Item -LiteralPath $tf
 Check 'Get-ChipIcon checks Test-SafeIconSource before touching the file' ($gci.Extent.Text -match '(?s)if \(Test-SafeIconSource \$t\) \{\s+\$fi = \$null; try \{ \$fi = Get-Item')
-Check 'chip dot: no existence check on non-local paths' ($src -match '\(Test-LocalFixedPath \$ct\) -and -not \(Test-ButtonSetUpQuick \$btn\)')
+Check 'chip dot: only Get-SetupState missing (local-only check)' ($src -match '\$ss = Get-SetupState \$btn[^\n]*\n\s+if \(\$ss -eq ''missing''\) \{ \[void\]\$g\.Children\.Add\(\(New-MissingDot')
+Check 'helpers defined once' (([regex]::Matches($src, 'function global:Test-LocalFixedPath')).Count -eq 1 -and ([regex]::Matches($src, 'function global:Test-SafeIconSource')).Count -eq 1 -and ([regex]::Matches($src, 'function global:Get-DriveTypeName')).Count -eq 1)
 # Source checks
 Check 'click-through: middle Background $null when locked' ($src -match "\`$mid\.Background = if \(\`$locked\) \{ \`$null \}")
 Check 'single window uses per-pixel alpha' ($src -match '\$w\.AllowsTransparency = \$true; \$w\.Background = \$null')
