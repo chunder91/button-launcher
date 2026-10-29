@@ -116,13 +116,24 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     $global:Reg = @{ $runK = @{ 'Other' = 'other.exe' } }; $global:Started.Clear()
     $safe = Get-SafeAppName $title
     $key = if ($safe -eq 'Launcher') { 'ButtonLauncher' } else { 'ButtonLauncher-' + $safe }
-    $pl = Join-Path $tb 'payload'; New-Item -ItemType Directory -Force (Join-Path $pl 'images') | Out-Null
-    Set-Content (Join-Path $pl 'Launcher.ps1') '#'; Set-Content (Join-Path $pl 'ButtonLauncher.exe') 'MZ'
-    Set-Content (Join-Path $pl 'buttons.default.json') '{"default":true}'; Set-Content (Join-Path $pl 'images/reddog.png') 'png'
-    $pz = Join-Path $tb 'p.zip'; Compress-Archive -Path (Join-Path $pl '*') -DestinationPath $pz
     $unB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Convert-ForTest $tmpl['$uninstTemplate']).Replace('__NAME__', $safe)))   # same as the builder
-    $inst = (Convert-ForTest $tmpl['$install']).Replace('__NAME__', $safe).Replace('__VERSION__', '1.1.0').Replace('__B64__', [Convert]::ToBase64String([IO.File]::ReadAllBytes($pz))).Replace('__UNINST_B64__', $unB64)
-    $instFile = Join-Path $tb 'install.ps1'; Set-Content $instFile $inst
+    # Payload zip built in memory: shipped-images.txt in the builder's format, plus optional hostile entry names (LJ-N7)
+    function New-TestInstaller([hashtable]$imgs, [string[]]$evil) {
+        $pz = Join-Path $tb ('p-' + [guid]::NewGuid() + '.zip')
+        $fs = [IO.File]::Open($pz, 'CreateNew'); $za = New-Object IO.Compression.ZipArchive($fs, [IO.Compression.ZipArchiveMode]::Create)
+        $files = [ordered]@{ 'Launcher.ps1' = '#'; 'ButtonLauncher.exe' = 'MZ'; 'buttons.default.json' = '{"default":true}' }
+        $man = @(); foreach ($k in $imgs.Keys) { $files['images/' + $k] = $imgs[$k]
+            $h = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($imgs[$k]))).Replace('-', '').ToLowerInvariant()
+            $man += "$h  images/$k" }
+        $files['shipped-images.txt'] = ($man -join "`n")
+        foreach ($k in @($files.Keys) + @($evil | Where-Object { $_ })) {
+            $w = New-Object IO.StreamWriter($za.CreateEntry($k).Open()); $w.Write($(if ($files.Contains($k)) { $files[$k] } else { 'evil' })); $w.Dispose() }
+        $za.Dispose(); $fs.Dispose()
+        $f = Join-Path $tb ('install-' + [guid]::NewGuid() + '.ps1')
+        Set-Content $f ((Convert-ForTest $tmpl['$install']).Replace('__NAME__', $safe).Replace('__VERSION__', '1.1.0').Replace('__B64__', [Convert]::ToBase64String([IO.File]::ReadAllBytes($pz))).Replace('__UNINST_B64__', $unB64))
+        $f }
+    function Write-Raw($path, $text) { [IO.File]::WriteAllText($path, $text) }
+    $instFile = New-TestInstaller @{ 'reddog.png' = 'png'; 'globe.png' = 'g1' } @()
     $dest = Join-Path (Join-Path $env:LOCALAPPDATA 'Programs') $safe
     $exeQ = '"' + (Join-Path $dest 'ButtonLauncher.exe') + '"'
     & $instFile
@@ -134,12 +145,27 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     $progs = Join-Path $env:BL_MOCK_FOLDERS 'Programs'; $desk = Join-Path $env:BL_MOCK_FOLDERS 'Desktop'
     Check ($p + 'install: Start menu, uninstall and desktop shortcuts') ((Test-Path (Join-Path $progs "$safe.lnk")) -and (Test-Path (Join-Path $progs "Uninstall $safe.lnk")) -and (Test-Path (Join-Path $desk "$safe.lnk")))
     Check ($p + 'install: launches the exe') (@($global:Started) -match 'ButtonLauncher\.exe').Count -ge 1
-    # R-M2: user edits + added picture survive a reinstall/upgrade
-    Set-Content (Join-Path $dest 'buttons.json') '{"mine":1}'; Set-Content (Join-Path $dest 'images/my-own.png') 'mine'
-    & $instFile
-    Check ($p + 'reinstall: buttons.json kept') ((Get-Content (Join-Path $dest 'buttons.json') -Raw).Trim() -eq '{"mine":1}')
-    Check ($p + 'reinstall: added picture kept') (Test-Path (Join-Path $dest 'images/my-own.png'))
-    Check ($p + 'reinstall: shipped picture refreshed') (Test-Path (Join-Path $dest 'images/reddog.png'))
+    # R-M2 + Pictures/R3-N1: an upgrade keeps buttons.json, pictures the user added, and a user-replaced reddog.png,
+    # but refreshes shipped pictures the user never touched.
+    Set-Content (Join-Path $dest 'buttons.json') '{"mine":1}'
+    Write-Raw (Join-Path $dest 'images/my-own.png') 'mine'; Write-Raw (Join-Path $dest 'images/reddog.png') 'custom'
+    $outside = Join-Path $env:LOCALAPPDATA 'escape.txt'
+    $instFile2 = New-TestInstaller @{ 'reddog.png' = 'png2'; 'globe.png' = 'g2'; 'my-own.png' = 'shipped' } @('../escape.txt', '../../escape.txt', 'images/../../escape.txt')
+    & $instFile2
+    $img = { param($n) [IO.File]::ReadAllText((Join-Path $dest "images/$n")) }
+    Check ($p + 'upgrade: buttons.json kept') ((Get-Content (Join-Path $dest 'buttons.json') -Raw).Trim() -eq '{"mine":1}')
+    Check ($p + 'upgrade: added picture with a shipped name kept') ((& $img 'my-own.png') -eq 'mine')
+    Check ($p + 'upgrade: user-replaced reddog.png kept') ((& $img 'reddog.png') -eq 'custom')
+    Check ($p + 'upgrade: untouched shipped globe.png refreshed') ((& $img 'globe.png') -eq 'g2')
+    $ilog = Join-Path $dest 'install.log'; $ltxt = if (Test-Path $ilog) { Get-Content $ilog -Raw } else { '' }
+    Check ($p + 'upgrade: kept pictures logged') ($ltxt -match 'images/reddog\.png' -and $ltxt -match 'images/my-own\.png' -and $ltxt -notmatch 'globe')
+    Check ($p + 'LJ-N7: ../ entries not extracted outside') (-not (Test-Path $outside) -and -not (Test-Path (Join-Path $tb 'escape.txt')))
+    & $instFile2   # a second run with the new manifest: reddog stays the user's
+    Check ($p + 'upgrade again: user-replaced reddog.png still kept') ((& $img 'reddog.png') -eq 'custom')
+    if ($safe -ne 'Launcher') {   # LJ-N6: a legacy 'ButtonLauncher' value for a look-alike folder (<name>2) is not ours
+        $global:Reg[$runK]['ButtonLauncher'] = '"' + (Join-Path (Join-Path $env:LOCALAPPDATA 'Programs') ($safe + '2')) + '/ButtonLauncher.exe"'
+        & $instFile2
+        Check ($p + 'LJ-N6: install keeps a look-alike folder''s legacy Run value') ($global:Reg[$runK].ContainsKey('ButtonLauncher')) }
     # Uninstall (the generated Uninstall.ps1, run from the install folder)
     $global:Started.Clear()
     Check ($p + 'installed Uninstall.ps1 has its real name') ((Get-Content (Join-Path $dest 'Uninstall.ps1') -Raw) -notmatch '__NAME__')
@@ -149,7 +175,17 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     Check ($p + 'uninstall: other Run values untouched') ($global:Reg[$runK]['Other'] -eq 'other.exe')
     Check ($p + 'uninstall: shortcuts removed') (-not ((Test-Path (Join-Path $progs "$safe.lnk")) -or (Test-Path (Join-Path $progs "Uninstall $safe.lnk")) -or (Test-Path (Join-Path $desk "$safe.lnk"))))
     $enc = @(@($global:Started) -match '-EncodedCommand (\S+)'); $cmdText = if ($enc.Count) { [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(($enc[0] -split '-EncodedCommand ')[1].Trim())) } else { '' }
-    Check ($p + 'uninstall: folder delete targets exactly the install folder') ($cmdText -eq ("Start-Sleep -Seconds 2; Remove-Item -LiteralPath '" + $dest.Replace("'", "''") + "' -Recurse -Force -ErrorAction SilentlyContinue"))
+    Check ($p + 'uninstall: folder delete targets exactly the install folder') ($cmdText.StartsWith('Start-Sleep -Seconds 2; try { & { param($d)') -and $cmdText.EndsWith("} '" + $dest.Replace("'", "''") + "' } catch { }"))
+    if ($safe -ne 'Launcher') { Check ($p + 'LJ-N6: uninstall keeps a look-alike folder''s legacy Run value') ($global:Reg[$runK].ContainsKey('ButtonLauncher')) }
+    # LJ-N5: run that delete command (minus the sleep) with a directory symlink inside the folder pointing outside
+    $victim = Join-Path $tb 'victim'; New-Item -ItemType Directory -Force (Join-Path $victim 'sub') | Out-Null; Write-Raw (Join-Path $victim 'sub/keep.txt') 'keep'
+    $linkOk = $true
+    try { New-Item -ItemType SymbolicLink -Path (Join-Path $dest 'images/link') -Target $victim -ErrorAction Stop | Out-Null } catch { $linkOk = $false }
+    if (-not $linkOk -and -not ($IsLinux -or $IsMacOS)) { cmd /c mklink /J "$(Join-Path $dest 'images\link')" "$victim" | Out-Null; $linkOk = $LASTEXITCODE -eq 0 }
+    Check ($p + 'LJ-N5: test link created') $linkOk
+    Invoke-Expression ($cmdText.Replace('Start-Sleep -Seconds 2; ', '').Replace('catch { }', 'catch { throw }'))
+    Check ($p + 'LJ-N5: install folder deleted') (-not (Test-Path -LiteralPath $dest))
+    Check ($p + 'LJ-N5: link target and its files survive') ((Test-Path (Join-Path $victim 'sub/keep.txt')) -and ([IO.File]::ReadAllText((Join-Path $victim 'sub/keep.txt')) -eq 'keep'))
     $env:LOCALAPPDATA = $savedLad; $env:TEMP = $savedTemp
     Microsoft.PowerShell.Management\Remove-Item -LiteralPath $tb -Recurse -Force
 }
