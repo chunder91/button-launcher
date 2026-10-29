@@ -5,6 +5,7 @@ with `Build-Installer.ps1`. Every one must pass. Stop and fix anything that does
 
 1. `bash tools/verify-exe.sh` — rebuilds `ButtonLauncher.exe` from `exe/ButtonLauncher.cs` and must print `MATCH`
    (committed exe = clean rebuild = `exe/ButtonLauncher.exe.sha256`).
+   Also `bash tools/verify-waits.sh` — compiles the launcher's BL.Waits C# as C# 5 against .NET 4.8 (what PowerShell 5.1 Add-Type does) and must print `BL.Waits compiles`.
 2. `pwsh -NoProfile -File tools/test-installer-dryrun.ps1` — must end with `ALL PASS`.
 3. `pwsh -NoProfile -File check-launcher.ps1` — must check the repo's `Launcher.ps1` and print `NO ISSUES`.
 4. `pwsh -NoProfile -File tools/test-modern.ps1` and `tools/test-onepanel.ps1` — both must end with `ALL PASS`.

@@ -2,7 +2,7 @@
 # Right-click a button or empty panel space for edit options.
 
 # Per-monitor DPI awareness (PerMonitorV2) must be set before any window or WPF assembly loads.
-Add-Type -Namespace BL -Name Native -ReferencedAssemblies WindowsBase, System -MemberDefinition @'
+Add-Type -Namespace BL -Name Native -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
 [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
@@ -14,11 +14,6 @@ Add-Type -Namespace BL -Name Native -ReferencedAssemblies WindowsBase, System -M
 [DllImport("shell32.dll")] public static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA d);
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 [StructLayout(LayoutKind.Sequential)] public struct APPBARDATA { public uint cbSize; public IntPtr hWnd; public uint msg; public uint edge; public RECT rc; public IntPtr lParam; }
-// R10-N2: event waits that post to the UI thread (second-launch signal, resume from sleep); compiled with the rest
-public static void WatchHandle(System.Threading.WaitHandle h, System.Windows.Threading.Dispatcher d, System.Action a) {
-    System.Threading.ThreadPool.RegisterWaitForSingleObject(h, delegate(object s, bool t) { d.BeginInvoke(a); }, null, -1, false); }
-public static void WatchResume(System.Windows.Threading.Dispatcher d, System.Action a) {
-    Microsoft.Win32.SystemEvents.PowerModeChanged += delegate(object s, Microsoft.Win32.PowerModeChangedEventArgs e) { if (e.Mode == Microsoft.Win32.PowerModes.Resume) d.BeginInvoke(a); }; }
 '@
 # R6-L2: subst drive targets, for the local-only path check
 Add-Type -Namespace BL -Name Dos -MemberDefinition @'
@@ -1187,7 +1182,10 @@ function global:Get-LayoutMode($cfg) {
     if ($v -eq 'single') { return 'single' }
     if (@($cfg.panels).Count -gt 2) { return 'two' }
     return 'single' }
-function global:Test-HiddenPanelsNotice($cfg, [bool]$single) { $single -and @($cfg.panels).Count -gt 2 -and -not [bool]$cfg.hiddenPanelsNoticeShown }
+# Judgement (R11): remember how many hidden panels were noticed; notice again only if more become hidden.
+# Old builds wrote a boolean hiddenPanelsNoticeShown; it carries no count, so it reads as 0.
+function global:Get-HiddenNoticed($cfg) { $v = $cfg.hiddenPanelsNoticed; if ($v -is [int] -or $v -is [long] -or $v -is [double]) { [int]$v } else { 0 } }
+function global:Test-HiddenPanelsNotice($cfg, [bool]$single) { $hidden = @($cfg.panels).Count - 2; $single -and $hidden -gt 0 -and $hidden -gt (Get-HiddenNoticed $cfg) }
 function global:Get-HiddenPanelsText($cfg) {
     $n = @($cfg.panels).Count - 2
     "The one-panel layout shows your first two panels. $n more panel$(if ($n -ne 1) { 's' }) and $(if ($n -ne 1) { 'their' } else { 'its' }) buttons are kept, just not shown.`n`nTo see every panel: unlock, right-click a panel > Setup > Layout > Two panels, then Setup > Reload." }
@@ -1508,11 +1506,27 @@ function global:Start-TrayAndHotkey {
         if (-not $global:hotkeyOk) { Add-Content -LiteralPath $global:logPath -Value ("{0}  Ctrl+Alt+L is already used by another program; use the tray icon instead." -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
     } catch { Write-LauncherError 'registering Ctrl+Alt+L' $_ }
 }
+# R10-N2/R11-M1: event waits that post to the UI thread (second-launch signal, resume from sleep). C# 5, .NET 4.8.
+$global:WaitsSource = @'
+namespace BL {
+public static class Waits {
+    static Microsoft.Win32.PowerModeChangedEventHandler resume;
+    public static void WatchHandle(System.Threading.WaitHandle h, System.Windows.Threading.Dispatcher d, System.Action a) {
+        System.Threading.ThreadPool.RegisterWaitForSingleObject(h, delegate(object s, bool t) { d.BeginInvoke(a); }, null, -1, false); }
+    public static void WatchResume(System.Windows.Threading.Dispatcher d, System.Action a) {
+        UnwatchResume();
+        resume = delegate(object s, Microsoft.Win32.PowerModeChangedEventArgs e) { if (e.Mode == Microsoft.Win32.PowerModes.Resume) d.BeginInvoke(a); };
+        Microsoft.Win32.SystemEvents.PowerModeChanged += resume; }
+    public static void UnwatchResume() {
+        if (resume != null) { Microsoft.Win32.SystemEvents.PowerModeChanged -= resume; resume = null; } }
+} }
+'@
 function global:Stop-TrayAndHotkey {
     try { if ($global:hotkeyOk -and $global:hotkeySrc) { [void][BL.Native]::UnregisterHotKey($global:hotkeySrc.Handle, 0xB10) } } catch {}
     try { if ($global:hotkeySrc) { $global:hotkeySrc.Dispose() } } catch {}
     try { if ($global:tray) { $global:tray.Visible = $false; $global:tray.Dispose() } } catch {}
     try { if ($global:trayIcon) { $global:trayIcon.Dispose() } } catch {}   # OP-N1
+    try { if ('BL.Waits' -as [type]) { [BL.Waits]::UnwatchResume() } } catch {}   # R11-N1: drop the PowerModeChanged handler
     $global:hotkeyOk = $false; $global:hotkeySrc = $null; $global:tray = $null; $global:trayIcon = $null   # safe to call twice (Exit + finally)
 }
 
@@ -1571,17 +1585,20 @@ try {
     Start-TrayAndHotkey                                 # Squint Major 1: tray icon + Ctrl+Alt+L bring the launcher forward (both layouts)
     $global:app.Add_Exit({ Stop-TrayAndHotkey })
     # Idle CPU: wait for the "show" signal on a thread-pool wait instead of polling every 400 ms; it posts to the UI thread.
+    # R11-M1: its own Add-Type (WPF is loaded by now; BL.Native stays exactly as before). On failure: log, 1 s poll.
     $showWatch = $false
     try {
-        [BL.Native]::WatchHandle($global:showEvent, $global:app.Dispatcher, [Action]{ Show-AllPanels }); $showWatch = $true
-    } catch { Add-Content -LiteralPath $global:logPath -Value ("{0}  show-signal wait unavailable ({1}); polling instead" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }
-    try { [BL.Native]::WatchResume($global:app.Dispatcher, [Action]{ $global:forceRelayout = $true; Request-Relayout }) } catch {}   # R10-L1: re-dock after sleep
+        if (-not ('BL.Waits' -as [type])) { Add-Type -ReferencedAssemblies WindowsBase, System -TypeDefinition $global:WaitsSource }
+        [BL.Waits]::WatchHandle($global:showEvent, $global:app.Dispatcher, [Action]{ Show-AllPanels }); $showWatch = $true
+        [BL.Waits]::WatchResume($global:app.Dispatcher, [Action]{ $global:forceRelayout = $true; Request-Relayout })   # R10-L1: re-dock after sleep
+    } catch { Add-Content -LiteralPath $global:logPath -Value ("{0}  event waits unavailable ({1}); polling for the show signal instead" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }
     if (-not $showWatch) {
         $showTimer = New-Object System.Windows.Threading.DispatcherTimer; $showTimer.Interval = [TimeSpan]::FromMilliseconds(1000)
         $showTimer.Add_Tick({ if ($global:showEvent.WaitOne(0)) { Show-AllPanels } }); $showTimer.Start() }
-    if (Test-HiddenPanelsNotice $global:cfg ([bool]$global:single)) {   # R10-N1: once, when a saved one-panel layout hides panels 3+
-        Set-Prop $global:cfg 'hiddenPanelsNoticeShown' $true; Save-Config
-        [void]$global:app.Dispatcher.BeginInvoke([Action]{ [System.Windows.MessageBox]::Show((Get-HiddenPanelsText $global:cfg), 'Launcher', 'OK', 'Information') | Out-Null }, [System.Windows.Threading.DispatcherPriority]::ApplicationIdle) }
+    if (Test-HiddenPanelsNotice $global:cfg ([bool]$global:single)) {   # R10-N1: when a saved one-panel layout hides more panels than last noticed
+        [void]$global:app.Dispatcher.BeginInvoke([Action]{
+            [System.Windows.MessageBox]::Show((Get-HiddenPanelsText $global:cfg), 'Launcher', 'OK', 'Information') | Out-Null   # R11-L1: show first,
+            Set-Prop $global:cfg 'hiddenPanelsNoticed' (@($global:cfg.panels).Count - 2); Save-Config }, [System.Windows.Threading.DispatcherPriority]::ApplicationIdle) }   # then remember the count
     if (-not [bool]$global:cfg.setupDone) {   # UX-2a: first run (right after install) lists every button that still needs a file
         Set-Prop $global:cfg 'setupDone' $true
         [void]$global:app.Dispatcher.BeginInvoke([Action]{ Show-SetupWindow -OnlyIfNeeded }, [System.Windows.Threading.DispatcherPriority]::ApplicationIdle)

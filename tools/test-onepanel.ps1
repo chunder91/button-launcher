@@ -6,7 +6,7 @@ $fail = 0
 function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"; $script:fail++ } }
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
-foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Test-HiddenPanelsNotice', 'Get-HiddenPanelsText', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-ChipFallbackPic') {
+foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Get-HiddenNoticed', 'Test-HiddenPanelsNotice', 'Get-HiddenPanelsText', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-ChipFallbackPic') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 $global:PathProbe = @{ DosDevice = { param($d) '\Device\HarddiskVolume3' }; Attr = { param($p) $null } }   # R6-L2 probes: plain local volume, no special attributes
@@ -179,15 +179,24 @@ $global:single = $null
 $sap = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-AllPanels' }, $true).Extent.Text
 Check 'R10-L1: Show-AllPanels (second launch, tray Show, Ctrl+Alt+L) forces relayout in both layouts' (([regex]::Matches($sap, '\$global:forceRelayout = \$true; Request-Relayout')).Count -eq 2)
 Check 'R10-L1: relayout tick honours the force flag' ($src -match '\$f = \[bool\]\$global:forceRelayout; \$global:forceRelayout = \$false; \[void\]\(Invoke-Relayout -Force:\$f\)')
-Check 'R10-L1: resume from sleep forces relayout (PowerModeChanged Resume)' ($src -match 'PowerModes\.Resume\) d\.BeginInvoke\(a\)' -and $src -match '\[BL\.Native\]::WatchResume\(\$global:app\.Dispatcher, \[Action\]\{ \$global:forceRelayout = \$true; Request-Relayout \}\)')
+Check 'R10-L1: resume from sleep forces relayout (PowerModeChanged Resume)' ($src -match 'PowerModes\.Resume\) d\.BeginInvoke\(a\)' -and $src -match '\[BL\.Waits\]::WatchResume\(\$global:app\.Dispatcher, \[Action\]\{ \$global:forceRelayout = \$true; Request-Relayout \}\)')
 # R10-N1
 $c3 = [pscustomobject]@{ panels = @(1, 2, 3, 4) }
 Check 'R10-N1: notice when single hides panels 3+' (Test-HiddenPanelsNotice $c3 $true)
 Check 'R10-N1: no notice in two-panel layout or with 2 panels' (-not (Test-HiddenPanelsNotice $c3 $false) -and -not (Test-HiddenPanelsNotice ([pscustomobject]@{ panels = @(1, 2) }) $true))
-$c3 | Add-Member hiddenPanelsNoticeShown $true
-Check 'R10-N1: shown once (remembered in buttons.json)' (-not (Test-HiddenPanelsNotice $c3 $true) -and $src -match "Set-Prop \`$global:cfg 'hiddenPanelsNoticeShown' \`$true; Save-Config")
+$c3 | Add-Member hiddenPanelsNoticed 2
+Check 'R11: count remembered -> no notice for the same number hidden' (-not (Test-HiddenPanelsNotice $c3 $true))
+$c3.panels = @(1, 2, 3, 4, 5)
+Check 'R11: more panels hidden than last noticed -> notice again' (Test-HiddenPanelsNotice $c3 $true)
+Check 'R11: old boolean hiddenPanelsNoticeShown reads as 0 (no error)' ((Get-HiddenNoticed ([pscustomobject]@{ hiddenPanelsNoticeShown = $true })) -eq 0 -and (Get-HiddenNoticed ([pscustomobject]@{ hiddenPanelsNoticed = $true })) -eq 0 -and (Test-HiddenPanelsNotice ([pscustomobject]@{ panels = @(1, 2, 3); hiddenPanelsNoticeShown = $true }) $true))
+Check 'R11-L1: notice shown first, then the count saved' ($src -match "(?s)MessageBox\]::Show\(\(Get-HiddenPanelsText \`$global:cfg\).{0,120}\r?\n\s+Set-Prop \`$global:cfg 'hiddenPanelsNoticed' \(@\(\`$global:cfg\.panels\)\.Count - 2\); Save-Config")
 $ht = Get-HiddenPanelsText ([pscustomobject]@{ panels = @(1, 2, 3, 4) })
 Check 'R10-N1: text says buttons are kept and where two panels is' ($ht -match '2 more panels and their buttons are kept' -and $ht -match 'Setup > Layout > Two panels')
 # R10-N2: one compile
-Check 'R10-N2: event-wait helpers live in BL.Native (single Add-Type for it, no ShowWaiter)' ($src -notmatch 'ShowWaiter' -and $src -match 'public static void WatchHandle' -and ([regex]::Matches($src, '(?m)^\s*Add-Type .*-TypeDefinition')).Count -eq 0)
+$nat = $src.Substring(0, $src.IndexOf("'@"))
+Check 'R11-M1: BL.Native has no WindowsBase reference or WPF types' ($nat -match 'Add-Type -Namespace BL -Name Native -MemberDefinition' -and $nat -notmatch 'WindowsBase|Dispatcher|ReferencedAssemblies')
+Check 'R11-M1: BL.Waits is its own try''d Add-Type after WPF loads; failure logs and falls back to the 1 s poll' ($src -match "(?s)try \{\s+if \(-not \('BL\.Waits' -as \[type\]\)\) \{ Add-Type -ReferencedAssemblies WindowsBase, System -TypeDefinition \`$global:WaitsSource \}.*?\} catch \{ Add-Content -LiteralPath \`$global:logPath.*?polling for the show signal instead" -and $src -match 'if \(-not \$showWatch\) \{\s+\$showTimer = New-Object System\.Windows\.Threading\.DispatcherTimer; \$showTimer\.Interval = \[TimeSpan\]::FromMilliseconds\(1000\)')
+Check 'R11-M1: DPI awareness is set before WPF assemblies load' ($src.IndexOf('SetProcessDpiAwarenessContext([IntPtr](-4))') -lt $src.IndexOf('Add-Type -AssemblyName PresentationFramework'))
+$sth = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Stop-TrayAndHotkey' }, $true).Extent.Text
+Check 'R11-N1: shutdown unsubscribes PowerModeChanged' ($sth -match '\[BL\.Waits\]::UnwatchResume\(\)' -and $src -match 'SystemEvents\.PowerModeChanged -= resume')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
