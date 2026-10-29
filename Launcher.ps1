@@ -2074,7 +2074,7 @@ function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, A
 function global:Show-VncPasswordDialog($owner) {   # set, replace or clear the shared view-only password; returns $true when one is saved
     $dlg = New-D2Dialog 'View-only password' $owner 380; $d = $dlg.win; $sp = $dlg.body   # Kern 6: D2 dialog
     $t = New-D2Label ''
-    $t.Text = "If your registers have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). If View only can't connect later, change it in Setup > View-only register password..."
+    $t.Text = "If the computers you view have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). If View only can't connect later, change it in Setup > View-only register password..."
     [void]$sp.Children.Add($t)
     $st = New-Object System.Windows.Controls.TextBlock; $st.Margin = '0,8,0,0'; $st.Foreground = Brush '#A0A0A0'; $st.FontSize = 12; $st.TextWrapping = 'Wrap'
     $st.Text = if (Test-VncSecret) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only connects straight through.' }
@@ -2215,7 +2215,7 @@ function global:Start-VncScan($ui, [switch]$Rescan) {
         foreach ($x in $ps, $rs) { if ($x) { try { $x.Dispose() } catch {} } }
         $ui.setStatus.Invoke('Scan failed: ' + $_.Exception.Message); Write-LauncherLog ('VNC scan could not start: ' + $_.Exception.Message); return }
     $ui.fresh = $true; $ui.scanning = $true; $ui.scanned = $true; $ui.busy.Invoke($true)
-    $ui.setStatus.Invoke(('Looking for registers on {0} (0 of {1})...' -f $ui.scan.range, $plan.targets.Count))
+    $ui.setStatus.Invoke(('Looking for computers on {0} (0 of {1})...' -f $ui.scan.range, $plan.targets.Count))
     $ui.timer.Start()
 }
 $global:VncDeadWorkers = New-Object System.Collections.ArrayList   # stopping workers, disposed once they have ended (never blocks the UI)
@@ -2250,7 +2250,7 @@ function global:Step-VncScan($ui) {   # UI thread, every 200 ms while a scan run
     if ($changed) { $ui.hosts = @($sc.hits); $ui.refresh.Invoke() }
     $why = Get-VncWorkerFault $sc.ps ([bool]$sc.sync.done)
     if ($why) { Write-LauncherLog ('VNC scan failed: ' + $why); Stop-VncScan $ui; $ui.refresh.Invoke(); $ui.setStatus.Invoke('Scan failed: ' + (Get-SafeText $why 120) + '. Press Rescan (F5) to try again.'); return }
-    if (-not $sc.sync.done) { $ui.setStatus.Invoke(('Looking for registers on {0} ({1} of {2})...' -f $sc.range, $sc.sync.scanned, $sc.sync.total)); return }
+    if (-not $sc.sync.done) { $ui.setStatus.Invoke(('Looking for computers on {0} ({1} of {2})...' -f $sc.range, $sc.sync.scanned, $sc.sync.total)); return }
     if (-not $sc.nameps -and $sc.hits.Count -gt 0) {   # banners done: names, then save
         try { $rs = [runspacefactory]::CreateRunspace(); $rs.Open(); $ps = [powershell]::Create(); $ps.Runspace = $rs; $sc.namers = $rs; $sc.nameps = $ps
               [void]$ps.AddScript($global:VncNameScript).AddArgument([string[]]@($sc.hits | ForEach-Object { $_.host })).AddArgument($sc.sync); [void]$ps.BeginInvoke() }
@@ -2368,7 +2368,7 @@ $global:VncPickerXaml = @'
         </Grid>
         <Rectangle Grid.Row="0" Height="1" VerticalAlignment="Bottom" Fill="#14FFFFFF"/>
         <ListBox x:Name="List" Grid.Row="1" Background="Transparent" BorderThickness="0" Foreground="#FFFFFF" FontSize="14" Padding="0,4"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Registers">
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Computers">
           <ListBox.ItemTemplate><DataTemplate>
             <Grid ToolTip="{Binding tip}">
               <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="130"/></Grid.ColumnDefinitions>
@@ -2424,7 +2424,7 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
     $p = New-Object System.Windows.Controls.MenuItem; $p.Header = $(if ($s -and $s.row.pinned) { 'Unpin' } else { 'Pin' }); $p.InputGestureText = 'Space'; $p.IsEnabled = [bool]$s; $p.Add_Click({ $ui.togglePin.Invoke() }.GetNewClosure()); [void]$m.Items.Add($p)
     [void]$m.Items.Add((New-Object System.Windows.Controls.Separator))
     $d = New-Object System.Windows.Controls.MenuItem; $d.Header = 'Remove from favourites'; $d.InputGestureText = 'Del'
-    $d.IsEnabled = [bool]($s -and $s.row.fav); if (-not $d.IsEnabled) { $d.ToolTip = 'Only saved registers can be removed'; [System.Windows.Controls.ToolTipService]::SetShowOnDisabled($d, $true) }
+    $d.IsEnabled = [bool]($s -and $s.row.fav); if (-not $d.IsEnabled) { $d.ToolTip = 'Only saved computers can be removed'; [System.Windows.Controls.ToolTipService]::SetShowOnDisabled($d, $true) }
     $d.Add_Click({ $ui.remove.Invoke() }.GetNewClosure()); [void]$m.Items.Add($d)
     try { $m.Style = $ui.win.FindResource([System.Windows.Controls.ContextMenu]); $ms = $ui.win.FindResource([System.Windows.Controls.MenuItem])   # a code-built menu doesn't inherit the window's implicit styles
           foreach ($it in $m.Items) { if ($it -is [System.Windows.Controls.MenuItem]) { $it.Style = $ms } } } catch {}
@@ -2453,7 +2453,7 @@ function global:Show-VncPicker($btn) {
     $ui.showEmpty = [Action[string]]{ param($kind)
         if ($kind -eq 'nonet') { $eT.Text = "This PC isn't connected to a local network we can scan (Wi-Fi or cable)."; $eB.Text = "Connect to the shop Wi-Fi or cable, then press Rescan (F5). Or use Add... to type a register's address." }
         elseif ($kind -eq 'notscanned') { $eT.Text = 'Not scanned yet.'; $eB.Text = 'Look for computers you can view on this network? Press Rescan (F5), or use Add... to type an address.' }   # Squint Major
-        else { $eT.Text = 'No registers found.'; $eB.Text = 'Check the register is turned on and on the same network as this PC, then press Rescan (F5). Or use Add... to type its address.' }
+        else { $eT.Text = 'No computers found.'; $eB.Text = 'Check the register is turned on and on the same network as this PC, then press Rescan (F5). Or use Add... to type its address.' }
         if ($lv.Items.Count -eq 0) { $empty.Visibility = 'Visible'; [void]$bAdd.Focus() } }.GetNewClosure()
     $ui.refresh = [Action]{
         $sel = $lv.SelectedItem; $lv.Items.Clear()
@@ -2470,7 +2470,7 @@ function global:Show-VncPicker($btn) {
     $ui.timer.Add_Tick({ Step-VncScan $ui }.GetNewClosure())
     $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only register password...") }.GetNewClosure()
     $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }
-        if ($vo -and (Test-VncSecret) -and -not (Test-VncUsePassword $s.row $true)) { $ui.setStatus.Invoke('The saved view-only password is only sent to registers found in this scan. The viewer will ask for it; press F5 first to use the saved one.') }
+        if ($vo -and (Test-VncSecret) -and -not (Test-VncUsePassword $s.row $true)) { $ui.setStatus.Invoke('The saved view-only password is only sent to computers found in this scan. The viewer will ask for it; press F5 first to use the saved one.') }
         [void](Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw) }.GetNewClosure()
     $ui.saveFavs = [Action]{ Save-VncFavorites $global:cfg $ui.state.favorites $ui.state.invalid; Save-Config; $ui.refresh.Invoke() }.GetNewClosure()
     $ui.rename = [Action]{ $s = $lv.SelectedItem; if (-not $s) { return }
@@ -2483,7 +2483,7 @@ function global:Show-VncPicker($btn) {
         [void](Set-VncFavorite $ui.state.favorites $s.row.host $s.row.port $null (-not [bool]$s.row.pinned)); $ui.saveFavs.Invoke() }.GetNewClosure()
     $ui.remove = [Action]{ $s = $lv.SelectedItem; if (-not $s -or -not $s.row.fav) { return }
         $nm = if ($s.row.name) { Get-VncDisplayName $s.row.name 40 } else { $s.addr }
-        if ([System.Windows.MessageBox]::Show(("Remove ""{0}"" from your saved registers?" -f $nm), 'View Register', 'YesNo', 'Question', 'No') -ne 'Yes') { return }
+        if ([System.Windows.MessageBox]::Show(("Remove ""{0}"" from your saved computers?" -f $nm), 'View Register', 'YesNo', 'Question', 'No') -ne 'Yes') { return }
         $f = $null; foreach ($x in $ui.state.favorites) { if ($x.host -eq $s.row.host -and $x.port -eq $s.row.port) { $f = $x } }
         if ($f) { $ui.state.favorites.Remove($f) }; $ui.saveFavs.Invoke() }.GetNewClosure()
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure()); $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
@@ -2533,7 +2533,7 @@ function global:Show-VncPicker($btn) {
     elseif ($lv.Items.Count -eq 0 -and $ranges.Count -eq 0) { $ui.showEmpty.Invoke('nonet') }
     elseif ($ranges.Count -gt 0 -and -not $okRanges -and -not $bad) { $ui.setStatus.Invoke('Not scanned. Press Rescan (F5) to scan anyway, or use Add... to type an address.') }   # Squint Major: declined network
     elseif ($ui.state.favorites.Count -gt 0 -and -not $bad) {   # nit: favourites suppressed the scan, so say how old the list is
-        $ui.setStatus.Invoke($(if ($ui.ageText) { 'Showing saved registers. Last scan {0}{1}. Press F5 to rescan.' -f $ui.ageText, $(if ($ui.stale) { ' (out of date)' } else { '' }) } else { 'Showing saved registers. Not scanned yet. Press F5 to look for others.' })) }
+        $ui.setStatus.Invoke($(if ($ui.ageText) { 'Showing saved computers. Last scan {0}{1}. Press F5 to rescan.' -f $ui.ageText, $(if ($ui.stale) { ' (out of date)' } else { '' }) } else { 'Showing saved computers. Not scanned yet. Press F5 to look for others.' })) }
 }
 
 # ================= MAIN (runs only after every function above is defined) =================
