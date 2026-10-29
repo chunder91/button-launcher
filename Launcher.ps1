@@ -313,13 +313,14 @@ function global:Play-Click {
 }
 
 # All tile motion runs as a WPF Storyboard of 150 ms or less. Nothing waits on it: the launch has already happened.
-function global:Start-Anim($target, $prop, $to, [double]$ms, [switch]$Ease) {
+function global:Start-Anim($target, $prop, $to, [double]$ms, [switch]$Ease, [scriptblock]$OnDone) {
     $a = if ($to -is [System.Windows.Media.Color]) { New-Object System.Windows.Media.Animation.ColorAnimation } else { New-Object System.Windows.Media.Animation.DoubleAnimation }
     $a.To = $to; $a.Duration = [System.Windows.Duration][TimeSpan]::FromMilliseconds([Math]::Min(150, $ms))
     if ($Ease) { $ce = New-Object System.Windows.Media.Animation.CubicEase; $ce.EasingMode = 'EaseOut'; $a.EasingFunction = $ce }
     $sb = New-Object System.Windows.Media.Animation.Storyboard
     [System.Windows.Media.Animation.Storyboard]::SetTarget($a, $target)
     [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($a, (New-Object System.Windows.PropertyPath $prop))
+    if ($OnDone) { $sb.Add_Completed($OnDone) }
     [void]$sb.Children.Add($a); $sb.Begin()
 }
 function global:Start-Flash($flash) {   # launch flash: white 45%, 60 ms in, 240 ms out (starts after Start-Process returned)
@@ -442,7 +443,10 @@ function global:New-Tile($p, $btn) {
     $toHover = { $tile.Effect = $shadow
         Start-Anim $lift $yProp -1 120 -Ease; Start-Anim $shadow ([System.Windows.Media.Effects.DropShadowEffect]::OpacityProperty) 0.35 120 -Ease
         Start-Anim $fill $colorProp $hoverC 120 -Ease }.GetNewClosure()
-    $toRest = { Start-Anim $lift $yProp 0 120 -Ease; Start-Anim $fill $colorProp $base 120 -Ease; $tile.Effect = $null }.GetNewClosure()
+    # MB-N1: the shadow fades out, then the effect is removed (only if the pointer didn't come back meanwhile).
+    $dropFx = { if (-not $tile.IsMouseOver -and $shadow.Opacity -le 0.001) { $tile.Effect = $null } }.GetNewClosure()
+    $toRest = { Start-Anim $lift $yProp 0 120 -Ease; Start-Anim $fill $colorProp $base 120 -Ease
+        Start-Anim $shadow ([System.Windows.Media.Effects.DropShadowEffect]::OpacityProperty) 0 120 -Ease -OnDone $dropFx }.GetNewClosure()
     $run = {
         $ok = Invoke-Button $btn                   # launch first; the flash never delays it
         if ($ok -eq $true) { Start-Flash $flash } }.GetNewClosure()
@@ -461,7 +465,9 @@ function global:New-Tile($p, $btn) {
     }.GetNewClosure())
     $tile.Add_LostMouseCapture({ if ($st.down) { $st.down = $false; & $toRest } }.GetNewClosure())
     $tile.Add_IsKeyboardFocusedChanged({ $ring.Visibility = if ($tile.IsKeyboardFocused) { 'Visible' } else { 'Hidden' } }.GetNewClosure())
-    $tile.Add_KeyDown({ if ($_.Key -eq 'Enter' -or $_.Key -eq 'Space') { $_.Handled = $true; Start-Anim $fill $colorProp $pressC 60; & $run; Start-Anim $fill $colorProp $base 120 } }.GetNewClosure())
+    # MB-M1: one launch per key press. Held keys auto-repeat KeyDown, so ignore repeats.
+    $tile.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; Start-Anim $fill $colorProp $pressC 60; & $run; Start-Anim $fill $colorProp $base 120 }
+                        elseif ($_.Key -eq 'Enter' -or $_.Key -eq 'Space') { $_.Handled = $true } }.GetNewClosure())
     $tile.Add_MouseRightButtonDown({ [void]$tile.Focus() }.GetNewClosure())
     $tile.ContextMenu = Button-Menu $p $btn
     if ($btn.width -eq 'half') { $wrap.Tag = 'half' } else { $wrap.Tag = 'full' }
@@ -943,7 +949,9 @@ function global:Open-Panel($pc) {
 # Option B: Start Jartrek Security moves above the Restarts group. Only a buttons.json whose bottom panel still has the
 # exact old default order (same labels, same order) is migrated; anything the user rearranged is left alone.
 function global:Update-OldDefaultOrder {
-    if ([int]$global:cfg.layoutVersion -ge 2) { return }
+    $lv = 0   # MB-L1: a missing or bad layoutVersion counts as 1
+    if (-not [int]::TryParse([string]$global:cfg.layoutVersion, [ref]$lv)) { $lv = 1 }
+    if ($lv -ge 2) { return }
     $old = @("BACK OFFICE`nUSER GUIDE`nVERSION 11", "REGISTER`nUSER GUIDE`nVERSION 11", 'PLCE', "DEPARTMENT`nOF`nREVENUE",
              "RESTART`nSCREEN CONNECT", "START`nJARTREK`nSECURITY", "RESTART`nCOMPUTER")
     $changed = $false
@@ -952,16 +960,19 @@ function global:Update-OldDefaultOrder {
         if ($labels.Count -ne $old.Count) { continue }
         $same = $true; for ($i = 0; $i -lt $old.Count; $i++) { if ($labels[$i] -cne $old[$i]) { $same = $false; break } }
         if (-not $same) { continue }
-        $sec = $bs[5]; Set-Prop $sec 'width' 'full'; Set-Prop $sec 'height' 80
-        foreach ($r in $bs[4], $bs[6]) { Set-Prop $r 'width' 'half'; Set-Prop $r 'height' 92; Set-Prop $r 'group' 'danger' }
+        $sec = $bs[5]   # MB-L3: move only. Width, height and font size stay exactly as the user has them.
         $pc.buttons = @($bs[0], $bs[1], $bs[2], $bs[3], $sec, $bs[4], $bs[6]); $changed = $true
     }
     Set-Prop $global:cfg 'layoutVersion' 2
     if ($changed) { Add-Content -LiteralPath $global:logPath -Value ("{0}  moved Start Jartrek Security above the Restarts (old default order)" -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
     # No panels are open yet, so Save-Config (which rebuilds the list from open panels) can't be used here.
-    $tmp = $global:cfgPath + '.tmp'
-    [IO.File]::WriteAllText($tmp, ($global:cfg | ConvertTo-Json -Depth 12), (New-Object Text.UTF8Encoding $false))
-    if (Test-Path -LiteralPath $global:cfgPath) { [IO.File]::Replace($tmp, $global:cfgPath, $global:cfgPath + '.bak') } else { [IO.File]::Move($tmp, $global:cfgPath) }
+    try {   # MB-L2: if the write fails, log it and keep going with the migrated config in memory
+        $tmp = $global:cfgPath + '.tmp'
+        [IO.File]::WriteAllText($tmp, ($global:cfg | ConvertTo-Json -Depth 12), (New-Object Text.UTF8Encoding $false))
+        if (Test-Path -LiteralPath $global:cfgPath) { [IO.File]::Replace($tmp, $global:cfgPath, $global:cfgPath + '.bak') } else { [IO.File]::Move($tmp, $global:cfgPath) }
+    } catch {
+        Add-Content -LiteralPath $global:logPath -Value ("{0}  couldn't save the migrated buttons.json ({1}); using it in memory" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue
+    }
 }
 
 # Second launch (Start menu, exe, shortcut) while running: show every panel and bring it to the front.

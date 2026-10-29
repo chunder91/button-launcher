@@ -80,6 +80,7 @@ Check 'committed exe matches exe/ButtonLauncher.exe.sha256' ((Get-FileHash -Lite
 Check 'RELEASE.md lists verify-exe, dry-run, check-launcher (R3-L2)' ((Get-Content (Join-Path $root 'RELEASE.md') -Raw) -match 'verify-exe\.sh' -and (Get-Content (Join-Path $root 'RELEASE.md') -Raw) -match 'test-installer-dryrun' -and (Get-Content (Join-Path $root 'RELEASE.md') -Raw) -match 'check-launcher')
 Check 'builder prints the RELEASE.md reminder (R3-L2)' ($ast.Extent.Text -match 'RELEASE\.md checklist')
 Check 'builder checks the exe SHA-256' ($ast.Extent.Text -match 'does not match its recorded SHA-256')
+Check 'R4-L2: uninstall delete has no recursive Directory.Delete' ($tmpl['$uninstTemplate'] -notmatch 'Delete\(\$d, \$true\)' -and $tmpl['$uninstTemplate'] -match 'for \(\$i = \$order\.Count - 1')
 Check 'builder never ships buttons.json' ($ast.Extent.Text -notmatch "'Launcher.ps1','buttons.json'" -and $ast.Extent.Text -match "Join-Path \`$stage 'buttons.default.json'")
 
 # Simulated install -> reinstall -> uninstall in a temp dir. Registry, shortcuts, message boxes, processes are mocked.
@@ -153,7 +154,7 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     Set-Content (Join-Path $dest 'buttons.json') '{"mine":1}'
     Write-Raw (Join-Path $dest 'images/my-own.png') 'mine'; Write-Raw (Join-Path $dest 'images/reddog.png') 'custom'
     $outside = Join-Path $env:LOCALAPPDATA 'escape.txt'
-    $instFile2 = New-TestInstaller @{ 'reddog.png' = 'png2'; 'globe.png' = 'g2'; 'my-own.png' = 'shipped' } @('../escape.txt', '../../escape.txt', 'images/../../escape.txt')
+    $instFile2 = New-TestInstaller @{ 'reddog.png' = 'png2'; 'globe.png' = 'g2'; 'my-own.png' = 'shipped' } @('../escape.txt', '../../escape.txt', 'images/../../escape.txt', 'images/bad:name.png', 'images/what?.png')
     & $instFile2
     $img = { param($n) [IO.File]::ReadAllText((Join-Path $dest "images/$n")) }
     Check ($p + 'upgrade: buttons.json kept') ((Get-Content (Join-Path $dest 'buttons.json') -Raw).Trim() -eq '{"mine":1}')
@@ -162,8 +163,22 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     Check ($p + 'upgrade: untouched shipped globe.png refreshed') ((& $img 'globe.png') -eq 'g2')
     $ilog = Join-Path $dest 'install.log'; $ltxt = if (Test-Path $ilog) { Get-Content $ilog -Raw } else { '' }
     Check ($p + 'upgrade: kept pictures logged') ($ltxt -match 'images/reddog\.png' -and $ltxt -match 'images/my-own\.png' -and $ltxt -notmatch 'globe')
+    Check ($p + 'R4-N1: invalid entry names skipped and logged, install continued') ($ltxt -match 'invalid name: images/bad:name\.png' -and $ltxt -match 'invalid name: images/what\?\.png' -and -not (Test-Path -LiteralPath (Join-Path $dest 'images/bad:name.png')) -and ((& $img 'globe.png') -eq 'g2'))
     Check ($p + 'LJ-N7: ../ entries not extracted outside') (-not (Test-Path $outside) -and -not (Test-Path (Join-Path $tb 'escape.txt')))
     & $instFile2   # a second run with the new manifest: reddog stays the user's
+    # R4-L1: an install from before the manifest (no shipped-images.txt) refreshes pictures that still match a v1.1.0 hash
+    Microsoft.PowerShell.Management\Remove-Item -LiteralPath (Join-Path $dest 'shipped-images.txt')
+    $badgeOld = Join-Path $dest 'images/badge.png'
+    $gitOk = $true; try { & git -C $root cat-file -e origin/main:images/badge.png 2>$null; $gitOk = ($LASTEXITCODE -eq 0) } catch { $gitOk = $false }
+    if ($gitOk) {
+        $raw = [System.Diagnostics.Process]::Start((New-Object System.Diagnostics.ProcessStartInfo -Property @{ FileName = 'git'; Arguments = "-C `"$root`" show origin/main:images/badge.png"; RedirectStandardOutput = $true; UseShellExecute = $false }))
+        $ms = New-Object IO.MemoryStream; $raw.StandardOutput.BaseStream.CopyTo($ms); $raw.WaitForExit(); [IO.File]::WriteAllBytes($badgeOld, $ms.ToArray())
+        Write-Raw (Join-Path $dest 'images/power.png') 'user-made'
+        $instFile3 = New-TestInstaller @{ 'badge.png' = 'new-badge'; 'power.png' = 'new-power' } @()
+        & $instFile3
+        Check ($p + 'R4-L1: no manifest: v1.1.0 badge.png refreshed') ((& $img 'badge.png') -eq 'new-badge')
+        Check ($p + 'R4-L1: no manifest: unknown power.png kept') ((& $img 'power.png') -eq 'user-made')
+    } else { Check ($p + 'R4-L1: origin/main available for the test') $false }
     Check ($p + 'upgrade again: user-replaced reddog.png still kept') ((& $img 'reddog.png') -eq 'custom')
     if ($safe -ne 'Launcher') {   # LJ-N6: a legacy 'ButtonLauncher' value for a look-alike folder (<name>2) is not ours
         $global:Reg[$runK]['ButtonLauncher'] = '"' + (Join-Path (Join-Path $env:LOCALAPPDATA 'Programs') ($safe + '2')) + '/ButtonLauncher.exe"'
@@ -185,6 +200,9 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     $linkOk = $true
     try { New-Item -ItemType SymbolicLink -Path (Join-Path $dest 'images/link') -Target $victim -ErrorAction Stop | Out-Null } catch { $linkOk = $false }
     if (-not $linkOk -and -not ($IsLinux -or $IsMacOS)) { cmd /c mklink /J "$(Join-Path $dest 'images\link')" "$victim" | Out-Null; $linkOk = $LASTEXITCODE -eq 0 }
+    New-Item -ItemType Directory -Force (Join-Path $dest 'images/deep/deeper') | Out-Null; Write-Raw (Join-Path $dest 'images/deep/deeper/ro.txt') 'x'
+    [IO.File]::SetAttributes((Join-Path $dest 'images/deep/deeper/ro.txt'), [IO.FileAttributes]::ReadOnly)
+    try { New-Item -ItemType SymbolicLink -Path (Join-Path $dest 'images/deep/deeper/link2') -Target $victim -ErrorAction Stop | Out-Null } catch { }
     Check ($p + 'LJ-N5: test link created') $linkOk
     Invoke-Expression ($cmdText.Replace('Start-Sleep -Seconds 2; ', '').Replace('catch { }', 'catch { throw }'))
     Check ($p + 'LJ-N5: install folder deleted') (-not (Test-Path -LiteralPath $dest))

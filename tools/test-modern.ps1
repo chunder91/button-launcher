@@ -47,6 +47,8 @@ Check 'missing tooltip text' ($src -match "New-MissingDot 'Not set up on this PC
 Check 'square-panel fallback' ($src -match '\[bool\]\$global:cfg\.squarePanels' -and $src -match 'AllowsTransparency = \$true')
 Check 'restart confirm default No kept' ($src -match "\[System\.Windows\.MessageBox\]::Show\(\`$cText, \`$cTitle, 'YesNo', 'Warning', 'No'\)")
 Check 'ScreenConnect admin prompt kept' ($src -match "function global:Restart-ScreenConnect" -and $src -match "RunAs")
+Check 'MB-M1: Enter/Space ignore key repeat' ($src -match "\(\`$_\.Key -eq 'Enter' -or \`$_\.Key -eq 'Space'\) -and -not \`$_\.IsRepeat")
+Check 'MB-N1: shadow fades to 0 then the effect is removed' ($src -match 'OpacityProperty\) 0 120 -Ease -OnDone \$dropFx' -and $src -match '\$sb\.Add_Completed\(\$OnDone\)')
 # Default order + migration
 $def = Get-Content (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
 $bl = @($def.panels[1].buttons | ForEach-Object { ([string]$_.label) -replace "`n", ' ' })
@@ -62,5 +64,15 @@ Check 'migration: saved with both panels and layoutVersion 2' (@($saved.panels).
 $global:cfg = $oldJson | ConvertFrom-Json
 $b = @($global:cfg.panels[1].buttons); $global:cfg.panels[1].buttons = @($b[1], $b[0]) + $b[2..6]; Update-OldDefaultOrder
 Check 'migration: a rearranged panel is left alone' ((([string]$global:cfg.panels[1].buttons[0].label) -replace "`n", ' ') -eq 'REGISTER USER GUIDE VERSION 11' -and (([string]$global:cfg.panels[1].buttons[4].label) -replace "`n", ' ') -eq 'RESTART SCREEN CONNECT')
+foreach ($bad in 'abc', '2.5x', '') { $global:cfg = $oldJson | ConvertFrom-Json; $global:cfg | Add-Member layoutVersion $bad -Force; $e = $null
+    try { Update-OldDefaultOrder } catch { $e = $_ }
+    Check "MB-L1: layoutVersion '$bad' treated as 1 (migrates, no error)" (-not $e -and $global:cfg.layoutVersion -eq 2 -and (([string]$global:cfg.panels[1].buttons[4].label) -replace "`n", ' ') -eq 'START JARTREK SECURITY') }
+$global:cfgPath = Join-Path $tmp 'no-such-dir/buttons.json'; $global:cfg = $oldJson | ConvertFrom-Json; $e = $null
+try { Update-OldDefaultOrder } catch { $e = $_ }
+Check 'MB-L2: failed migration write is logged, no error, config migrated in memory' (-not $e -and $global:cfg.layoutVersion -eq 2 -and ((Get-Content $global:logPath -Raw) -match "couldn't save the migrated"))
+$global:cfgPath = Join-Path $tmp 'buttons.json'; $global:cfg = $oldJson | ConvertFrom-Json
+$sb = $global:cfg.panels[1].buttons; $sb[5].height = 99; $sb[5].fontSize = 15; $sb[4].width = 'full'; $sb[4].height = 70; $sb[6].fontSize = 14
+Update-OldDefaultOrder; $mb = $global:cfg.panels[1].buttons
+Check 'MB-L3: moved tiles keep their sizes' ($mb[4].height -eq 99 -and $mb[4].fontSize -eq 15 -and $mb[4].width -eq 'half' -and $mb[5].width -eq 'full' -and $mb[5].height -eq 70 -and $mb[6].fontSize -eq 14 -and $mb[6].height -eq 85)
 Remove-Item -LiteralPath $tmp -Recurse -Force
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

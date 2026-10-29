@@ -97,9 +97,9 @@ foreach ($rn in @($KeyName, 'ButtonLauncher') | Select-Object -Unique) {   # onl
         Remove-ItemProperty -LiteralPath $run -Name $rn -ErrorAction SilentlyContinue } }
 # Delete the folder from a child PowerShell after this script exits (no cmd.exe, -LiteralPath only).
 $q = $dest.Replace("'", "''")
-# LJ-N5: never follow a junction/symlink inside the folder. Unlink every reparse-point directory first (the link only,
-# not its target), then delete the rest. $del has no single quotes so it can be embedded below.
-$del = 'param($d) if (-not [IO.Directory]::Exists($d)) { return }; if (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [IO.Directory]::Delete($d, $false); return }; $st = New-Object System.Collections.Stack; $st.Push($d); while ($st.Count -gt 0) { $c = $st.Pop(); foreach ($s in [IO.Directory]::GetDirectories($c)) { if (([IO.File]::GetAttributes($s) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [IO.Directory]::Delete($s, $false) } else { $st.Push($s) } } }; [IO.Directory]::Delete($d, $true)'
+# LJ-N5/R4-L2: never follow a junction/symlink inside the folder. Walk the tree, then delete bottom-up by hand, re-checking
+# ReparsePoint on every directory right before deleting it; links are unlinked (the link only), never recursed into. $del has no single quotes so it can be embedded below.
+$del = 'param($d) $rp = [IO.FileAttributes]::ReparsePoint; if (-not [IO.Directory]::Exists($d)) { return }; if (([IO.File]::GetAttributes($d) -band $rp) -ne 0) { [IO.Directory]::Delete($d, $false); return }; $order = New-Object System.Collections.ArrayList; $st = New-Object System.Collections.Stack; $st.Push($d); while ($st.Count -gt 0) { $c = $st.Pop(); [void]$order.Add($c); foreach ($s in [IO.Directory]::GetDirectories($c)) { if (([IO.File]::GetAttributes($s) -band $rp) -ne 0) { [IO.Directory]::Delete($s, $false) } else { $st.Push($s) } } }; for ($i = $order.Count - 1; $i -ge 0; $i--) { $c = $order[$i]; if (-not [IO.Directory]::Exists($c)) { continue }; if (([IO.File]::GetAttributes($c) -band $rp) -ne 0) { [IO.Directory]::Delete($c, $false); continue }; foreach ($f in [IO.Directory]::GetFiles($c)) { [IO.File]::SetAttributes($f, [IO.FileAttributes]::Normal); [IO.File]::Delete($f) }; foreach ($s in [IO.Directory]::GetDirectories($c)) { if (([IO.File]::GetAttributes($s) -band $rp) -ne 0) { [IO.Directory]::Delete($s, $false) } }; [IO.Directory]::Delete($c, $false) }'
 $cmd = "Start-Sleep -Seconds 2; try { & { $del } '$q' } catch { }"
 $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($cmd))
 Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc"
@@ -125,11 +125,16 @@ $oldMan = @{}
 $manPath = Join-Path $dest 'shipped-images.txt'
 if (Test-Path -LiteralPath $manPath) { foreach ($ml in Get-Content -LiteralPath $manPath) {
     if ($ml -match '^([0-9a-fA-F]{64})\s+(.+)$') { $oldMan[$matches[2].Trim().ToLowerInvariant()] = $matches[1].ToLowerInvariant() } } }
+else {   # R4-L1: installs from before the manifest (v1.1.0) shipped these pictures (hashes from main); refresh them if unchanged
+    $oldMan = @{ 'images/badge.png' = 'c80191a8b71708f5126bb81c02945e72c88df7f94458236cc36cc9f7a618b072'; 'images/email.png' = '785779ad2815f5886e5f780176022ed2289ec245e749d792fe34ef63ffe82ae1'; 'images/globe.png' = '9febcce7441d02c7cc04edb8fca6e655c15f65da395d1ed2b3982d12837d5124'; 'images/guide.png' = 'a950556411e95be22caa7dc33a59e19fb80734e0c9e75784b1ef513142655893'; 'images/power.png' = '8289780bca861ad9aaf69dfc88de61675e7851a1182e686feea63600e5c18081'; 'images/reddog.png' = '4125711cedf60d0fb4dd4a9fb0b05aff01c7db95f12d80a0032f1657d37d553b'; 'images/register.png' = '662105e5ab430976a35bef64abae4cedfcd60211447d6968386763c6ba1a615f'; 'images/revenue.png' = '3c875cebd0396788a53715464fd6af61c706cdf93cfbe9d29fa5b68f3acfaaa5'; 'images/screenconnect.png' = 'f903c058d8ae014f69ae2e9c09b87e39780ab1240b0e355db86935fe476c700e'; 'images/security.png' = 'da7d33138bd401dd1ac00c43d97e9acf0a35967c35d64c5b669242e55edc2952' } }
 $instLog = Join-Path $dest 'install.log'
 $destRoot = [IO.Path]::GetFullPath($dest).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 foreach ($e in $z.Entries) {
     # LJ-N7: skip entries that are rooted, contain '..', or resolve outside $dest
     $en = $e.FullName
+    # R4-N1: ':' or other invalid characters in an entry name: skip and log it, don't stop the install
+    if ($en.IndexOf(':') -ge 0 -or $en.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0 -or $en.IndexOfAny([char[]]'*?"<>|') -ge 0) {
+        Add-Content -LiteralPath $instLog -Value ("{0}  skipped a payload entry with an invalid name: {1}" -f (Get-Date -Format s), $en) -ErrorAction SilentlyContinue; continue }
     if ([IO.Path]::IsPathRooted($en) -or $en -match '(^|[\\/])\.\.([\\/]|$)') { continue }
     $t = Join-Path $dest $en
     if (-not [IO.Path]::GetFullPath($t).StartsWith($destRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
