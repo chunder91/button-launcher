@@ -26,5 +26,16 @@ The rounded panel corners take a little more work for Windows to draw. On a slow
 ### Windows "protected your PC" message
 The launcher isn't signed with a paid certificate, so the first time you run a downloaded copy Windows may show "Windows protected your PC". Click **More info**, then **Run anyway**. That's expected for this program. It only happens once per copy.
 
-### Not in this version yet
-The one-panel layout (a single tall panel with your own icons in the middle that you can add, remove and drag) is still a mockup. So are the tray icon and the Ctrl+Alt+L shortcut that bring the launcher to the front. They'll get their own notes when they're built.
+### New: bring the launcher forward any time
+- **Tray icon.** The launcher now has a small icon by the clock, at the bottom right of the taskbar. If it's hidden, click the ^ arrow. Click the icon to bring the launcher to the front, even when Red Dog or a browser fills the screen. Right-click it for **Show**, **Lock/Unlock**, **Settings** and **Exit**.
+- **Ctrl+Alt+L.** Press Ctrl+Alt+L anywhere to bring the launcher to the front. If another program already uses that shortcut, the tray icon still works.
+- **Show desktop (Windows key + D)** may hide the launcher like any other window. Press Ctrl+Alt+L or click the tray icon to bring it back.
+
+### New: one-panel layout (optional)
+You can switch from the two separate panels to **one tall panel docked to the edge of the screen**. Your top buttons sit at the top, your bottom buttons and the Restarts sit at the bottom, and the space in between shows your desktop. Clicks in that empty space go straight through to whatever is behind it.
+- **Switch layouts:** unlock the panels, right-click a panel, choose **Setup > Layout > One panel, docked to the edge** (or **Two panels** to go back), then **Setup > Reload**. Two panels stays the default.
+- **Your own icons in the middle.** The middle starts empty. To add an icon, unlock, right-click the middle and choose **Add icon...**. It can be a program, website, file or script, and it shows that program's own icon.
+- **Remove an icon:** unlock, right-click the icon and choose **Remove this icon**. An **Undo** button shows for 5 seconds in case you didn't mean it.
+- **Move icons:** unlock, then drag an icon onto another spot. You can also right-click it and choose **Move earlier** or **Move later**.
+- **Lots of icons?** If they don't all fit, a **+N more** button opens the rest.
+- The panel isn't "always on top" unless you turn that on. It fills the height of the screen it's on and re-docks itself when the screen, the scaling or the taskbar changes.

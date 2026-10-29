@@ -1,0 +1,70 @@
+# One-panel layout checks that run without Windows: layout setting, middle schema, empty-state hint, overflow math,
+# chip label trimming, and source checks for click-through, tray, hotkey, menus and cleanup.
+$ErrorActionPreference = 'Stop'
+$root = Split-Path -Parent $PSScriptRoot
+$fail = 0
+function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"; $script:fail++ } }
+$ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
+$src = $ast.Extent.Text
+foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState') {
+    $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
+    Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
+# Layout setting
+Check "layout default is 'two'" ((Get-LayoutMode ([pscustomobject]@{})) -eq 'two')
+Check "layout 'single'" ((Get-LayoutMode ([pscustomobject]@{ layout = 'single' })) -eq 'single')
+Check "unknown layout falls back to 'two'" ((Get-LayoutMode ([pscustomobject]@{ layout = 'sideways' })) -eq 'two')
+$def = Get-Content (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
+Check "buttons.default.json: layout 'two'" ($def.layout -eq 'two')
+Check 'buttons.default.json: middle starts empty, 2 columns' ($def.middle -and @($def.middle.items).Count -eq 0 -and $def.middle.columns -eq 2)
+# Middle schema: same target types as tiles
+$m = New-MiddleState ([pscustomobject]@{ middle = [pscustomobject]@{ columns = 9; items = @(
+    [pscustomobject]@{ label = 'Notepad'; type = 'program'; target = 'notepad.exe'; image = 'icon' },
+    [pscustomobject]@{ label = 'KBS Portal'; type = 'website'; target = 'https://example.invalid' },
+    [pscustomobject]@{ label = 'Price List.pdf'; type = 'file'; target = 'C:\Docs\Price List.pdf' },
+    [pscustomobject]@{ label = ''; type = 'script'; target = 'C:\Scripts\Daily Backup.ps1' }) } })
+Check 'middle: items kept in order' ($m.items.Count -eq 4 -and $m.items[0].label -eq 'Notepad')
+Check 'middle: columns clamped to 1-4' ($m.cols -eq 4)
+$cfgNo = [pscustomobject]@{}; $m0 = New-MiddleState $cfgNo
+Check 'middle: missing group created empty' ($m0.items.Count -eq 0 -and $m0.cols -eq 2 -and $cfgNo.middle -and @($cfgNo.middle.items).Count -eq 0)
+foreach ($b in $m.items) { Check ("middle item type '{0}' is a known target type" -f $b.type) ($b.type -in 'program', 'website', 'file', 'script', 'builtin') }
+# Empty-state hint
+Check 'hint: empty + unlocked' ((Get-MiddleHint 0 $false) -eq 'Unlock and right-click to add icons')
+Check 'hint: empty + locked shows nothing' ($null -eq (Get-MiddleHint 0 $true))
+Check 'hint: not empty shows nothing' ($null -eq (Get-MiddleHint 3 $false))
+# Overflow math (chips 64, gap 6, "+N more" row 28)
+foreach ($c in @(@(0, 500, 0, 0), @(4, 140, 4, 0), @(5, 140, 2, 3), @(8, 300, 8, 0), @(9, 280, 6, 3), @(3, 40, 0, 3), @(10, 0, 0, 10), @(2, 64, 2, 0))) {
+    $r = Get-OverflowSplit $c[0] $c[1] 2
+    Check ("overflow total={0} avail={1}: shown {2}, +{3} more" -f $c[0], $c[1], $r.shown, $r.more) ($r.shown -eq $c[2] -and $r.more -eq $c[3] -and ($r.shown + $r.more) -eq $c[0]) }
+$r3 = Get-OverflowSplit 7 140 3; Check 'overflow 3 columns: 7 in 140 -> 3 shown, +4' ($r3.shown -eq 3 -and $r3.more -eq 4)
+# Labels: one line, extensions hidden (not for websites)
+foreach ($c in @(@('Price List.pdf', 'file', 'Price List'), @('Daily Backup.ps1', 'script', 'Daily Backup'), @('Nightly Report.xlsx', 'file', 'Nightly Report'),
+                 @("Two`nLines", 'program', 'Two Lines'), @('example.com', 'website', 'example.com'), @('v1.2 notes', 'file', 'v1.2 notes'))) {
+    $got = Get-ChipLabel ([pscustomobject]@{ label = $c[0]; type = $c[1]; target = 'x' })
+    Check ("chip label '{0}' -> '{1}'" -f ($c[0] -replace "`n", '|'), $got) ($got -ceq $c[2]) }
+Check 'chip label from target when empty' ((Get-ChipLabel ([pscustomobject]@{ label = ''; type = 'script'; target = 'C:\Scripts\Daily Backup.ps1' })) -eq 'Daily Backup')
+# Source checks
+Check 'click-through: middle Background $null when locked' ($src -match "\`$mid\.Background = if \(\`$locked\) \{ \`$null \}")
+Check 'single window uses per-pixel alpha' ($src -match '\$w\.AllowsTransparency = \$true; \$w\.Background = \$null')
+Check 'single window not topmost unless it already was' ($src -match '\$w\.Topmost = \[bool\]\$pcs\[0\]\.alwaysOnTop')
+Check 're-dock on display/work-area/DPI change' ($src -match 'if \(\$global:single\) \{ Layout-Single \}' -and $src -match '0x007E, 0x001A, 0x02E0')
+Check 'chips: 65% fill, 16% white outline' ($src -match "Brush '#A6141414'" -and $src -match "Brush '#29FFFFFF'")
+Check 'chips: 12 px one-line label with ellipsis' ($src -match "New-Label \(Get-ChipLabel \`$btn\) '#FFFFFF' 12; \`$tb\.TextWrapping = 'NoWrap'; \`$tb\.TextTrimming = 'CharacterEllipsis'")
+Check '+N more is a 28 px button opening a flyout' ($src -match '\$more\.Height = 28' -and $src -match 'Primitives\.Popup')
+Check 'chips: icon from ExtractAssociatedIcon, Set A fallback' ($src -match 'ExtractAssociatedIcon\(\$t\)' -and $src -match "'website' \{ 'images/globe\.png' \}")
+Check 'chips: same right-click menu kinds (edit/move/remove)' ($src -match "'Edit this icon\.\.\.'" -and $src -match "'Remove this icon'" -and $src -match "'Move earlier'")
+Check 'chips: whole chip drags in edit mode' ($src -match 'DragDrop\]::DoDragDrop\(\$chip')
+Check 'remove: 5 s Undo toast' ($src -match 'FromSeconds\(5\)' -and $src -match "Content = 'Undo'")
+Check 'columns same locked and unlocked' ($src -notmatch 'cols \+ 1' -and $src -match 'New-ChipGrid @\(\$items\[0\.\.\(\$split\.shown - 1\)\]\) \$global:middle\.cols')
+Check 'Editing bar leads with Lock when done' ($src -match "'Editing\. Lock when done\.'")
+Check 'tray: NotifyIcon with images\app.ico, Show/Lock/Settings/Exit' ($src -match 'Forms\.NotifyIcon' -and $src -match "images\\app\.ico" -and $src -match "Add\('Show'" -and $src -match "Add\('Settings'" -and $src -match "Add\('Exit'")
+Check 'tray: left click brings it forward' ($src -match 'MouseButtons\]::Left\) \{ Show-AllPanels \}')
+Check 'hotkey: Ctrl+Alt+L on a message-only window' ($src -match 'RegisterHotKey\(\$global:hotkeySrc\.Handle, 0xB10, 0x4003, 0x4C\)' -and $src -match 'ParentWindow = \[IntPtr\]\(-3\)')
+Check 'hotkey taken: logged, tray kept' ($src -match 'Ctrl\+Alt\+L is already used')
+Check 'exit: unregister hotkey and dispose tray' ($src -match 'UnregisterHotKey' -and $src -match '\$global:tray\.Dispose\(\)' -and $src -match 'Add_Exit\(\{ Stop-TrayAndHotkey \}\)')
+Check 'tray + hotkey in both layouts' ($src -match '(?s)else \{ foreach \(\$pc in @\(\$global:cfg\.panels\)\) \{ \[void\]\(Open-Panel \$pc\) \} \}.*Start-TrayAndHotkey')
+Check 'second launch raises the single window' ($src -match '(?s)function global:Show-AllPanels \{\s+if \(\$global:single\)')
+Check 'Setup > Layout menu' ($src -match "\`$lay\.Header = 'Layout'" -and $src -match "'One panel, docked to the edge'")
+Check 'Save keeps panels 3+ in single layout' ($src -match "if \(-not \`$global:single\) \{ \`$global:cfg\.panels = ")
+Check 'restart confirm default No kept' ($src -match "\[System\.Windows\.MessageBox\]::Show\(\`$cText, \`$cTitle, 'YesNo', 'Warning', 'No'\)")
+Check 'chip Enter/Space ignore key repeat' ($src -match "\`$chip\.Add_KeyDown\(\{ if \(\(\`$_\.Key -eq 'Enter' -or \`$_\.Key -eq 'Space'\) -and -not \`$_\.IsRepeat\)")
+if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

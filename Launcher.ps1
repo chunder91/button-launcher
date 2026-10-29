@@ -1055,7 +1055,7 @@ function global:Get-OverflowSplit([int]$total, [double]$availH, [int]$cols = 2, 
 function global:Get-ChipLabel($btn) {   # one-line label, file extensions hidden (full name goes in the tooltip)
     $l = ([string]$btn.label) -replace '\\n', ' ' -replace '\s+', ' '
     $l = $l.Trim()
-    if (-not $l) { $t = Expand $btn.target; if ($t) { $l = [IO.Path]::GetFileName($t.TrimEnd('\', '/')) } }
+    if (-not $l) { $t = Expand $btn.target; if ($t) { $l = @($t.TrimEnd('\', '/') -split '[\\/]')[-1] } }
     if ((Get-ButtonType $btn) -ne 'website') { $l = $l -replace '(?i)\.(exe|lnk|url|pdf|xlsx?|xlsm|docx?|pptx?|csv|txt|rtf|ps1|bat|cmd|vbs|png|jpe?g)$', '' }
     if (-not $l) { $l = 'Icon' }
     return $l
@@ -1120,7 +1120,7 @@ function global:New-Chip($btn, [int]$index) {
         if (-not $st.down) { return }; $st.down = $false; $_.Handled = $true
         if (-not $st.dragged) { $ok = Invoke-Button $btn; if ($ok -eq $true) { Start-Flash $flash } }
     }.GetNewClosure())
-    $chip.Add_KeyDown({ if ($_.Key -eq 'Enter' -or $_.Key -eq 'Space') { $_.Handled = $true; $ok = Invoke-Button $btn; if ($ok -eq $true) { Start-Flash $flash } } }.GetNewClosure())
+    $chip.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; $ok = Invoke-Button $btn; if ($ok -eq $true) { Start-Flash $flash } } }.GetNewClosure())
     $chip.Add_Drop({
         $d = [string]$_.Data.GetData([string])
         if ($d -match '^bl-chip:(\d+)$') { Move-Chip ([int]$matches[1]) $index; $_.Handled = $true } }.GetNewClosure())

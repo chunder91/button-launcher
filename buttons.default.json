@@ -233,5 +233,10 @@
   ],
   "locked": true,
   "clickSound": false,
-  "layoutVersion": 2
+  "layoutVersion": 2,
+  "layout": "two",
+  "middle": {
+    "columns": 2,
+    "items": []
+  }
 }
