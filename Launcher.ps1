@@ -109,13 +109,14 @@ function global:Resolve-ButtonPath($btn, $kind) {
 
 function global:Restart-ScreenConnect {
     $res = Join-Path $env:TEMP ("bl-sc-" + [guid]::NewGuid() + '.txt')
+    $resQ = $res.Replace("'", "''")   # CC-M5: profile paths like C:\Users\O'Brien
     $script = @"
 `$out = @()
 `$svcs = Get-Service -DisplayName 'ScreenConnect Client*' -ErrorAction SilentlyContinue
 if (-not `$svcs) { `$svcs = Get-Service -Name 'ScreenConnect Client*' -ErrorAction SilentlyContinue }
 if (-not `$svcs) { `$out += 'NONE' }
 foreach (`$s in `$svcs) { try { Restart-Service -InputObject `$s -Force -ErrorAction Stop; `$out += 'OK|' + `$s.DisplayName } catch { `$out += 'FAIL|' + `$s.DisplayName + '|' + `$_.Exception.Message } }
-Set-Content -Path '$res' -Value `$out -Encoding UTF8
+Set-Content -LiteralPath '$resQ' -Value `$out -Encoding UTF8
 "@
     $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
     try { $proc = Start-Process powershell.exe -Verb RunAs -WindowStyle Hidden -PassThru -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $enc" }
