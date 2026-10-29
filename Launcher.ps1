@@ -28,12 +28,17 @@ $global:cfg          = $null
 $global:panels       = New-Object System.Collections.ArrayList   # each: @{ cfg; items; win; stack; ... }
 $global:BaseWidth    = 290                                        # design width; heights/fonts in buttons.json use these units
 $global:SizePct      = @{ Small = 11; Medium = 14; Large = 18 }   # panel width as % of work-area width
-$global:RaisedBrush  = $null
-$global:SunkenBrush  = $null
+$global:UiFont       = New-Object System.Windows.Media.FontFamily 'Segoe UI Variable Text Semibold, Segoe UI Semibold, Segoe UI'
+$global:Theme        = @{ panel = '#141414'; restartFill = '#2A2A2A'; restartRed = '#E5484D'; amber = '#F59E0B'; editText = '#111111' }
+# Option B / Kern palette: old default fill -> @(new fill, label colour). All labels pass WCAG AA (4.5:1).
+$global:ModernFill   = @{ '#3EC3EE' = @('#0B6E99', '#FFFFFF'); '#0E8A55' = @('#0E7A4B', '#FFFFFF'); '#B48CF5' = @('#7B4FD6', '#FFFFFF')
+                          '#FFFF00' = @('#FACC15', '#111111'); '#7F7F7F' = @('#5F6368', '#FFFFFF'); '#FF0000' = @('#C40000', '#FFFFFF')
+                          '#F0E68C' = @('#F0E68C', '#111111'); '#FA8072' = @('#B8432F', '#FFFFFF'); '#DAA520' = @('#8A6100', '#FFFFFF') }
+$global:Acronyms     = @('PLCE', 'PC', 'POS', 'VNC', 'KBS', 'USB', 'TV', 'ID', 'IT', 'PA', 'DOR')
 $global:app          = $null
 $global:relayoutTimer = $null
 $global:labelSink    = $null
-$global:AppVersion   = '1.1.0'
+$global:AppVersion   = '1.2.0'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -199,116 +204,6 @@ function global:Invoke-Button($btn) {
     }
 }
 
-function global:New-Bevel($bg, $content, $h) {
-    # Outer light/dark border gives the raised 3D edge
-    $b = New-Object System.Windows.Controls.Border
-    $b.Background = Brush $bg; $b.Height = $h; $b.Margin = '2'
-    $b.BorderThickness = '3'
-    $lg = New-Object System.Windows.Media.LinearGradientBrush
-    $lg.StartPoint = '0,0'; $lg.EndPoint = '1,1'
-    $lg.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb(200,255,255,255)), 0.0))
-    $lg.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb(200,255,255,255)), 0.49))
-    $lg.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb(200,40,40,40)), 0.51))
-    $lg.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb(200,40,40,40)), 1.0))
-    $b.BorderBrush = $lg
-    $b.Child = $content
-    $b.Cursor = [System.Windows.Input.Cursors]::Hand
-    return $b
-}
-
-function global:New-Label($text, $fg, $size) {
-    $tb = New-Object System.Windows.Controls.TextBlock
-    $tb.Text = ($text -replace '\\n', "`n"); $tb.Foreground = Brush $fg
-    $tb.FontFamily = 'Arial'; $tb.FontWeight = 'Bold'; $tb.FontSize = $size
-    $tb.Tag = [double]$size                                  # design size; Apply-MinFont enforces the floor after scaling
-    if ($global:labelSink -ne $null) { [void]$global:labelSink.Add($tb) }
-    $tb.TextAlignment = 'Center'; $tb.TextWrapping = 'Wrap'
-    $tb.HorizontalAlignment = 'Center'; $tb.VerticalAlignment = 'Center'
-    $fx = New-Object System.Windows.Media.Effects.DropShadowEffect
-    $fx.ShadowDepth = 1.5; $fx.BlurRadius = 2; $fx.Opacity = 0.6
-    $tb.Effect = $fx
-    return $tb
-}
-
-
-# ---------- button visual states: hover / press (sunken bevel) / launch flash / click sound ----------
-# Kern-3/UX-6: label floor of 12 DIP (13 for 3+ line labels) on screen, after the panel's scale is applied.
-function global:Apply-MinFont($p) {
-    if (-not $p.labels) { return }
-    $s = [Math]::Max(0.1, [double]$p.scale.ScaleX)
-    foreach ($tb in $p.labels) {
-        $floor = if (([string]$tb.Text).Split("`n").Count -ge 3) { 13.0 } else { 12.0 }
-        $tb.FontSize = [Math]::Max([double]$tb.Tag, $floor / $s)
-    }
-}
-
-function global:New-BevelBrush($sunken) {
-    $light = [System.Windows.Media.Color]::FromArgb(200,255,255,255); $dark = [System.Windows.Media.Color]::FromArgb(200,40,40,40)
-    $a = if ($sunken) { $dark } else { $light }; $b = if ($sunken) { $light } else { $dark }
-    $lg = New-Object System.Windows.Media.LinearGradientBrush; $lg.StartPoint = '0,0'; $lg.EndPoint = '1,1'
-    foreach ($st in @(@($a,0.0),@($a,0.49),@($b,0.51),@($b,1.0))) { $lg.GradientStops.Add((New-Object System.Windows.Media.GradientStop $st[0], $st[1])) }
-    $lg.Freeze(); return $lg
-}
-
-function global:Play-Click {
-    if (-not [bool]$global:cfg.clickSound) { return }
-    try {
-        $wav = Join-Path $global:here 'click.wav'
-        if (-not (Test-Path $wav)) { $wav = Join-Path $env:SystemRoot 'Media\Windows Navigation Start.wav' }
-        if (Test-Path $wav) { (New-Object System.Media.SoundPlayer $wav).Play() } else { [System.Media.SystemSounds]::Asterisk.Play() }
-    } catch {}
-}
-
-function global:Wire-Button($p, $el, $action) {
-    # $el = bevel Border. Wrap its content: [content (shifts on press)] + [shade] + [white flash]
-    $content = $el.Child; $el.Child = $null
-    $g = New-Object System.Windows.Controls.Grid
-    $shift = New-Object System.Windows.Media.TranslateTransform 0, 0
-    $content.RenderTransform = $shift
-    $shade = New-Object System.Windows.Controls.Border; $shade.IsHitTestVisible = $false; $shade.Opacity = 0; $shade.Background = [System.Windows.Media.Brushes]::White
-    $flash = New-Object System.Windows.Controls.Border; $flash.IsHitTestVisible = $false; $flash.Opacity = 0; $flash.Background = [System.Windows.Media.Brushes]::White
-    [void]$g.Children.Add($content); [void]$g.Children.Add($shade); [void]$g.Children.Add($flash)
-    $g.Background = [System.Windows.Media.Brushes]::Transparent
-    $el.Child = $g; $el.BorderBrush = $global:RaisedBrush; $el.Cursor = [System.Windows.Input.Cursors]::Hand
-    $st = @{ down = $false }
-    $anim = { param($obj, $prop, $to, $ms)
-        $da = New-Object System.Windows.Media.Animation.DoubleAnimation $to, ([System.Windows.Duration][TimeSpan]::FromMilliseconds($ms))
-        $obj.BeginAnimation($prop, $da) }
-    $hover = { $shade.Background = [System.Windows.Media.Brushes]::White; & $anim $shade ([System.Windows.UIElement]::OpacityProperty) 0.10 80 }.GetNewClosure()
-    $release = {
-        $el.BorderBrush = $global:RaisedBrush
-        & $anim $shift ([System.Windows.Media.TranslateTransform]::XProperty) 0 100
-        & $anim $shift ([System.Windows.Media.TranslateTransform]::YProperty) 0 100
-    }.GetNewClosure()
-    $el.Add_MouseEnter({ if (-not $st.down) { & $hover } }.GetNewClosure())
-    $el.Add_MouseLeave({ if (-not $st.down) { & $anim $shade ([System.Windows.UIElement]::OpacityProperty) 0 100 } }.GetNewClosure())
-    $el.Add_MouseLeftButtonDown({
-        $st.down = $true; [void]$el.CaptureMouse(); $_.Handled = $true
-        $el.BorderBrush = $global:SunkenBrush
-        $d = 2.0 / [Math]::Max(0.1, $p.scale.ScaleX)       # 2 device-ish px at any scale
-        $shift.BeginAnimation([System.Windows.Media.TranslateTransform]::XProperty, $null); $shift.X = $d
-        $shift.BeginAnimation([System.Windows.Media.TranslateTransform]::YProperty, $null); $shift.Y = $d
-        $shade.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null)
-        $shade.Background = [System.Windows.Media.Brushes]::Black; $shade.Opacity = 0.15
-        Play-Click
-    }.GetNewClosure())
-    $el.Add_MouseLeftButtonUp({
-        if (-not $st.down) { return }
-        $st.down = $false; $el.ReleaseMouseCapture(); $_.Handled = $true
-        $pos = $_.GetPosition($el); $inside = ($pos.X -ge 0 -and $pos.Y -ge 0 -and $pos.X -le $el.ActualWidth -and $pos.Y -le $el.ActualHeight)
-        & $release
-        if ($inside) { & $hover } else { & $anim $shade ([System.Windows.UIElement]::OpacityProperty) 0 100 }
-        if ($inside) {
-            $ok = & $action
-            if ($ok -eq $true) {
-                $flash.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null); $flash.Opacity = 0.8
-                & $anim $flash ([System.Windows.UIElement]::OpacityProperty) 0 300
-            }
-        }
-    }.GetNewClosure())
-    $el.Add_LostMouseCapture({ if ($st.down) { $st.down = $false; & $release; & $anim $shade ([System.Windows.UIElement]::OpacityProperty) 0 100 } }.GetNewClosure())
-}
-
 function global:Get-IconImage($path) {
     try {
         $p = Expand $path
@@ -339,41 +234,231 @@ function global:Get-PicSource($btn, $px) {
     } catch { return $null }
 }
 
-# Kern-2/Kern-6: a button whose picture file is missing gets a small amber corner dot + tooltip, and a log line.
-function global:Add-MissingPicCue($content, $btn) {
-    $img = [string]$btn.image
-    Add-Content -LiteralPath $global:logPath -Value ("{0}  picture not found for '{1}': {2}" -f (Get-Date -Format s), (([string]$btn.label) -replace "`n", ' '), (Resolve-Img $img)) -ErrorAction SilentlyContinue
-    $g = New-Object System.Windows.Controls.Grid
-    $dot = New-Object System.Windows.Shapes.Ellipse; $dot.Width = 10; $dot.Height = 10
-    $dot.Fill = Brush '#FFB000'; $dot.Stroke = Brush '#000000'; $dot.StrokeThickness = 1.5
-    $dot.HorizontalAlignment = 'Right'; $dot.VerticalAlignment = 'Top'; $dot.Margin = '0,5,5,0'
-    $dot.ToolTip = "Picture not found: $img"
-    [void]$g.Children.Add($content); [void]$g.Children.Add($dot)
-    return $g
+# ---------- Modern look (Option B, approved by Charles): flat rounded tiles, Kern palette, Segoe UI Semibold ----------
+function global:Get-Color($hex) { [System.Windows.Media.Color][System.Windows.Media.ColorConverter]::ConvertFromString($hex) }
+function global:Mix-Color($c, $toward, [double]$t) {   # $t of the way from colour $c toward colour $toward
+    [System.Windows.Media.Color]::FromArgb($c.A, [byte]($c.R + ($toward.R - $c.R) * $t), [byte]($c.G + ($toward.G - $c.G) * $t), [byte]($c.B + ($toward.B - $c.B) * $t))
+}
+# Old default fills (and their labels) map to Kern's AA palette at draw time, so an existing buttons.json gets the new look
+# without rewriting it. Any other colour the user picked is drawn as-is.
+function global:Get-TileColors($btn) {
+    $bg = ([string]$btn.bg).Trim().ToUpperInvariant(); if (-not $bg) { $bg = '#4472C4' }
+    if ($global:ModernFill.ContainsKey($bg)) { $m = $global:ModernFill[$bg]; return @{ bg = $m[0]; fg = $m[1] } }
+    $fg = [string]$btn.fg
+    if (-not $fg) { $c = Get-Color $bg; $fg = if ((0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B) -gt 150) { '#111111' } else { '#FFFFFF' } }
+    return @{ bg = $bg; fg = $fg }
+}
+function global:Test-DangerButton($btn) {
+    if ([string]$btn.group -eq 'danger') { return $true }
+    return ((Get-ButtonType $btn) -eq 'builtin' -and [string]$btn.action -in 'restart-screenconnect', 'restart-computer')
+}
+# Title Case for display only. Stored labels are never rewritten; only ALL-CAPS labels are converted.
+function global:Get-DisplayLabel($btn) {
+    $raw = ([string]$btn.label) -replace '\\n', "`n"
+    $lines = @($raw -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    if (($raw -cmatch '[A-Z]') -and ($raw -cnotmatch '[a-z]')) {
+        $small = 'of', 'and', 'the', 'to', 'for', 'in', 'on', 'at', 'or'
+        $i = 0   # word position across the whole label, so "OF" on its own line still stays lower case
+        $lines = @(foreach ($ln in $lines) {
+            $ln = $ln -replace '(?i)\bSCREEN\s+CONNECT\b', 'ScreenConnect'
+            (@(foreach ($w in ($ln -split ' ')) {
+                $out = if ($w -ceq 'ScreenConnect' -or $global:Acronyms -contains $w) { $w }
+                       elseif ($i -gt 0 -and $small -contains $w.ToLowerInvariant()) { $w.ToLowerInvariant() }
+                       elseif ($w.Length -gt 0) { $w.Substring(0, 1).ToUpperInvariant() + $w.Substring(1).ToLowerInvariant() } else { $w }
+                $i++; $out })) -join ' ' })
+    }
+    $sub = $null
+    if ($lines.Count -gt 1 -and $lines[-1] -match '^(?i)version\b') { $sub = $lines[-1]; $lines = @($lines[0..($lines.Count - 2)]) }
+    $main = if ((Test-DangerButton $btn) -and $lines.Count -gt 1) { $lines[0] + "`n" + (($lines[1..($lines.Count - 1)]) -join ' ') } else { $lines -join ' ' }
+    return @{ main = $main; sub = $sub }
 }
 
-function global:New-Content($btn, $fs, $h) {
-    $label = New-Label $btn.label $btn.fg $fs
-    $m0 = if ($btn.imageMode) { [string]$btn.imageMode } else { 'left' }
-    $px = switch ($m0) { 'left' { [Math]::Min(48, $h * 0.6) } 'above' { [Math]::Max(16, $h * 0.4) } default { $h } }
-    $src = Get-PicSource $btn $px
-    if (-not $src) {
-        if ($btn.image -and [string]$btn.image -ne 'icon') { return (Add-MissingPicCue $label $btn) }
-        return $label
+function global:New-Label($text, $fg, $size) {
+    $tb = New-Object System.Windows.Controls.TextBlock
+    $tb.Text = ($text -replace '\\n', "`n"); $tb.Foreground = Brush $fg
+    $tb.FontFamily = $global:UiFont; $tb.FontWeight = [System.Windows.FontWeights]::SemiBold; $tb.FontSize = $size
+    $tb.LineStackingStrategy = 'BlockLineHeight'; $tb.LineHeight = [Math]::Round($size * 1.2, 1)
+    $tb.Tag = [double]$size                                  # design size; Apply-MinFont enforces the floor after scaling
+    if ($global:labelSink -ne $null) { [void]$global:labelSink.Add($tb) }
+    $tb.TextAlignment = 'Left'; $tb.TextWrapping = 'Wrap'
+    $tb.HorizontalAlignment = 'Left'; $tb.VerticalAlignment = 'Center'
+    return $tb
+}
+
+# Kern-3/UX-6: label floor of 12 DIP (13 for 3+ line labels) on screen, after the panel's scale is applied.
+function global:Apply-MinFont($p) {
+    if (-not $p.labels) { return }
+    $s = [Math]::Max(0.1, [double]$p.scale.ScaleX)
+    foreach ($tb in $p.labels) {
+        $floor = if (([string]$tb.Text).Split("`n").Count -ge 3) { 13.0 } else { 12.0 }
+        $tb.FontSize = [Math]::Max([double]$tb.Tag, $floor / $s)
+        $tb.LineHeight = [Math]::Round($tb.FontSize * 1.2, 1)
     }
-    $mode = if ($btn.imageMode) { $btn.imageMode } else { 'left' }
-    $img = New-Object System.Windows.Controls.Image; $img.Source = $src; $img.Stretch = 'Uniform'
-    switch ($mode) {
-        'only'       { $img.Margin = '4'; return $img }
-        'background' { $g = New-Object System.Windows.Controls.Grid; $img.Stretch = 'UniformToFill'
-                       $g.Children.Add($img) | Out-Null; $g.Children.Add($label) | Out-Null; return $g }
-        'above'      { $sp = New-Object System.Windows.Controls.StackPanel; $sp.VerticalAlignment = 'Center'
-                       $img.Height = [Math]::Max(16, $h * 0.4); $img.Margin = '0,0,0,2'
-                       $sp.Children.Add($img) | Out-Null; $sp.Children.Add($label) | Out-Null; return $sp }
-        default      { $sp = New-Object System.Windows.Controls.StackPanel; $sp.Orientation = 'Horizontal'; $sp.HorizontalAlignment = 'Center'
-                       $img.Height = [Math]::Min(48, $h * 0.6); $img.Margin = '0,0,6,0'
-                       $sp.Children.Add($img) | Out-Null; $sp.Children.Add($label) | Out-Null; return $sp }
+}
+
+function global:Play-Click {
+    if (-not [bool]$global:cfg.clickSound) { return }
+    try {
+        $wav = Join-Path $global:here 'click.wav'
+        if (-not (Test-Path $wav)) { $wav = Join-Path $env:SystemRoot 'Media\Windows Navigation Start.wav' }
+        if (Test-Path $wav) { (New-Object System.Media.SoundPlayer $wav).Play() } else { [System.Media.SystemSounds]::Asterisk.Play() }
+    } catch {}
+}
+
+# All tile motion runs as a WPF Storyboard of 150 ms or less. Nothing waits on it: the launch has already happened.
+function global:Start-Anim($target, $prop, $to, [double]$ms, [switch]$Ease) {
+    $a = if ($to -is [System.Windows.Media.Color]) { New-Object System.Windows.Media.Animation.ColorAnimation } else { New-Object System.Windows.Media.Animation.DoubleAnimation }
+    $a.To = $to; $a.Duration = [System.Windows.Duration][TimeSpan]::FromMilliseconds([Math]::Min(150, $ms))
+    if ($Ease) { $ce = New-Object System.Windows.Media.Animation.CubicEase; $ce.EasingMode = 'EaseOut'; $a.EasingFunction = $ce }
+    $sb = New-Object System.Windows.Media.Animation.Storyboard
+    [System.Windows.Media.Animation.Storyboard]::SetTarget($a, $target)
+    [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($a, (New-Object System.Windows.PropertyPath $prop))
+    [void]$sb.Children.Add($a); $sb.Begin()
+}
+function global:Start-Flash($flash) {   # launch flash: white 45%, 60 ms in, 240 ms out (starts after Start-Process returned)
+    $k = New-Object System.Windows.Media.Animation.DoubleAnimationUsingKeyFrames
+    [void]$k.KeyFrames.Add((New-Object System.Windows.Media.Animation.LinearDoubleKeyFrame 0.45, ([System.Windows.Media.Animation.KeyTime]::FromTimeSpan([TimeSpan]::FromMilliseconds(60)))))
+    [void]$k.KeyFrames.Add((New-Object System.Windows.Media.Animation.LinearDoubleKeyFrame 0.0, ([System.Windows.Media.Animation.KeyTime]::FromTimeSpan([TimeSpan]::FromMilliseconds(300)))))
+    $sb = New-Object System.Windows.Media.Animation.Storyboard
+    [System.Windows.Media.Animation.Storyboard]::SetTarget($k, $flash)
+    [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($k, (New-Object System.Windows.PropertyPath ([System.Windows.UIElement]::OpacityProperty)))
+    [void]$sb.Children.Add($k); $sb.Begin()
+}
+
+# Missing-program dot (cheap: no shortcut search while drawing; Set up this PC does the full search).
+function global:Test-ButtonSetUpQuick($btn) {
+    $kind = Get-ButtonType $btn
+    if ($kind -notin 'program', 'file', 'script') { return $true }
+    $t = Expand $btn.target
+    if (-not (Is-Todo $t)) {
+        if ($kind -eq 'program' -and $t -notmatch '[\\/]') { return $true }
+        if (Test-Path -LiteralPath $t) { return $true }
     }
+    if ($btn.detect) { foreach ($pat in @($btn.detect.paths)) { if ($pat -and (Get-ChildItem -Path (Expand $pat) -File -ErrorAction SilentlyContinue | Select-Object -First 1)) { return $true } } }
+    return $false
+}
+function global:New-MissingDot($tip) {
+    $dot = New-Object System.Windows.Shapes.Ellipse; $dot.Width = 11; $dot.Height = 11   # 8 px amber + 1.5 px panel-colour ring
+    $dot.Fill = Brush $global:Theme.amber; $dot.Stroke = Brush $global:Theme.panel; $dot.StrokeThickness = 1.5
+    $dot.HorizontalAlignment = 'Right'; $dot.VerticalAlignment = 'Top'; $dot.Margin = '0,4.5,4.5,0'
+    $dot.ToolTip = $tip
+    return $dot
+}
+
+# Tile content: Set A icon left of the label (or above it on tall half tiles and the restart tiles).
+function global:New-Content($btn, $h, $cls, $danger, $fg) {
+    $fs = switch ($cls) { 'hero' { 22 } 'full' { 16 } default { 13 } }
+    $ipx = switch ($cls) { 'hero' { 40 } 'full' { 32 } default { 24 } }
+    $above = $danger -or ($cls -eq 'half' -and $h -gt 80) -or ([string]$btn.imageMode -eq 'above' -and $cls -eq 'half' -and $h -gt 80)
+    $lab = Get-DisplayLabel $btn
+    $text = New-Object System.Windows.Controls.StackPanel; $text.VerticalAlignment = 'Center'
+    $main = New-Label $lab.main $fg $fs; [void]$text.Children.Add($main)
+    if ($lab.sub) { $sl = New-Label $lab.sub $fg 11; $sl.Opacity = 0.85; [void]$text.Children.Add($sl) }
+    $isRedDog = ([string]$btn.image) -match '(?i)reddog'
+    if ($isRedDog -and $cls -eq 'hero') { $ipx = 64 }
+    $src = Get-PicSource $btn $ipx
+    $missingPic = (-not $src) -and $btn.image -and [string]$btn.image -ne 'icon'
+    if ($missingPic) {
+        Add-Content -LiteralPath $global:logPath -Value ("{0}  picture not found for '{1}': {2}" -f (Get-Date -Format s), (([string]$btn.label) -replace "`n", ' '), (Resolve-Img ([string]$btn.image))) -ErrorAction SilentlyContinue }
+    $icon = $null
+    if ($src) {
+        if ($danger) {   # Rev 2: red #E5484D icon, drawn through the white Set A picture as a mask
+            $icon = New-Object System.Windows.Shapes.Rectangle; $icon.Width = $ipx; $icon.Height = $ipx; $icon.Fill = Brush $global:Theme.restartRed
+            $ib = New-Object System.Windows.Media.ImageBrush $src; $ib.Stretch = 'Uniform'; $icon.OpacityMask = $ib
+        } else {
+            $img = New-Object System.Windows.Controls.Image; $img.Source = $src; $img.Stretch = 'Uniform'; $img.Width = $ipx; $img.Height = $ipx
+            [System.Windows.Media.RenderOptions]::SetBitmapScalingMode($img, 'HighQuality')
+            if ($isRedDog) {   # full-colour Red Dog on a white 8 px plate (its red is under 3:1 on the cyan fill alone)
+                $plate = New-Object System.Windows.Controls.Border; $plate.Background = [System.Windows.Media.Brushes]::White
+                $plate.CornerRadius = '8'; $plate.Padding = '4'; $plate.Child = $img; $icon = $plate
+            } else { $icon = $img }
+        }
+    }
+    $sp = New-Object System.Windows.Controls.StackPanel
+    if ($above) {
+        $sp.HorizontalAlignment = 'Center'; $sp.VerticalAlignment = 'Center'
+        $main.TextAlignment = 'Center'; $main.HorizontalAlignment = 'Center'; if ($lab.sub) { $text.Children[1].TextAlignment = 'Center'; $text.Children[1].HorizontalAlignment = 'Center' }
+        if ($icon) { $icon.HorizontalAlignment = 'Center'; $icon.Margin = '0,0,0,6'; [void]$sp.Children.Add($icon) }
+    } else {
+        $sp.Orientation = 'Horizontal'; $sp.HorizontalAlignment = 'Left'; $sp.VerticalAlignment = 'Center'
+        if ($icon) { $icon.VerticalAlignment = 'Center'; $icon.Margin = '0,0,10,0'; [void]$sp.Children.Add($icon) }
+        $iconW = if ($icon) { $ipx + 10 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }
+        $text.MaxWidth = if ($cls -eq 'half') { 109 - $iconW } else { 248 - $iconW }   # 290 panel - 12 padding - 6 gap - 24 tile padding
+    }
+    [void]$sp.Children.Add($text)
+    return @{ el = $sp; missingPic = $missingPic }
+}
+
+# One tile: rounded 8 px fill, 1 px top highlight, hover lift + shadow, press, launch flash, 2 px focus ring,
+# dashed outline while editing, amber dot when not set up.
+function global:New-Tile($p, $btn) {
+    $h = if ($btn.height) { [double]$btn.height } else { 80 }
+    $h = [Math]::Max(44, $h)                                  # 44 px minimum tile
+    $cls = if ($btn.width -eq 'half') { 'half' } elseif ($h -ge 110) { 'hero' } else { 'full' }
+    $danger = Test-DangerButton $btn
+    $col = Get-TileColors $btn
+    $fillHex = if ($danger) { $global:Theme.restartFill } else { $col.bg }
+    $fgHex = if ($danger) { '#FFFFFF' } else { $col.fg }
+    $base = Get-Color $fillHex
+    $hoverC = Mix-Color $base (Get-Color '#FFFFFF') 0.06; $pressC = Mix-Color $base (Get-Color '#000000') 0.08
+    $fill = New-Object System.Windows.Media.SolidColorBrush $base
+
+    $wrap = New-Object System.Windows.Controls.Grid; $wrap.Margin = '3'                  # 3 + 3 = Kern's 6 px gap
+    $tile = New-Object System.Windows.Controls.Border; $tile.CornerRadius = '8'; $tile.Background = $fill; $tile.Height = $h
+    if ($danger) { $tile.BorderBrush = Brush $global:Theme.restartRed; $tile.BorderThickness = '2' }
+    $lift = New-Object System.Windows.Media.TranslateTransform 0, 0; $tile.RenderTransform = $lift
+    $tile.Cursor = [System.Windows.Input.Cursors]::Hand; $tile.Focusable = $true; $tile.FocusVisualStyle = $null
+    $tile.ToolTip = $btn.target
+    $g = New-Object System.Windows.Controls.Grid
+    $c = New-Content $btn $h $cls $danger $fgHex
+    $c.el.Margin = '12,8'; [void]$g.Children.Add($c.el)
+    $hl = New-Object System.Windows.Controls.Border; $hl.IsHitTestVisible = $false; $hl.BorderThickness = '0,1,0,0'
+    $hl.BorderBrush = Brush '#14FFFFFF'; $hl.CornerRadius = '8,8,0,0'; [void]$g.Children.Add($hl)
+    $flash = New-Object System.Windows.Controls.Border; $flash.IsHitTestVisible = $false; $flash.Opacity = 0
+    $flash.Background = [System.Windows.Media.Brushes]::White; $flash.CornerRadius = '7'; [void]$g.Children.Add($flash)
+    if (-not [bool]$global:cfg.locked) {   # edit mode: 2 px dashed white outline at 60% inside the tile
+        $eo = New-Object System.Windows.Shapes.Rectangle; $eo.IsHitTestVisible = $false; $eo.Stroke = Brush '#99FFFFFF'; $eo.StrokeThickness = 2
+        $eo.StrokeDashArray = New-Object System.Windows.Media.DoubleCollection (,[double[]](4, 3)); $eo.RadiusX = 6; $eo.RadiusY = 6; $eo.Margin = '2'
+        [void]$g.Children.Add($eo) }
+    if ($c.missingPic) { [void]$g.Children.Add((New-MissingDot ("Picture not found: " + [string]$btn.image))) }
+    elseif (-not (Test-ButtonSetUpQuick $btn)) { [void]$g.Children.Add((New-MissingDot 'Not set up on this PC yet')) }
+    $g.Background = [System.Windows.Media.Brushes]::Transparent
+    $tile.Child = $g
+    $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-4'; $ring.CornerRadius = '12'
+    $ring.BorderThickness = '2'; $ring.BorderBrush = [System.Windows.Media.Brushes]::White; $ring.Visibility = 'Hidden'
+    [void]$wrap.Children.Add($tile); [void]$wrap.Children.Add($ring)
+
+    $shadow = New-Object System.Windows.Media.Effects.DropShadowEffect
+    $shadow.BlurRadius = 10; $shadow.ShadowDepth = 4; $shadow.Direction = 270; $shadow.Color = [System.Windows.Media.Colors]::Black; $shadow.Opacity = 0
+    $st = @{ down = $false }
+    $colorProp = [System.Windows.Media.SolidColorBrush]::ColorProperty; $yProp = [System.Windows.Media.TranslateTransform]::YProperty
+    $toHover = { $tile.Effect = $shadow
+        Start-Anim $lift $yProp -1 120 -Ease; Start-Anim $shadow ([System.Windows.Media.Effects.DropShadowEffect]::OpacityProperty) 0.35 120 -Ease
+        Start-Anim $fill $colorProp $hoverC 120 -Ease }.GetNewClosure()
+    $toRest = { Start-Anim $lift $yProp 0 120 -Ease; Start-Anim $fill $colorProp $base 120 -Ease; $tile.Effect = $null }.GetNewClosure()
+    $run = {
+        $ok = Invoke-Button $btn                   # launch first; the flash never delays it
+        if ($ok -eq $true) { Start-Flash $flash } }.GetNewClosure()
+    $tile.Add_MouseEnter({ if (-not $st.down) { & $toHover } }.GetNewClosure())
+    $tile.Add_MouseLeave({ if (-not $st.down) { & $toRest } }.GetNewClosure())
+    $tile.Add_MouseLeftButtonDown({
+        $st.down = $true; [void]$tile.CaptureMouse(); $_.Handled = $true
+        $tile.Effect = $null; Start-Anim $lift $yProp 0 60; Start-Anim $fill $colorProp $pressC 60
+        Play-Click
+    }.GetNewClosure())
+    $tile.Add_MouseLeftButtonUp({
+        if (-not $st.down) { return }
+        $st.down = $false; $tile.ReleaseMouseCapture(); $_.Handled = $true
+        $pos = $_.GetPosition($tile); $inside = ($pos.X -ge 0 -and $pos.Y -ge 0 -and $pos.X -le $tile.ActualWidth -and $pos.Y -le $tile.ActualHeight)
+        if ($inside) { & $toHover; & $run } else { & $toRest }
+    }.GetNewClosure())
+    $tile.Add_LostMouseCapture({ if ($st.down) { $st.down = $false; & $toRest } }.GetNewClosure())
+    $tile.Add_IsKeyboardFocusedChanged({ $ring.Visibility = if ($tile.IsKeyboardFocused) { 'Visible' } else { 'Hidden' } }.GetNewClosure())
+    $tile.Add_KeyDown({ if ($_.Key -eq 'Enter' -or $_.Key -eq 'Space') { $_.Handled = $true; Start-Anim $fill $colorProp $pressC 60; & $run; Start-Anim $fill $colorProp $base 120 } }.GetNewClosure())
+    $tile.Add_MouseRightButtonDown({ [void]$tile.Focus() }.GetNewClosure())
+    $tile.ContextMenu = Button-Menu $p $btn
+    if ($btn.width -eq 'half') { $wrap.Tag = 'half' } else { $wrap.Tag = 'full' }
+    return $wrap
 }
 
 function global:Pick-Color($current) {
@@ -630,7 +715,6 @@ function global:Apply-Lock {
     foreach ($p in $global:panels) { Build-Panel $p }   # UX-1: menus differ when locked, so rebuild them
     foreach ($p in $global:panels) {
         $p.grip.Visibility = if ($locked) { 'Collapsed' } else { 'Visible' }
-        $p.edge.Padding = if ($locked) { '2' } else { '4' }
         if ($p.hwnd -and $p.hwnd -ne [IntPtr]::Zero) {
             # Locked: tool window = no taskbar button, not in Alt+Tab
             $ex = [BL.Native]::GetWindowLongPtr($p.hwnd, -20).ToInt64()
@@ -663,13 +747,15 @@ function global:Locked-Menu($p, $menu) {
     [void](Add-MenuItem $menu 'Close this panel' { $p.win.Close() }.GetNewClosure())
 }
 
+# Menu tidy (Option B): everyday items, then edit items, then a Setup submenu, then the Close items.
+# Locked: only Unlock and Close (Locked-Menu).
 function global:Panel-Menu($p, $menu) {
     if ([bool]$global:cfg.locked) { Locked-Menu $p $menu; return }
-    [void](Add-MenuItem $menu 'Add new button at end...' { $nb = New-DefaultButton; if (Edit-Button $nb) { [void]$p.items.Add($nb); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
-    $top = Add-MenuItem $menu 'Always on top' { $p.cfg.alwaysOnTop = -not [bool]$p.cfg.alwaysOnTop; $p.win.Topmost = [bool]$p.cfg.alwaysOnTop; Save-Config }.GetNewClosure()
-    $top.IsCheckable = $true; $top.IsChecked = [bool]$p.cfg.alwaysOnTop
+    # everyday
     $lk = Add-MenuItem $menu 'Lock panels' { $global:cfg.locked = -not [bool]$global:cfg.locked; Save-Config; Apply-Lock }
     $lk.IsCheckable = $true; $lk.IsChecked = [bool]$global:cfg.locked
+    $top = Add-MenuItem $menu 'Always on top' { $p.cfg.alwaysOnTop = -not [bool]$p.cfg.alwaysOnTop; $p.win.Topmost = [bool]$p.cfg.alwaysOnTop; Save-Config }.GetNewClosure()
+    $top.IsCheckable = $true; $top.IsChecked = [bool]$p.cfg.alwaysOnTop
     $sz = New-Object System.Windows.Controls.MenuItem; $sz.Header = 'Size'
     foreach ($nm in 'Small','Medium','Large') {
         $si = Add-MenuItem $sz $nm { $p.cfg.size = $nm; Save-Config; Build-Panel $p; Layout-Panel $p }.GetNewClosure()
@@ -686,19 +772,34 @@ function global:Panel-Menu($p, $menu) {
     $as.IsCheckable = $true; $as.IsChecked = (Get-Autostart)
     $cs = Add-MenuItem $menu 'Click sound' { $global:cfg.clickSound = -not [bool]$global:cfg.clickSound; Save-Config }
     $cs.IsCheckable = $true; $cs.IsChecked = [bool]$global:cfg.clickSound
+    [void]$menu.Items.Add((New-Object System.Windows.Controls.Separator))
+    # edit
+    [void](Add-MenuItem $menu 'Add new button at end...' { $nb = New-DefaultButton; if (Edit-Button $nb) { [void]$p.items.Add($nb); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
     [void](Add-MenuItem $menu 'Rename panel...' { $n = [Microsoft.VisualBasic.Interaction]::InputBox('Panel name:', 'Rename panel', $p.cfg.name); if ($n) { $p.cfg.name = $n; $p.win.Title = $n; Save-Config } }.GetNewClosure())
     [void](Add-MenuItem $menu 'Add new panel...' { New-PanelFromMenu }.GetNewClosure())
     [void](Add-MenuItem $menu 'Delete this panel...' {
-        if ([System.Windows.MessageBox]::Show("Delete the panel ""$($p.cfg.name)"" and all its buttons?", 'Launcher', 'YesNo', 'Warning') -eq 'Yes') {
+        if ([System.Windows.MessageBox]::Show("Delete the panel ""$($p.cfg.name)"" and all its buttons?", 'Launcher', 'YesNo', 'Warning', 'No') -eq 'Yes') {
             $global:panels.Remove($p); $p.deleted = $true; Save-Config; $p.win.Close()
             foreach ($o in $global:panels) { Build-Panel $o } } }.GetNewClosure())   # CC-L5: drop the deleted panel from Move menus
     [void]$menu.Items.Add((New-Object System.Windows.Controls.Separator))
-    [void](Add-MenuItem $menu 'Set up this PC...' { Show-SetupWindow })
-    [void](Add-MenuItem $menu 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" })
-    [void](Add-MenuItem $menu 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
-    [void](Add-MenuItem $menu 'Reload' { Save-Config   # CC-M3: the new copy waits on the mutex until this one has saved and exited
+    # Setup submenu: 44 px item with a 12 px #A0A0A0 second line
+    $setup = New-Object System.Windows.Controls.MenuItem; $setup.MinHeight = 44
+    $hs = New-Object System.Windows.Controls.StackPanel
+    $h1 = New-Object System.Windows.Controls.TextBlock; $h1.Text = 'Setup'
+    $h2 = New-Object System.Windows.Controls.TextBlock; $h2.Text = 'PC setup, panels, installer'; $h2.FontSize = 12; $h2.Foreground = Brush '#A0A0A0'
+    [void]$hs.Children.Add($h1); [void]$hs.Children.Add($h2); $setup.Header = $hs
+    [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
+    [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" })
+    [void](Add-MenuItem $setup 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
+    $sq = Add-MenuItem $setup 'Square panel corners (for slow PCs)' { Set-Prop $global:cfg 'squarePanels' (-not [bool]$global:cfg.squarePanels); Save-Config
+        [System.Windows.MessageBox]::Show('Saved. Choose Setup > Reload to apply it.', 'Launcher') | Out-Null }
+    $sq.IsCheckable = $true; $sq.IsChecked = [bool]$global:cfg.squarePanels
+    [void](Add-MenuItem $setup 'Reload' { Save-Config   # CC-M3: the new copy waits on the mutex until this one has saved and exited
         Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File `"$(Join-Path $global:here 'Launcher.ps1')`" -Reload"
         $global:app.Shutdown() })
+    [void]$menu.Items.Add($setup)
+    [void]$menu.Items.Add((New-Object System.Windows.Controls.Separator))
+    # close
     [void](Add-MenuItem $menu 'Close this panel' { $p.win.Close() }.GetNewClosure())
     [void](Add-MenuItem $menu 'Close all' { $global:app.Shutdown() })
 }
@@ -723,30 +824,41 @@ function global:Button-Menu($p, $btn) {
     return $m
 }
 
-function global:Build-Panel($p) {
-    $stack = $p.stack; $stack.Children.Clear()
-    $global:labelSink = New-Object System.Collections.ArrayList
+function global:Add-TileRows($p, $target, $list) {
     $pendingHalf = $null
-    foreach ($btn in $p.items) {
-        $h = if ($btn.height) { [double]$btn.height } else { 80 }
-        $fs = if ($btn.fontSize) { [double]$btn.fontSize } else { 18 }
-        $el = New-Bevel $btn.bg (New-Content $btn $fs $h) $h
-        $el.ClipToBounds = $true; $el.ToolTip = $btn.target
-        Wire-Button $p $el ({ Invoke-Button $btn }.GetNewClosure())
-        $el.ContextMenu = Button-Menu $p $btn
+    foreach ($btn in $list) {
+        $el = New-Tile $p $btn
         if ($btn.width -eq 'half') {
             if ($pendingHalf) { [System.Windows.Controls.Grid]::SetColumn($el, 1); [void]$pendingHalf.Children.Add($el); $pendingHalf = $null }
             else {
                 $g = New-Object System.Windows.Controls.Grid
                 [void]$g.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition))
                 [void]$g.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition))
-                [void]$g.Children.Add($el); [void]$stack.Children.Add($g); $pendingHalf = $g
+                [void]$g.Children.Add($el); [void]$target.Children.Add($g); $pendingHalf = $g
             }
-        } else { $pendingHalf = $null; [void]$stack.Children.Add($el) }
+        } else { $pendingHalf = $null; [void]$target.Children.Add($el) }
+    }
+}
+
+function global:Build-Panel($p) {
+    $stack = $p.stack; $stack.Children.Clear()
+    $global:labelSink = New-Object System.Collections.ArrayList
+    $normal = @($p.items | Where-Object { -not (Test-DangerButton $_) })
+    $danger = @($p.items | Where-Object { Test-DangerButton $_ })
+    Add-TileRows $p $stack $normal
+    if ($danger.Count) {   # Restarts: grouped at the very bottom, 12 px gap, caption, red-tinted outlined group
+        $cap = New-Object System.Windows.Controls.TextBlock; $cap.Text = 'Restarts'; $cap.FontFamily = $global:UiFont
+        $cap.FontWeight = [System.Windows.FontWeights]::SemiBold; $cap.FontSize = 12; $cap.Tag = [double]12; $cap.Foreground = Brush '#A0A0A0'
+        $cap.Margin = $(if ($normal.Count) { '6,12,0,2' } else { '6,0,0,2' }); [void]$global:labelSink.Add($cap); [void]$stack.Children.Add($cap)
+        $dz = New-Object System.Windows.Controls.Border; $dz.CornerRadius = '10'; $dz.Padding = '0'
+        $dz.Background = Brush '#24B3261E'; $dz.BorderBrush = Brush '#73B3261E'; $dz.BorderThickness = '1'
+        $inner = New-Object System.Windows.Controls.StackPanel; $dz.Child = $inner
+        Add-TileRows $p $inner $danger
+        [void]$stack.Children.Add($dz)
     }
     if ($p.items.Count -eq 0) {
         $e = New-Object System.Windows.Controls.TextBlock; $e.Text = 'Empty panel - right-click to add a button'; $e.Foreground = Brush '#AAAAAA'
-        $e.Margin = '10,20'; $e.TextWrapping = 'Wrap'; [void]$stack.Children.Add($e)
+        $e.FontFamily = $global:UiFont; $e.Margin = '10,20'; $e.TextWrapping = 'Wrap'; [void]$stack.Children.Add($e)
     }
     $p.labels = $global:labelSink; $global:labelSink = $null; Apply-MinFont $p
     $pm = New-Object System.Windows.Controls.ContextMenu; Panel-Menu $p $pm; $p.win.ContextMenu = $pm
@@ -762,12 +874,23 @@ function global:Open-Panel($pc) {
     $w.Title = if ($pc.name) { $pc.name } else { 'Panel' }
     $w.SizeToContent = 'WidthAndHeight'; $w.WindowStartupLocation = 'Manual'; $w.Left = -32000; $w.Top = -32000
     $w.Topmost = [bool]$pc.alwaysOnTop
-    $bgc = if ($pc.background) { $pc.background } else { '#000000' }
-    $edge = New-Object System.Windows.Controls.Border; $edge.Background = Brush '#3A3A3A'; $edge.Padding = '4'
-    $dock = New-Object System.Windows.Controls.DockPanel; $dock.Background = Brush $bgc; $dock.Width = $global:BaseWidth
-    $grip = New-Object System.Windows.Controls.Border; $grip.Height = 14; $grip.Background = Brush '#555555'; $grip.Cursor = 'SizeAll'
-    $gt = New-Object System.Windows.Controls.TextBlock; $gt.Text = [string][char]0x2261 + '  ' + $w.Title + '  (drag to move)'; $gt.FontSize = 10
-    $gt.Foreground = Brush '#DDDDDD'; $gt.HorizontalAlignment = 'Center'; $gt.VerticalAlignment = 'Center'; $grip.Child = $gt
+    # Option B panel: #141414, 6 px padding, 14 px rounded corners. Rounded corners need a per-pixel-alpha window
+    # (AllowsTransparency); "squarePanels": true in buttons.json (menu: Setup > Square panel corners) turns that off for slow PCs.
+    $bgc = if ($pc.background -and ([string]$pc.background).ToUpperInvariant() -ne '#000000') { $pc.background } else { $global:Theme.panel }
+    $square = [bool]$global:cfg.squarePanels
+    if (-not $square) { $w.AllowsTransparency = $true; $w.Background = [System.Windows.Media.Brushes]::Transparent }
+    else { $w.Background = Brush $bgc }
+    $edge = New-Object System.Windows.Controls.Border; $edge.Background = Brush $bgc; $edge.Padding = '3'
+    $edge.CornerRadius = if ($square) { '0' } else { '14' }
+    $dock = New-Object System.Windows.Controls.DockPanel; $dock.Width = $global:BaseWidth - 6
+    # Edit mode: 28 px amber "Editing" bar (also the drag handle). Locked: hidden, so the panel is clean.
+    $grip = New-Object System.Windows.Controls.Border; $grip.Height = 28; $grip.Background = Brush $global:Theme.amber; $grip.Cursor = 'SizeAll'
+    $grip.CornerRadius = '8'; $grip.Margin = '3,3,3,3'; $grip.Padding = '10,0'
+    $grip.ToolTip = 'Editing: right-click a button to change it. Lock when done. Drag this bar to move the panel.'
+    $gt = New-Object System.Windows.Controls.TextBlock; $gt.Text = 'Editing: right-click a button to change it. Lock when done.'
+    $gt.FontFamily = $global:UiFont; $gt.FontWeight = [System.Windows.FontWeights]::SemiBold; $gt.FontSize = 12
+    $gt.TextTrimming = 'CharacterEllipsis'; $gt.TextWrapping = 'NoWrap'
+    $gt.Foreground = Brush $global:Theme.editText; $gt.VerticalAlignment = 'Center'; $grip.Child = $gt
     [System.Windows.Controls.DockPanel]::SetDock($grip, 'Top'); [void]$dock.Children.Add($grip)
     $stack = New-Object System.Windows.Controls.StackPanel; [void]$dock.Children.Add($stack)
     $scale = New-Object System.Windows.Media.ScaleTransform 1, 1
@@ -796,6 +919,30 @@ function global:Open-Panel($pc) {
     Build-Panel $p
     $w.Show()
     return $p
+}
+
+# Option B: Start Jartrek Security moves above the Restarts group. Only a buttons.json whose bottom panel still has the
+# exact old default order (same labels, same order) is migrated; anything the user rearranged is left alone.
+function global:Update-OldDefaultOrder {
+    if ([int]$global:cfg.layoutVersion -ge 2) { return }
+    $old = @("BACK OFFICE`nUSER GUIDE`nVERSION 11", "REGISTER`nUSER GUIDE`nVERSION 11", 'PLCE', "DEPARTMENT`nOF`nREVENUE",
+             "RESTART`nSCREEN CONNECT", "START`nJARTREK`nSECURITY", "RESTART`nCOMPUTER")
+    $changed = $false
+    foreach ($pc in @($global:cfg.panels)) {
+        $bs = @($pc.buttons); $labels = @($bs | ForEach-Object { ([string]$_.label) -replace '\r', '' })
+        if ($labels.Count -ne $old.Count) { continue }
+        $same = $true; for ($i = 0; $i -lt $old.Count; $i++) { if ($labels[$i] -cne $old[$i]) { $same = $false; break } }
+        if (-not $same) { continue }
+        $sec = $bs[5]; Set-Prop $sec 'width' 'full'; Set-Prop $sec 'height' 80
+        foreach ($r in $bs[4], $bs[6]) { Set-Prop $r 'width' 'half'; Set-Prop $r 'height' 92; Set-Prop $r 'group' 'danger' }
+        $pc.buttons = @($bs[0], $bs[1], $bs[2], $bs[3], $sec, $bs[4], $bs[6]); $changed = $true
+    }
+    Set-Prop $global:cfg 'layoutVersion' 2
+    if ($changed) { Add-Content -LiteralPath $global:logPath -Value ("{0}  moved Start Jartrek Security above the Restarts (old default order)" -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
+    # No panels are open yet, so Save-Config (which rebuilds the list from open panels) can't be used here.
+    $tmp = $global:cfgPath + '.tmp'
+    [IO.File]::WriteAllText($tmp, ($global:cfg | ConvertTo-Json -Depth 12), (New-Object Text.UTF8Encoding $false))
+    if (Test-Path -LiteralPath $global:cfgPath) { [IO.File]::Replace($tmp, $global:cfgPath, $global:cfgPath + '.bak') } else { [IO.File]::Move($tmp, $global:cfgPath) }
 }
 
 # Second launch (Start menu, exe, shortcut) while running: show every panel and bring it to the front.
@@ -885,6 +1032,7 @@ try {
         Add-Content -LiteralPath $global:logPath -Value ("{0}  buttons.json unreadable ({1}); loaded buttons.json.bak" -f (Get-Date -Format s), $why) -ErrorAction SilentlyContinue
     }
     if (-not $global:cfg.panels) { throw 'buttons.json has no "panels" list.' }
+    Update-OldDefaultOrder
     if ($global:cfg.clickSound -eq $null) { $global:cfg | Add-Member -NotePropertyName clickSound -NotePropertyValue $false }
     if ($global:cfg.locked -eq $null) { $global:cfg | Add-Member -NotePropertyName locked -NotePropertyValue $true }
 
@@ -892,8 +1040,6 @@ try {
         $dpiNote = Join-Path $global:here 'launcher-dpi.log'
         if (-not (Test-Path -LiteralPath $dpiNote)) { Set-Content -LiteralPath $dpiNote -Value ("{0}  SetProcessDpiAwarenessContext(PMv2) returned false (host manifest already set DPI mode)." -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
     }
-    $global:RaisedBrush = New-BevelBrush $false
-    $global:SunkenBrush = New-BevelBrush $true
 
     $global:app = New-Object System.Windows.Application
     $global:app.ShutdownMode = 'OnExplicitShutdown'
