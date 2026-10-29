@@ -14,7 +14,7 @@ SetCompressor /SOLID lzma
 !define KEYNAME "ButtonLauncher"
 !define UNKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall"
 !define RUNKEY "Software\Microsoft\Windows\CurrentVersion\Run"
-!define PS `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command`
+!define PS `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command`
 
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
@@ -115,7 +115,10 @@ FunctionEnd
     StrCpy $R8 0
     Push "${dir}"
     Call ${un}WalkLinks
+    StrCpy $R6 "${dir}"
+    Call ${un}IsLink                 ; R13-L1: re-check the root right before RMDir /r
     ${If} $R8 = 0
+    ${AndIf} $R5 = 0
       RMDir /r "${dir}"
     ${Else}
       DetailPrint "Not removed (links left inside): ${dir}"
@@ -130,7 +133,20 @@ Var WantDesk
 
 Function .onInit
   SetShellVarContext current
+  ${If} "$LOCALAPPDATA" == ""
+    MessageBox MB_OK|MB_ICONSTOP "Setup stopped: this account has no local application data folder." /SD IDOK
+    SetErrorLevel 1
+    Quit
+  ${EndIf}
   StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APPNAME}"   ; fixed location (no /D override)
+  ; R14-L3: never merge into some other app's Programs\Launcher
+  ${If} ${FileExists} "$INSTDIR\*.*"
+  ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
+  ${AndIfNot} ${FileExists} "$INSTDIR\.buttonlauncher"
+    MessageBox MB_OK|MB_ICONSTOP "Setup stopped: $INSTDIR already exists and isn't a Button Launcher install, so nothing was changed." /SD IDOK
+    SetErrorLevel 1
+    Quit
+  ${EndIf}
   ${IfNot} ${Silent}
     MessageBox MB_OKCANCEL|MB_ICONQUESTION "Install ${APPNAME} for this user?$\n$\nIt goes in the Start menu and starts with Windows (you can turn that off: unlock, right-click a panel > Start with Windows)." IDOK +2
     Abort
@@ -171,8 +187,21 @@ Section "Install"
   System::Call 'kernel32::GetTickCount()i.r1'
   StrCpy $Stage "$INSTDIR.new-$1"
   StrCpy $Old "$INSTDIR.old-$1"
-  StrCpy $Keep "$PLUGINSDIR\keep"
+  StrCpy $Keep "$INSTDIR.pictures-backup-$1"   ; beside the install, so a failed restore never loses pictures (R14-M1)
   CreateDirectory "$LOCALAPPDATA\Programs"
+  ; Nit: clean up stage/old folders left by an interrupted earlier run (never the pictures backups)
+  FindFirst $3 $4 "$INSTDIR.new-*"
+  ${DoWhile} $4 != ""
+    !insertmacro SAFE_RMDIR "" "$LOCALAPPDATA\Programs\$4"
+    FindNext $3 $4
+  ${Loop}
+  FindClose $3
+  FindFirst $3 $4 "$INSTDIR.old-*"
+  ${DoWhile} $4 != ""
+    !insertmacro SAFE_RMDIR "" "$LOCALAPPDATA\Programs\$4"
+    FindNext $3 $4
+  ${Loop}
+  FindClose $3
   CreateDirectory "$Stage"
   ${If} ${FileExists} "$INSTDIR\*.*"
     StrCpy $R6 "$INSTDIR"
@@ -201,9 +230,21 @@ Section "Install"
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$Stage")i'
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_KEEP", t "$Keep")i'
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_KNOWN", t "$PLUGINSDIR\known-pictures.txt")i'
+    System::Call 'kernel32::SetEnvironmentVariable(t "BL_OK", t "$PLUGINSDIR\saved.ok")i'
     SetOutPath "$TEMP"
     nsExec::ExecToLog `${PS} "& {${PICS_SAVE}}"`
     Pop $0
+    ; R14-M1: proceed only on exit 0 AND the success file the script writes last (a stub or blocked PowerShell writes neither)
+    ${If} $0 != 0
+    ${OrIfNot} ${FileExists} "$PLUGINSDIR\saved.ok"
+      !insertmacro SAFE_RMDIR "" "$Stage"
+      !insertmacro SAFE_RMDIR "" "$Keep"
+      StrCpy $R9 "${APPNAME} could not be updated: Setup could not check your pictures (PowerShell did not run: $0).$\n$\nYour current install was not changed, so no pictures were lost."
+      Call Fail
+    ${EndIf}
+    StrCpy $5 1                                 ; 1 = pictures were set aside in $Keep
+  ${Else}
+    StrCpy $5 0
   ${EndIf}
   Delete "$Stage\Uninstall.ps1"                 ; older IExpress uninstaller; Uninstall.exe replaces it
   ClearErrors
@@ -216,10 +257,22 @@ Section "Install"
     StrCpy $R9 "${APPNAME} could not be installed: unpacking the files failed.$\n$\nNothing was added to the Start menu or the registry. Your current install was not changed."
     Call Fail
   ${EndIf}
-  System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$Stage")i'
-  SetOutPath "$TEMP"                            ; child cwd must not be the stage, or the swap rename fails
-  nsExec::ExecToLog `${PS} "& {${PICS_RESTORE}}"`
-  Pop $0
+  FileOpen $9 "$Stage\.buttonlauncher" w     ; R14-L3 marker
+  FileWrite $9 "Button Launcher ${VERSION}$\r$\n"
+  FileClose $9
+  ${If} $5 = 1
+    System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$Stage")i'
+    System::Call 'kernel32::SetEnvironmentVariable(t "BL_OK", t "$PLUGINSDIR\restored.ok")i'
+    SetOutPath "$TEMP"                          ; child cwd must not be the stage, or the swap rename fails
+    nsExec::ExecToLog `${PS} "& {${PICS_RESTORE}}"`
+    Pop $0
+    ${If} $0 != 0
+    ${OrIfNot} ${FileExists} "$PLUGINSDIR\restored.ok"
+      !insertmacro SAFE_RMDIR "" "$Stage"
+      StrCpy $R9 "${APPNAME} could not be updated: putting your pictures back failed ($0).$\n$\nYour current install was not changed. A copy of your changed pictures is kept in:$\n$Keep"
+      Call Fail
+    ${EndIf}
+  ${EndIf}
   ${IfNot} ${FileExists} "$Stage\buttons.json"
     CopyFiles /SILENT "$Stage\buttons.default.json" "$Stage\buttons.json"   ; first install only (R-M2)
   ${EndIf}
@@ -262,6 +315,9 @@ Section "Install"
   ${EndIf}
   ${If} $2 = 1
     !insertmacro SAFE_RMDIR "" "$Old"
+  ${EndIf}
+  ${If} $5 = 1
+    !insertmacro SAFE_RMDIR "" "$Keep"          ; pictures are in the new install now
   ${EndIf}
   SetOutPath "$INSTDIR"
 
@@ -316,8 +372,14 @@ SectionEnd
 Function un.onInit
   SetShellVarContext current
   ; Refuse unless this is exactly %LOCALAPPDATA%\Programs\Launcher with Launcher.ps1 in it (same guard as Uninstall.ps1)
-  ${If} "$INSTDIR" != "$LOCALAPPDATA\Programs\${APPNAME}"
-  ${OrIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
+  StrCpy $0 0
+  ${If} ${FileExists} "$INSTDIR\Launcher.ps1"
+  ${OrIf} ${FileExists} "$INSTDIR\.buttonlauncher"
+    StrCpy $0 1
+  ${EndIf}
+  ${If} "$LOCALAPPDATA" == ""
+  ${OrIf} "$INSTDIR" != "$LOCALAPPDATA\Programs\${APPNAME}"
+  ${OrIf} $0 = 0
     MessageBox MB_OK "Uninstall stopped: this doesn't look like the ${APPNAME} install folder.$\n$INSTDIR" /SD IDOK
     SetErrorLevel 1
     Quit
@@ -330,7 +392,7 @@ Function un.onInit
     Quit
   ${EndIf}
   ${IfNot} ${Silent}
-    MessageBox MB_YESNO "Remove ${APPNAME}?" IDYES +2
+    MessageBox MB_YESNO "Remove ${APPNAME}?$\n$\nThis deletes the whole install folder, including your buttons (buttons.json) and any pictures you added." IDYES +2
     Quit
   ${EndIf}
 FunctionEnd

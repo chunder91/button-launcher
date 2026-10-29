@@ -212,5 +212,5 @@ $nat2 = $src.Substring(0, $src.IndexOf("'@"))
 Check 'R12-L2: BL.Native still has no WindowsBase' ($nat2 -notmatch 'WindowsBase|Dispatcher|ReferencedAssemblies')
 Check 'R12-N1: WatchHandle and WatchResume in separate trys' ($src -match '(?s)\[BL\.Waits\]::WatchHandle\([^\n]*\$showWatch = \$true\s+\} catch \{' -and $src -match "try \{ if \('BL\.Waits' -as \[type\]\) \{ \[BL\.Waits\]::WatchResume")
 $vw = Get-Content (Join-Path $root 'tools/verify-waits.sh') -Raw
-Check 'R12-L1: verify-waits builds without node reuse / shared compiler, offline when cached, shuts build servers' ($vw -match '-nodeReuse:false' -and $vw -match 'UseSharedCompilation=false' -and $vw -match 'RestoreSources' -and $vw -match 'build-server shutdown')
+Check 'R12-L1: verify-waits builds without node reuse / shared compiler, offline when cached, never shuts build servers (R14-L1)' ($vw -match '-nodeReuse:false' -and $vw -match 'UseSharedCompilation=false' -and $vw -match 'RestoreSources' -and $vw -notmatch 'build-server shutdown')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

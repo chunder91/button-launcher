@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Builds the per-user NSIS installer from a committed tree, reproducibly (same commit -> same bytes).
-# Usage: tools/build-nsis.sh [commit=HEAD] [outdir=installer-output]. Needs makensis (apt nsis), python3, pwsh, git.
+# Usage: tools/build-nsis.sh [--any-makensis] [commit=HEAD] [outdir=installer-output] (releases: outdir outside the clone). Needs makensis (apt nsis), python3, pwsh, git.
 # Payload = the files Build-Installer.ps1 ships minus Build-Installer.ps1 itself (a build tool; AV flags it). No tests, no tools. No network access.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
+anyv=0; [ "${1:-}" = "--any-makensis" ] && { anyv=1; shift; }
 rev="${1:-HEAD}"; out="${2:-$root/installer-output}"
+mv="$(makensis -VERSION)"   # R14-L4: reproducible only with the same NSIS
+case "$mv" in v3.11|v3.11-*) ;; *) [ "$anyv" = 1 ] || { echo "FAIL: makensis $mv, need v3.11 (or pass --any-makensis)"; exit 1; };; esac
 commit="$(git -C "$root" rev-parse "$rev")"
 ver="$(sed -n "s/^\$AppVersion = '\([0-9.]*\)'.*/\1/p" "$root/Build-Installer.ps1")"
 [ -n "$ver" ] || { echo "FAIL: AppVersion not found in Build-Installer.ps1"; exit 1; }
@@ -35,7 +38,7 @@ open(os.path.join(tmp, 'known-pictures.txt'), 'w', newline='\r\n').write(''.join
 def nsis(name):
     s = open(os.path.join(tmp, 'installer', name)).read().strip()
     assert '"' not in s and '`' not in s and '\n' not in s, name
-    assert len(s) < 800, name
+    assert len(s) < 800, name   # NSIS_MAX_STRLEN 1024 incl. the powershell path and flags
     return s.replace('$', '$$')
 lines = ['!define VERSION "%s"' % sys.argv[4] if len(sys.argv) > 4 else '']
 g = open(os.path.join(tmp, 'generated.nsh'), 'w')
