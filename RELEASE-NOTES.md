@@ -13,6 +13,7 @@ Pending review (build of 2026-10-29). Includes everything in v1.3.0. Waiting on 
 - **Turning it off** (untick the box, Save, Yes) clears the badge and forgets the login on this PC.
 - Clicking Email still opens your email exactly as before.
 - **Start Jartrek Security is gone.** In its spot there's a row of 2 buttons you set up yourself: click **+ Add** (or right-click > Add a button here...) and pick a Program, a Website (http or https) or a File, a name and a picture. Right-click a button to edit it or remove it. With both empty, right-click > Remove this row hides the row and the Restarts move up; Setup > Add the row of 2 custom buttons brings it back. These buttons never run scripts, take no command-line arguments and never run as admin. Upgrading keeps every other button as it is and saves your old buttons.json as buttons.json.pre-v1.4.bak.
+- **View Register finds computers on a local-only network.** The scan now also checks a wired or Wi-Fi connection that has no internet (no gateway), like a separate register network. Each network is still asked about once, and only its own /24 is checked. VPN, virtual and self-assigned (169.254) connections are still skipped.
 - **Fixed:** opening Setup > Unread email count... showed "The property 'Background' cannot be found on this object". The same fix covers Setup > View-only password and Add a computer.
 
 ## v1.3.0: find computers you can view automatically, new 3D look

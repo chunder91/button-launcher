@@ -11,7 +11,7 @@ $fns = 'Set-Prop', 'Get-ButtonType', 'Test-VncIPv4', 'Test-VncHost', 'Get-VncPor
        'Save-VncFavorites', 'Set-VncFavorite', 'Read-VncCache', 'Save-VncCache', 'Test-VncCacheStale', 'Merge-VncRows', 'Test-VncPickerButton',
        'Test-VncAdapter', 'Get-VncRangeText', 'Get-VncNewRanges', 'Test-VncAutoScan', 'Test-VncBannerText', 'Get-VncDisplayName', 'Get-VncInvalidText',
        'Get-VncRowView', 'Get-VncShortName', 'Get-VncFoundText', 'Test-VncUsePassword', 'Get-VncWorkerFault', 'Get-VncTempAction', 'Remove-VncTempDir',
-       'Get-VncSubnetGateway', 'Get-VncRangeKey', 'Get-VncRangeState', 'Get-VncAgeText', 'Test-VncRangeKeyCurrent', 'ConvertTo-VncGatewayId', 'Select-VncGatewayMac'
+       'Get-VncSubnetGateway', 'Get-VncRangeKey', 'Get-VncRangeState', 'Get-VncAgeText', 'Test-VncRangeKeyCurrent', 'ConvertTo-VncGatewayId', 'Select-VncGatewayMac', 'ConvertTo-VncNicId'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
@@ -159,9 +159,9 @@ foreach ($d in 'Cisco AnyConnect Secure Mobility Client Virtual Miniport Adapter
                'Npcap Loopback Adapter', 'Zscaler Network Adapter', 'OpenVPN Data Channel Offload', 'Tailscale Tunnel', 'ZeroTier Virtual Port', 'WAN Miniport (IKEv2)') {
     Check "H1: '$d' never scanned" (-not (Test-VncAdapter 'Ethernet' $d 'Ethernet 2' '192.168.1.37' 24 @('192.168.1.1'))) }
 foreach ($n in 'vEthernet (WSL)', 'vEthernet (Default Switch)', 'VPN - Office', 'tun0', 'WSL') { Check "H1: adapter named '$n' never scanned" (-not (Test-VncAdapter 'Ethernet' 'Generic adapter' $n '172.20.1.5' 20 @('172.20.0.1'))) }
-Check 'H1: no gateway -> not scanned' (-not (Test-VncAdapter 'Ethernet' 'Realtek PCIe GbE' 'Ethernet' '192.168.1.37' 24 @()))
+Check 'v1.4.0: physical Ethernet with no gateway (isolated register LAN) -> scanned' ((Test-VncAdapter 'Ethernet' 'Realtek PCIe GbE' 'Ethernet' '192.168.1.37' 24 @()))
 Check 'H1: gateway outside the subnet -> not scanned' (-not (Test-VncAdapter 'Ethernet' 'Realtek PCIe GbE' 'Ethernet' '192.168.1.37' 24 @('192.168.2.1')))
-Check 'H1: 0.0.0.0 gateway ignored' (-not (Test-VncAdapter 'Ethernet' 'Realtek PCIe GbE' 'Ethernet' '192.168.1.37' 24 @('0.0.0.0')))
+Check 'v1.4.0: 0.0.0.0 gateway counts as no gateway -> scanned' (Test-VncAdapter 'Ethernet' 'Realtek PCIe GbE' 'Ethernet' '192.168.1.37' 24 @('0.0.0.0'))
 Check 'H1: public address -> not scanned' (-not (Test-VncAdapter 'Ethernet' 'Realtek PCIe GbE' 'Ethernet' '8.8.4.4' 24 @('8.8.4.1')))
 Check 'range text /24 default' ((Get-VncRangeText '192.168.1.37' 24 $null) -eq '192.168.1.0/24' -and (Get-VncRangeText '10.5.6.7' 16 $null) -eq '10.5.6.0/24')
 Check 'range text /22 setting, /26 adapter' ((Get-VncRangeText '10.5.6.7' 16 22) -eq '10.5.4.0/22' -and (Get-VncRangeText '192.168.1.70' 26 24) -eq '192.168.1.64/26')
@@ -341,4 +341,38 @@ Check 'Squint recheck: name column tooltip + 12 px gap before Address' ($src -ma
 $d7Lines = @(($src -split "`n") | ForEach-Object { ($_ -replace '(^|\s)#\s.*$', '') } | ForEach-Object { $_ -creplace 'View Register|VIEW REGISTER|Register \d|register\.png|REGISTER`nUSER GUIDE', '' } | Where-Object { $_ -match 'shop network|\bregisters?\b' })
 Check 'delta 7: View Register tile/window name unchanged' ($src -match "'View Register'")
 Check 'delta 7: no picker UI string says "shop network", "register" or "registers" (comments, View Register, the "Register 1" name example register.png and the old REGISTER guide-art label allowed); title, Rescan tooltip and no-network copy updated' ($d7Lines.Count -eq 0 -and $src -match [regex]::Escape('ToolTip="Look for computers you can view on this network again (F5)"') -and $src -match [regex]::Escape("'No local network found on this PC, so nothing was scanned.'"))
+# --- v1.4.0 (Charles): isolated register LANs with no default gateway are scanned too ---
+Check 'no-gateway Wi-Fi -> scanned' (Test-VncAdapter 'Wireless80211' 'Intel(R) Wi-Fi 6 AX201' 'Wi-Fi' '192.168.50.20' 24 @())
+foreach ($d in 'Hyper-V Virtual Ethernet Adapter', 'TAP-Windows Adapter V9', 'WireGuard Tunnel', 'Microsoft KM-TEST Loopback Adapter', 'VirtualBox Host-Only Ethernet Adapter', 'Cisco AnyConnect Virtual Miniport Adapter') {
+    Check "no gateway still excludes '$d'" (-not (Test-VncAdapter 'Ethernet' $d 'Ethernet 9' '192.168.56.1' 24 @())) }
+foreach ($ty in 'Loopback', 'Tunnel', 'Ppp') { Check "no gateway still excludes type $ty" (-not (Test-VncAdapter $ty 'x' 'x' '192.168.50.20' 24 @())) }
+Check 'no gateway: APIPA 169.254 excluded' (-not (Test-VncAdapter 'Ethernet' 'Realtek PCIe GbE' 'Ethernet' '169.254.10.20' 16 @()))
+Check 'no gateway: public address excluded' (-not (Test-VncAdapter 'Ethernet' 'Realtek PCIe GbE' 'Ethernet' '8.8.4.4' 24 @()))
+Check 'no gateway: /31-/32 still excluded' (-not (Test-VncAdapter 'Ethernet' 'Realtek PCIe GbE' 'Ethernet' '192.168.50.20' 31 @()))
+Check 'no gateway /16 adapter still scans only its /24' ((Get-VncRangeText '10.20.30.40' 16 24) -eq '10.20.30.0/24' -and @(Get-VncScanTargets '10.20.30.40' 16 24).Count -eq 253)
+Check 'nic id: MAC -> nic=aa-bb-..; bad/zero MAC -> empty' ((ConvertTo-VncNicId '00155D0A0B0C') -eq 'nic=00-15-5d-0a-0b-0c' -and (ConvertTo-VncNicId 'AA:BB:CC:DD:EE:FF') -eq 'nic=aa-bb-cc-dd-ee-ff' -and (ConvertTo-VncNicId '000000000000') -eq '' -and (ConvertTo-VncNicId 'zz') -eq '')
+$kIso = Get-VncRangeKey '192.168.50.0/24' '' '' (ConvertTo-VncNicId '00155D0A0B0C')
+Check 'no-gateway key is stable and keeps the nic id' ($kIso -eq '192.168.50.0/24|gw=|id=nic=00-15-5d-0a-0b-0c|dns=' -and $kIso -eq (Get-VncRangeKey '192.168.50.0/24' '' '' 'nic=00-15-5d-0a-0b-0c') -and (Test-VncRangeKeyCurrent $kIso))
+Check 'no-gateway key differs from a gateway network with the same numbers' ($kIso -ne (Get-VncRangeKey '192.168.50.0/24' '192.168.50.1' '' 'mac=aa-bb-cc-00-11-22'))
+$ls = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-VncLocalSubnets' }, $true).Extent.Text
+Check 'local subnets: no-gateway id from .NET (GetPhysicalAddress), no NetTCPIP cmdlet, label says local only' ($ls.Contains('ConvertTo-VncNicId ($nic.GetPhysicalAddress().ToString())') -and $ls -notmatch 'Get-Net' -and $ls.Contains("', local only'"))
+# Get-VncScanPlan with 3 adapters (gateway LAN, isolated register LAN, a duplicate address on the isolated LAN): each network asked once
+if (-not ('System.Windows.MessageBox' -as [type])) { Add-Type -TypeDefinition 'namespace System.Windows { public static class MessageBox { public static int Calls; public static string Answer = "Yes"; public static System.Collections.Generic.List<string> Texts = new System.Collections.Generic.List<string>(); public static string Show(string t, string c, string b, string i, string d) { Calls++; Texts.Add(t); return Answer; } } }' }
+if ([System.Windows.MessageBox].GetField('Calls')) {
+    $global:cfg = [pscustomobject]@{ vnc = [pscustomobject]@{} }; function global:Save-Config {}
+    $sp = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-VncScanPlan' }, $true).Extent.Text; Invoke-Expression $sp
+    function global:Get-VncLocalSubnets { @(@{ ip = '192.168.1.37'; prefix = 24; label = 'Ethernet'; gw = '192.168.1.1'; dns = ''; gwId = 'mac=aa-bb-cc-00-11-22' },
+                                            @{ ip = '192.168.50.20'; prefix = 24; label = 'Ethernet, local only'; gw = ''; dns = ''; gwId = 'nic=00-15-5d-0a-0b-0c' },
+                                            @{ ip = '192.168.50.21'; prefix = 24; label = 'Ethernet, local only'; gw = ''; dns = ''; gwId = 'nic=00-15-5d-0a-0b-0c' }) }
+    $ui = @{ state = @{ prefix = 24; port = 5900; confirmed = @(); declined = @() } }
+    [System.Windows.MessageBox]::Calls = 0; $pl = Get-VncScanPlan $ui $false
+    Check 'two real adapters: both /24s scanned, labelled by network' ($pl.ranges.Count -eq 2 -and ($pl.labels -join ';') -eq '192.168.1.0/24 (Ethernet);192.168.50.0/24 (Ethernet, local only)' -and $pl.targets -contains '192.168.1.10' -and $pl.targets -contains '192.168.50.10')
+    Check 'each network asked once (2 prompts, the duplicate on the same network not asked again)' ([System.Windows.MessageBox]::Calls -eq 2 -and $ui.state.confirmed.Count -eq 2)
+    [System.Windows.MessageBox]::Calls = 0; $pl = Get-VncScanPlan $ui $false
+    Check 'next open: no prompts, both still scanned' ([System.Windows.MessageBox]::Calls -eq 0 -and $pl.ranges.Count -eq 2)
+    Check 'scan targets stay inside each /24 (no .0, .255, no other range)' (-not @($pl.targets | Where-Object { $_ -notmatch '^192\.168\.(1|50)\.([1-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])$' }).Count)
+    $ui.state.confirmed = @(); [System.Windows.MessageBox]::Answer = 'No'; [System.Windows.MessageBox]::Calls = 0; $pl = Get-VncScanPlan $ui $false
+    Check 'declined: nothing scanned, each network remembered as declined' ($pl.targets.Count -eq 0 -and $ui.state.declined.Count -eq 2 -and [System.Windows.MessageBox]::Calls -eq 2)
+    [System.Windows.MessageBox]::Answer = 'Yes'
+} else { 'SKIP  scan plan with a stub MessageBox (real WPF loaded)' }
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

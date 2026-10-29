@@ -1840,8 +1840,14 @@ function global:Test-VncAdapter([string]$type, [string]$desc, [string]$name, [st
     if (($desc -match $global:VncAdapterDeny) -or ($name -match $global:VncAdapterDeny)) { return $false }
     if (-not (Test-Rfc1918 $ip) -or $prefix -lt 1 -or $prefix -gt 30) { return $false }
     $size = [Math]::Pow(2, 32 - $prefix); $net = [Math]::Floor((ConvertTo-VncUInt $ip) / $size)
-    foreach ($g in @($gateways)) { $gs = [string]$g; if ((Test-VncIPv4 $gs) -and $gs -ne '0.0.0.0' -and [Math]::Floor((ConvertTo-VncUInt $gs) / $size) -eq $net) { return $true } }
-    return $false
+    $real = 0   # v1.4.0 (Charles): an isolated register LAN has no gateway at all; it is scanned too (ask once, its own key)
+    foreach ($g in @($gateways)) { $gs = [string]$g; if ((Test-VncIPv4 $gs) -and $gs -ne '0.0.0.0') { $real++; if ([Math]::Floor((ConvertTo-VncUInt $gs) / $size) -eq $net) { return $true } } }
+    return ($real -eq 0)   # gateways only outside the subnet (routed / odd setup): still not scanned
+}
+function global:ConvertTo-VncNicId($mac) {   # no-gateway network key: 'nic=<this adapter's MAC>', else ''
+    $m = ([string]$mac).Trim().ToLowerInvariant() -replace '[:-]', ''
+    if ($m -match '^[0-9a-f]{12}$' -and $m -ne '000000000000' -and $m -ne 'ffffffffffff') { return 'nic=' + (($m -split '(..)' | Where-Object { $_ }) -join '-') }
+    return ''
 }
 function global:Get-VncRangeText([string]$ip, [int]$adapterPrefix, $cfgPrefix) {   # '192.168.1.0/24' (the range Get-VncScanTargets covers)
     $p = [Math]::Max($adapterPrefix, (Get-VncPrefix $cfgPrefix)); $size = [Math]::Pow(2, 32 - $p)
@@ -1860,7 +1866,9 @@ function global:Get-VncLocalSubnets {   # @{ ip; prefix; label } for adapters th
             $lbl = if ([string]$nic.NetworkInterfaceType -eq 'Wireless80211') { 'Wi-Fi' } else { 'Ethernet' }
             $gw = Get-VncSubnetGateway $a $pl $gws
             $ix = $null; try { $ix = $props.GetIPv4Properties().Index } catch {}
-            $res += @{ ip = $a; prefix = $pl; label = $lbl; gw = $gw; dns = [string]$props.DnsSuffix; gwId = (Get-VncGatewayId $gw $ix) } } }
+            if ($gw) { $id = Get-VncGatewayId $gw $ix }
+            else { $lbl += ', local only'; $id = ''; try { $id = ConvertTo-VncNicId ($nic.GetPhysicalAddress().ToString()) } catch {} }   # .NET only: no NetTCPIP cmdlets needed
+            $res += @{ ip = $a; prefix = $pl; label = $lbl; gw = $gw; dns = [string]$props.DnsSuffix; gwId = $id } } }
     return $res
 }
 function global:Get-VncSubnetGateway([string]$ip, [int]$prefix, $gateways) {   # first IPv4 gateway inside the adapter's subnet, else ''
@@ -1870,7 +1878,7 @@ function global:Get-VncSubnetGateway([string]$ip, [int]$prefix, $gateways) {   #
 }
 function global:Get-VncRangeKey([string]$range, [string]$gw, [string]$dns, [string]$gwId) {   # R2-L1/R3-L1: same numbers on another network (home vs shop) ask again
     $d = ([string]$dns).Trim().ToLowerInvariant(); if ($d -notmatch '^[a-z0-9.-]{0,253}$') { $d = '?' }
-    $i = ([string]$gwId).Trim().ToLowerInvariant(); if ($i -notmatch '^(mac=[0-9a-f-]{17}|net=[a-z0-9 ._-]{1,64})?$') { $i = '?' }
+    $i = ([string]$gwId).Trim().ToLowerInvariant(); if ($i -notmatch '^(mac=[0-9a-f-]{17}|nic=[0-9a-f-]{17}|net=[a-z0-9 ._-]{1,64})?$') { $i = '?' }
     return ('{0}|gw={1}|id={2}|dns={3}' -f $range, $gw, $i, $d)
 }
 function global:Test-VncRangeKeyCurrent([string]$key) { $key -match '\|id=[^|]*\|dns=' }   # R3-L1 migration: keys saved before v1.3.0 round 3 count as unconfirmed
