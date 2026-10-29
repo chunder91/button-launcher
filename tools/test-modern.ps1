@@ -29,7 +29,7 @@ $pal = @{ '#3EC3EE' = '#0B6E99'; '#FFFF00' = '#FACC15'; '#FF0000' = '#C40000'; '
 foreach ($k in $pal.Keys) { Check "fill $k -> $($pal[$k])" ((Get-TileColors ([pscustomobject]@{ bg = $k; fg = '#FFFFFF' })).bg -eq $pal[$k]) }
 Check 'PLCE label is white (no gold on red)' ((Get-TileColors ([pscustomobject]@{ bg = '#FF0000'; fg = '#FFC000' })).fg -eq '#FFFFFF')
 Check 'Email label is #111111' ((Get-TileColors ([pscustomobject]@{ bg = '#FFFF00'; fg = '#000000' })).fg -eq '#111111')
-Check 'custom colour kept' ((Get-TileColors ([pscustomobject]@{ bg = '#123456'; fg = '#EEEEEE' })).bg -eq '#123456')
+Check 'custom colour kept' ((Get-TileColors ([pscustomobject]@{ bg = '#2D6B8C'; fg = '#EEEEEE' })).bg -eq '#2D6B8C')
 function Lum($hex) { $h = $hex.TrimStart('#'); $ch = foreach ($v in [Convert]::ToInt32($h.Substring(0,2),16), [Convert]::ToInt32($h.Substring(2,2),16), [Convert]::ToInt32($h.Substring(4,2),16)) { $x = $v / 255; if ($x -le 0.03928) { $x / 12.92 } else { [Math]::Pow(($x + 0.055) / 1.055, 2.4) } }; 0.2126 * $ch[0] + 0.7152 * $ch[1] + 0.0722 * $ch[2] }
 function Ratio($a, $b) { $l1 = Lum $a; $l2 = Lum $b; ([Math]::Max($l1, $l2) + 0.05) / ([Math]::Min($l1, $l2) + 0.05) }
 foreach ($k in $global:ModernFill.Keys) { $m = $global:ModernFill[$k]; $r = Ratio $m[0] $m[1]; Check ("AA {0} on {1}: {2:N2}:1" -f $m[1], $m[0], $r) ($r -ge 4.5) }
