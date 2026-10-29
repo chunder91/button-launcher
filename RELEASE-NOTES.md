@@ -4,18 +4,18 @@
 
 Pending review (build of 2026-10-29). Includes everything in v1.3.0. Waiting on the ClaudeCode and Lockjaw reviews, Charles's OK and a test on a real Windows PC.
 
-- **Off unless you turn it on.** Setup > Unread email count... (or right-click the Email button > Email count settings... once it's on). Nothing checks email, and nothing is sent anywhere, until someone turns it on for their own Windows login.
+- **Off unless you turn it on.** Setup > Unread email count... (or right-click the Email button > Unread email count... once it's on). Nothing checks email, and nothing is sent anywhere, until someone turns it on for their own Windows login.
 - **Your own Jartrek email.** Type the name part of your @jartrek.net address and the same password you use for webmail, press Test, then Save. Save only works after a good Test. The password is saved for this Windows user only, encrypted by Windows, and never in buttons.json or the log.
 - **Shared PCs.** The setup window warns that everyone who uses this Windows login on this PC will see how many unread emails the account has. The address shows only in the setup window, never on the button.
 - **The count.** A small black badge with a yellow number on the Email button shows how many unread emails are in your Inbox (99+ for 100 or more). It checks every 3 minutes, again 1 and 3 minutes after you click Email, once after the PC wakes up, and whenever you pick Check email now.
-- **When new mail arrives:** Flash the button 3 times (the default), Pulse the number, or Just show the number. It only moves when the count goes up, and it stops if you point at or click the button. With Windows animation effects off, it just shows the number.
+- **When new email arrives:** Flash the button 3 times (the default), Pulse the number, or Just show the number. It only moves when the count goes up, and it stops if you point at or click the button. With Windows animation effects off, it just shows the number.
 - **Problems are quiet and clear.** A small grey ring replaces the number when it can't sign in or can't reach email for about 6 minutes. Point at the button, or right-click it, to see why. If the sign-in fails it stops trying (so it can't lock your account) until Test or Check email now works.
 - **Turning it off** (untick the box, Save, Yes) clears the badge and forgets the login on this PC.
 - Clicking Email still opens your email exactly as before.
 
 ## v1.3.0: find computers you can view automatically, new 3D look
 
-Pending release (build of 2026-10-29). Includes everything in v1.2.0. ClaudeCode and Lockjaw passed; Kern's and Squint's fixes are in. Waiting on Charles's OK and a test on a real Windows PC.
+Released Oct 29, 2026 as a private pre-release. Includes everything in v1.2.0. ClaudeCode and Lockjaw passed; Kern's and Squint's fixes are in. Still needs a test on a real Windows PC.
 
 ### New look (Fluent 3D)
 - **Glassy panel and 3D buttons.** The panel is dark glass with a thin light edge. Buttons have a soft top shine, a gentle color fade and colorful 3D icons. The Red Dog button keeps the real Red Dog logo.

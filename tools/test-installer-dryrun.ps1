@@ -280,4 +280,11 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     Microsoft.PowerShell.Management\Remove-Item -LiteralPath $tb -Recurse -Force
 }
 foreach ($f in 'Add-Type','Get-CimInstance','Unblock-File','Start-Process','New-Item','Remove-Item','New-ItemProperty','Remove-ItemProperty','Get-ItemProperty','Convert-ForTest') { Microsoft.PowerShell.Management\Remove-Item -LiteralPath "function:$f" }
+# v1.4.0 (M14-I3): the NSIS uninstaller removes only this user's email count files from %LOCALAPPDATA%\ButtonLauncher
+$nsi = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'installer\launcher.nsi') -Raw
+$un = [regex]::Match($nsi, '(?s)Section "Uninstall".*?SectionEnd').Value
+$blLines = @(($un -split "`r?`n") | Where-Object { $_ -match 'LOCALAPPDATA\\ButtonLauncher' -and $_ -notmatch '^\s*;' } | ForEach-Object { $_.Trim() -replace '\s*;.*$', '' })
+Check 'uninstall: email-count.json, .dat and .*.tmp deleted from %LOCALAPPDATA%\ButtonLauncher' ($blLines -contains 'Delete "$LOCALAPPDATA\ButtonLauncher\email-count.json"' -and $blLines -contains 'Delete "$LOCALAPPDATA\ButtonLauncher\email-count.dat"' -and $blLines -contains 'Delete "$LOCALAPPDATA\ButtonLauncher\email-count.*.tmp"')
+Check 'uninstall: the ButtonLauncher folder only if empty (RMDir without /r), nothing else touched there' ($blLines -contains 'RMDir "$LOCALAPPDATA\ButtonLauncher"' -and $blLines.Count -eq 4 -and -not ($un -match 'RMDir /r "\$LOCALAPPDATA\\ButtonLauncher'))
+
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

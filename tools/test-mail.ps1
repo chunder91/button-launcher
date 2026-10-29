@@ -1,4 +1,4 @@
-# v1.4.0 unread email count: offline checks (no network, no real server, no real credentials).
+﻿# v1.4.0 unread email count: offline checks (no network, no real server, no real credentials).
 # IMAP quoting and CR/LF rejection, STATUS parsing, the session against a mock server, the state machine,
 # the copy, and source checks (no certificate bypass, nothing but LOGIN / STATUS / LOGOUT, no password in config or log).
 $ErrorActionPreference = 'Stop'
@@ -8,8 +8,8 @@ function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
 $fns = 'Get-ButtonType', 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker', 'Get-MailWorkerScript',
-       'New-MailState', 'Update-MailState', 'Step-MailResume', 'Get-MailNextDelaySec', 'Get-MailBadgeText', 'Get-MailBadgeWidth', 'Test-MailShowBadge', 'Test-MailShowRing',
-       'Get-MailMotion', 'Format-MailTime', 'Get-MailCountText', 'Get-MailTipLine', 'Get-MailMenuLine', 'Get-MailAccessName', 'Get-MailTestText', 'Format-MailLogLine',
+       'New-MailState', 'Get-MailFreshState', 'Update-MailState', 'Step-MailResume', 'Get-MailNextDelaySec', 'Get-MailBadgeText', 'Get-MailBadgeWidth', 'Test-MailShowBadge', 'Test-MailShowRing',
+       'Get-MailMotion', 'Format-MailTime', 'Get-MailCountText', 'Get-MailTipLine', 'Get-MailMenuLine', 'Get-MailAccessName', 'Get-MailTestText', 'Format-MailLogLine', 'Get-MailSecretPath', 'Get-MailSettingsPath', 'Remove-MailLogin',
        'Get-MailAddress', 'Test-MailAddress', 'Test-MailTile', 'ConvertTo-MailSettings', 'Get-MailSettingsJson'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
@@ -26,16 +26,16 @@ Check 'quote keeps spaces, braces, percent, star' ((Ascii (ConvertTo-ImapQuotedB
 foreach ($bad in "a`rb", "a`nb", "a`r`nb", ("a" + [char]0 + "b")) { $t = $false; try { [void](ConvertTo-ImapQuotedBytes $bad.ToCharArray()) } catch { $t = $true }; Check ("CR/LF/NUL rejected: " + ($bad -replace "`r", '\r' -replace "`n", '\n' -replace [char]0, '\0')) $t }
 Check 'non-ASCII needs a literal' ($null -eq (ConvertTo-ImapQuotedBytes ('caf' + [char]0xE9).ToCharArray()))
 Check 'tab needs a literal' ($null -eq (ConvertTo-ImapQuotedBytes "a`tb".ToCharArray()))
-$lb = Get-ImapLoginBytes 'cc@jartrek.net' $fake.ToCharArray()
-Check 'LOGIN quoted' ((Ascii $lb.cmd) -ceq "a1 LOGIN `"cc@jartrek.net`" `"$fake`"`r`n" -and $null -eq $lb.literal)
-$lb = Get-ImapLoginBytes 'cc@jartrek.net' 'x"y\z'.ToCharArray()
-Check 'LOGIN escapes the password' ((Ascii $lb.cmd) -ceq "a1 LOGIN `"cc@jartrek.net`" `"x\`"y\\z`"`r`n")
+$lb = Get-ImapLoginBytes 'test.user@example.invalid' $fake.ToCharArray()
+Check 'LOGIN quoted' ((Ascii $lb.cmd) -ceq "a1 LOGIN `"test.user@example.invalid`" `"$fake`"`r`n" -and $null -eq $lb.literal)
+$lb = Get-ImapLoginBytes 'test.user@example.invalid' 'x"y\z'.ToCharArray()
+Check 'LOGIN escapes the password' ((Ascii $lb.cmd) -ceq "a1 LOGIN `"test.user@example.invalid`" `"x\`"y\\z`"`r`n")
 $pw = ('p' + [char]0xE9 + 'ss')
-$lb = Get-ImapLoginBytes 'cc@jartrek.net' $pw.ToCharArray()
-Check 'LOGIN literal for non-ASCII: {5} + UTF-8 bytes + CRLF' ((Ascii $lb.cmd) -ceq "a1 LOGIN `"cc@jartrek.net`" {5}`r`n" -and [Text.Encoding]::UTF8.GetString($lb.literal) -ceq ($pw + "`r`n"))
-$t = $false; try { [void](Get-ImapLoginBytes 'cc@jartrek.net' "ab`r`nc a2 LOGOUT".ToCharArray()) } catch { $t = $true }; Check 'LOGIN: CR/LF in password throws (no command injection)' $t
-$t = $false; try { [void](Get-ImapLoginBytes "cc`r`n@jartrek.net" 'x'.ToCharArray()) } catch { $t = $true }; Check 'LOGIN: CR/LF in user throws' $t
-$t = $false; try { [void](Get-ImapLoginBytes ('c' + [char]0xE9 + '@jartrek.net') 'x'.ToCharArray()) } catch { $t = $true }; Check 'LOGIN: non-ASCII user throws' $t
+$lb = Get-ImapLoginBytes 'test.user@example.invalid' $pw.ToCharArray()
+Check 'LOGIN literal for non-ASCII: {5} + UTF-8 bytes + CRLF' ((Ascii $lb.cmd) -ceq "a1 LOGIN `"test.user@example.invalid`" {5}`r`n" -and [Text.Encoding]::UTF8.GetString($lb.literal) -ceq ($pw + "`r`n"))
+$t = $false; try { [void](Get-ImapLoginBytes 'test.user@example.invalid' "ab`r`nc a2 LOGOUT".ToCharArray()) } catch { $t = $true }; Check 'LOGIN: CR/LF in password throws (no command injection)' $t
+$t = $false; try { [void](Get-ImapLoginBytes "cc`r`n@example.invalid" 'x'.ToCharArray()) } catch { $t = $true }; Check 'LOGIN: CR/LF in user throws' $t
+$t = $false; try { [void](Get-ImapLoginBytes ('c' + [char]0xE9 + '@example.invalid') 'x'.ToCharArray()) } catch { $t = $true }; Check 'LOGIN: non-ASCII user throws' $t
 
 # --- tagged / STATUS parsing ---
 Check 'tagged OK' ((Get-ImapTagged 'a1 OK LOGIN completed' 'a1') -eq 'OK')
@@ -57,36 +57,36 @@ function New-Mock([string[]]$lines) {
     $m.write = { param([byte[]]$b) [void]$m.sent.Add([Text.Encoding]::UTF8.GetString($b)) }.GetNewClosure()
     return $m }
 $m = New-Mock @('* OK [CAPABILITY IMAP4rev1] Dovecot ready.', '* CAPABILITY IMAP4rev1 IDLE', 'a1 OK [CAPABILITY IMAP4rev1] Logged in', '* STATUS INBOX (UNSEEN 3)', 'a2 OK Status completed.', '* BYE Logging out', 'a3 OK Logout completed.')
-$r = Invoke-ImapSession $m.read $m.write 'cc@jartrek.net' $fake.ToCharArray()
+$r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray()
 Check 'session ok: 3 unread' ($r.kind -eq 'ok' -and $r.unseen -eq 3)
 Check 'session sends exactly LOGIN, STATUS INBOX (UNSEEN), LOGOUT' ($m.sent.Count -eq 3 -and $m.sent[0] -like 'a1 LOGIN *' -and $m.sent[1] -ceq "a2 STATUS INBOX (UNSEEN)`r`n" -and $m.sent[2] -ceq "a3 LOGOUT`r`n")
 Check 'session result carries no password' (-not (($r | ConvertTo-Json -Compress) -match [regex]::Escape($fake)))
 $m = New-Mock @('* OK ready', 'a1 NO [AUTHENTICATIONFAILED] Authentication failed.')
-$r = Invoke-ImapSession $m.read $m.write 'cc@jartrek.net' $fake.ToCharArray()
+$r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray()
 Check 'session NO -> auth, nothing sent after LOGIN' ($r.kind -eq 'auth' -and $m.sent.Count -eq 1)
 $m = New-Mock @('* OK ready', 'a1 BAD unknown')
-Check 'session BAD at login -> auth' ((Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $fake.ToCharArray()).kind -eq 'auth')
+Check 'session BAD at login -> auth' ((Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray()).kind -eq 'auth')
 $m = New-Mock @('* OK ready', '* BYE too many bad logins')
-Check 'session BYE at login -> auth (never retried on a timer)' ((Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $fake.ToCharArray()).kind -eq 'auth')
+Check 'session BYE at login -> auth (never retried on a timer)' ((Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray()).kind -eq 'auth')
 $m = New-Mock @('* BYE server shutting down')
-$r = Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $fake.ToCharArray(); Check 'session BYE greeting -> net, nothing sent' ($r.kind -eq 'net' -and $m.sent.Count -eq 0)
+$r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray(); Check 'session BYE greeting -> net, nothing sent' ($r.kind -eq 'net' -and $m.sent.Count -eq 0)
 $m = New-Mock @('HTTP/1.1 400 Bad Request')
-Check 'session non-IMAP greeting -> proto' ((Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $fake.ToCharArray()).kind -eq 'proto')
+Check 'session non-IMAP greeting -> proto' ((Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray()).kind -eq 'proto')
 $m = New-Mock @('* PREAUTH ready', '* STATUS INBOX (UNSEEN 2)', 'a2 OK', 'a3 OK')
-$r = Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $fake.ToCharArray(); Check 'PREAUTH: no LOGIN sent' ($r.unseen -eq 2 -and -not ($m.sent -like 'a1*'))
+$r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray(); Check 'PREAUTH: no LOGIN sent' ($r.unseen -eq 2 -and -not ($m.sent -like 'a1*'))
 $m = New-Mock @('* OK ready', 'a1 OK', 'a2 NO no such mailbox', 'a3 OK')
-Check 'STATUS NO -> proto (a network-type failure, not auth)' ((Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $fake.ToCharArray()).kind -eq 'proto')
+Check 'STATUS NO -> proto (a network-type failure, not auth)' ((Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray()).kind -eq 'proto')
 $m = New-Mock @('* OK ready', 'a1 OK')
-$t = $false; try { [void](Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $fake.ToCharArray()) } catch { $t = $true }; Check 'connection drop throws (the worker maps it to net)' $t
+$t = $false; try { [void](Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray()) } catch { $t = $true }; Check 'connection drop throws (the worker maps it to net)' $t
 $m = New-Mock @('* OK ready', '+ go ahead', 'a1 OK', '* STATUS INBOX (UNSEEN 1)', 'a2 OK', 'a3 OK')
-$r = Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $pw.ToCharArray()
-Check 'literal login waits for + then sends the literal' ($r.unseen -eq 1 -and $m.sent[0] -ceq "a1 LOGIN `"u@jartrek.net`" {5}`r`n" -and $m.sent[1] -ceq ($pw + "`r`n"))
+$r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $pw.ToCharArray()
+Check 'literal login waits for + then sends the literal' ($r.unseen -eq 1 -and $m.sent[0] -ceq "a1 LOGIN `"test.user@example.invalid`" {5}`r`n" -and $m.sent[1] -ceq ($pw + "`r`n"))
 $m = New-Mock @('* OK ready', 'a1 NO literal refused')
-$r = Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $pw.ToCharArray(); Check 'literal refused -> auth, literal not sent' ($r.kind -eq 'auth' -and $m.sent.Count -eq 1)
+$r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $pw.ToCharArray(); Check 'literal refused -> auth, literal not sent' ($r.kind -eq 'auth' -and $m.sent.Count -eq 1)
 $m = New-Mock @('* OK ready')
-$r = Invoke-ImapSession $m.read $m.write 'u@jartrek.net' "x`ry".ToCharArray(); Check 'CR in password: nothing sent, auth (stops)' ($r.kind -eq 'auth' -and $m.sent.Count -eq 0)
+$r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' "x`ry".ToCharArray(); Check 'CR in password: nothing sent, auth (stops)' ($r.kind -eq 'auth' -and $m.sent.Count -eq 0)
 $pc = $fake.ToCharArray(); $m = New-Mock @('* OK ready', 'a1 NO')
-[void](Invoke-ImapSession $m.read $m.write 'u@jartrek.net' $pc); Check 'caller-owned password chars untouched by the session (the worker zeroes them)' ((-join $pc) -ceq $fake)
+[void](Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $pc); Check 'caller-owned password chars untouched by the session (the worker zeroes them)' ((-join $pc) -ceq $fake)
 
 # --- state machine ---
 $now = [datetime]'2026-10-29 09:41'
@@ -139,25 +139,75 @@ Check 'test result ok' ((Get-MailTestText @{ kind = 'ok'; unseen = 3 }).text -ce
 Check 'test result auth' ((Get-MailTestText @{ kind = 'auth' }).text -ceq 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.')
 Check 'test result net / cert' ((Get-MailTestText @{ kind = 'cert' }).text -ceq 'Can''t reach the mail server. Check this PC is online, then press Test again.')
 Check 'UI strings use email, not mail (bar the approved heading)' (-not ([regex]::Matches($src, "'[^'\r\n]*\b[Mm]ail count[^'\r\n]*'")).Count)
-Check 'heading: When new mail arrives:' ($src.Contains("'When new mail arrives:'"))
+Check 'heading: When new email arrives:' ($src.Contains("'When new email arrives:'"))
 Check 'setup copy present' ($src.Contains("'Show unread email count on the Email button'") -and $src.Contains("'Uses your Jartrek email, the same login as webmail.'") -and $src.Contains("'Everyone who uses this Windows login on this PC will see how many unread emails this account has.'") -and $src.Contains("'Turn off the email count and forget this login on this PC?'"))
-Check 'menu items: Check email now, Email count settings..., Setup item Unread email count...' ($src.Contains("'Check email now'") -and $src.Contains("'Email count settings...'") -and $src.Contains("'Unread email count...'"))
+Check 'menu items: Check email now, Setup item Unread email count...' ($src.Contains("'Check email now'") -and $src.Contains("'Unread email count...'"))
 
 # --- address, settings, log: no password anywhere ---
-Check 'address: name gets @jartrek.net' ((Get-MailAddress ' cc ') -ceq 'cc@jartrek.net' -and (Get-MailAddress 'a@b.com') -ceq 'a@b.com')
-foreach ($a in 'cc@jartrek.net', 'first.last+x@jartrek.net') { Check "address ok: $a" (Test-MailAddress $a) }
-foreach ($a in '', 'cc', 'cc@', "cc@jartrek.net`r`nx", 'c c@jartrek.net', 'cc@jartrek', '"x"@jartrek.net') { Check ("address rejected: " + ($a -replace "`r`n", '\r\n')) (-not (Test-MailAddress $a)) }
-$j = Get-MailSettingsJson @{ enabled = $true; address = 'cc@jartrek.net'; style = 'pulse'; password = $fake; secret = $fake }
-Check 'settings json: only enabled/address/style, no password' ($j -ceq '{"enabled":true,"address":"cc@jartrek.net","style":"pulse"}' -and -not $j.Contains($fake))
+Check 'address: name gets @jartrek.net' ((Get-MailAddress ' test.user ') -ceq 'test.user@jartrek.net' -and (Get-MailAddress 'a@b.com') -ceq 'a@b.com')
+foreach ($a in 'test.user@jartrek.net', 'first.last+x@jartrek.net') { Check "address ok: $a" (Test-MailAddress $a) }
+foreach ($a in '', 'cc', 'cc@', "test.user@jartrek.net`r`nx", "test.user@jartrek.net`n", 'c c@jartrek.net', 'cc@jartrek', '"x"@jartrek.net') { Check ("address rejected: " + ($a -replace "`r", '\r' -replace "`n", '\n')) (-not (Test-MailAddress $a)) }
+$j = Get-MailSettingsJson @{ enabled = $true; address = 'test.user@example.invalid'; style = 'pulse'; password = $fake; secret = $fake }
+Check 'settings json: only enabled/address/style, no password' ($j -ceq '{"enabled":true,"address":"test.user@example.invalid","style":"pulse"}' -and -not $j.Contains($fake))
 Check 'settings default: off, Flash' ((ConvertTo-MailSettings @{}).enabled -eq $false -and (ConvertTo-MailSettings @{}).style -eq 'flash')
 Check 'settings: enabled needs a valid address' (-not (ConvertTo-MailSettings @{ enabled = $true; address = 'nope' }).enabled)
-$ll = Format-MailLogLine @{ kind = 'auth'; detail = $fake; unseen = -1; password = $fake; user = 'cc@jartrek.net' }
-Check 'log line: no password, no address' (-not $ll.Contains($fake) -and -not $ll.Contains('jartrek') -and $ll -ceq 'email count: auth')
+$ll = Format-MailLogLine @{ kind = 'auth'; detail = $fake; unseen = -1; password = $fake; user = 'test.user@example.invalid' }
+Check 'log line: no password, no address' (-not $ll.Contains($fake) -and -not $ll.Contains('example.invalid') -and $ll -ceq 'email count: auth')
 Check 'log line: known detail kept' ((Format-MailLogLine @{ kind = 'net'; detail = 'connect timed out' }) -ceq 'email count: net (connect timed out)')
 Check 'Email tile found by what it opens' ((Test-MailTile ([pscustomobject]@{ type = 'website'; target = 'mailto:' })) -and -not (Test-MailTile ([pscustomobject]@{ type = 'website'; target = 'https://www.google.com' })))
 $cfg = Get-Content -LiteralPath (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
 Check 'default config has exactly one Email tile' (@($cfg.panels | ForEach-Object { $_.buttons } | Where-Object { Test-MailTile $_ }).Count -eq 1)
 Check 'default config has no email settings or secrets' (-not ((Get-Content -LiteralPath (Join-Path $root 'buttons.default.json') -Raw) -match '(?i)password|emailCount|email-count'))
+
+# --- fix round 1 (ClaudeCode M1/L1/N1, Lockjaw M14-I1..I5, Kern, Squint) ---
+# M1 race (cf. ClaudeCode probe/v140/race.ps1): a check started before Save / turn off must never land on the new state
+foreach ($stale in @(@{ kind = 'auth'; unseen = -1 }, @{ kind = 'ok'; unseen = 9 }, @{ kind = 'net'; unseen = -1 })) {
+    $old = New-MailState; [void](Update-MailState $old @{ kind = 'ok'; unseen = 2; epoch = 0 } $now)
+    $runEpoch = [int]$old.epoch                                   # the poll in flight was started with this epoch
+    $fresh = Get-MailFreshState $old                              # Save after a good Test
+    $test = @{ kind = 'ok'; unseen = 3; epoch = $fresh.epoch }; [void](Update-MailState $fresh $test $now)
+    $stale.epoch = $runEpoch; $o = Update-MailState $fresh $stale $now
+    Check "M1: stale '$($stale.kind)' after Save is ignored (state stays ok, 3, polling on)" ($o.ignored -and $fresh.phase -eq 'ok' -and $fresh.count -eq 3 -and -not $fresh.stopped) }
+$a = New-MailState; Step-MailResume $a; Step-MailResume $a; $b = Get-MailFreshState $a; $c = Get-MailFreshState $b
+Check 'M1: epoch only goes up across sleep, Save and turn off' ($b.epoch -eq 3 -and $c.epoch -eq 4)
+$off = Get-MailFreshState $c; $o = Update-MailState $off @{ kind = 'auth'; epoch = $c.epoch } $now; Check 'M1: stale result after turn off ignored' ($o.ignored -and -not $off.stopped)
+$sv = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-MailSetupDialog' }, $true).Extent.Text
+Check 'M1: Save stops the check in flight and takes a fresh epoch' ($sv -match 'Stop-MailRunObjects \$global:mailRun; \$global:mail\.state = Get-MailFreshState \$global:mail\.state' -and $sv -notmatch 'state = New-MailState')
+$dv = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Disable-Mail' }, $true).Extent.Text
+Check 'M1: turn off stops the check (Stop-Mail) and takes a fresh epoch' ($dv -match 'Stop-Mail;' -and $dv -match 'Get-MailFreshState' -and $dv -notmatch 'New-MailState')
+$sr = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Stop-MailRunObjects' }, $true).Extent.Text
+Check 'L1: stopping a check never blocks the UI (BeginStop, no ps.Stop())' ($sr -match 'BeginStop\(\$null, \$null\)' -and $sr -notmatch '\.ps\.Stop\(\)')
+Check 'L1: stopped checks are freed later (Clear-MailDeadRuns at the next check)' ($src -match 'function global:Clear-MailDeadRuns' -and $src -match '\{ return \$false \}\s+Clear-MailDeadRuns')
+# N1: untagged lines before '+'
+$m = New-Mock @('* OK ready', '* CAPABILITY IMAP4rev1', '* OK [ALERT] hello', '+ go', 'a1 OK', '* STATUS INBOX (UNSEEN 4)', 'a2 OK', 'a3 OK')
+$r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $pw.ToCharArray()
+Check 'N1: literal waits through untagged lines until +' ($r.kind -eq 'ok' -and $r.unseen -eq 4 -and $m.sent[1] -ceq ($pw + "`r`n"))
+# I4: no definite tagged reply after LOGIN = sign-in failure (stops polling)
+$m = New-Mock @('* OK ready'); $r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray(); Check 'I4: drop after LOGIN -> auth' ($r.kind -eq 'auth')
+$m = New-Mock @('* OK ready', '* CAPABILITY x'); $r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray(); Check 'I4: untagged only, then drop -> auth' ($r.kind -eq 'auth')
+$m = New-Mock @('* OK ready', '* OK still here'); $r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $pw.ToCharArray(); Check 'I4: literal never continued -> auth, literal not sent' ($r.kind -eq 'auth' -and $m.sent.Count -eq 1)
+$s = New-MailState; [void](Update-MailState $s $r $now); Check 'I4: that result stops timed polling' ((Get-MailNextDelaySec $s) -eq -1)
+Check 'I4: a drop after a good LOGIN is still a network error' ($src -match "kind = 'net'; unseen = -1; detail = 'network error'")
+# I2
+Check 'I2: a reply line over 16 KB stops the check' ($src -match "if \(\`$buf\.Length -ge 16384\) \{ throw 'line too long' \}")
+# I3: turning off removes exactly the email files, crash leftovers included
+$tmpd = Join-Path ([IO.Path]::GetTempPath()) ('bl-mailtest-' + [guid]::NewGuid().ToString('N')); [void](New-Item -ItemType Directory $tmpd)
+Invoke-Expression "function global:Get-MailDir { '$tmpd' }"
+foreach ($n in 'email-count.json', 'email-count.dat', 'email-count.json.tmp', 'email-count.dat.tmp', 'other.txt', 'email-count.keep') { Set-Content -LiteralPath (Join-Path $tmpd $n) 'x' }
+Remove-MailLogin
+$left = @(Get-ChildItem -LiteralPath $tmpd | ForEach-Object Name | Sort-Object)
+Check "I3: turn off deletes json, dat and both .tmp, nothing else ($($left -join ','))" (($left -join ',') -ceq 'email-count.keep,other.txt')
+Remove-Item -LiteralPath $tmpd -Recurse -Force
+# Kern / Squint
+Check 'Kern: focus ring grid 26 for checkbox and radio, ring radius 8' (([regex]::Matches($src, '<Grid Width="26" Height="26"')).Count -eq 2 -and $src -match '<Border x:Name="Ring" CornerRadius="8"')
+Check 'Kern: input padding 8,0 and 8,0,96,0' ($src -match "\`$input\.Padding = '8,0'" -and $src -match "\`$ta\.Padding = '8,0,96,0'")
+Check 'Kern: buttons MinWidth 88, padding 16,0' ($src -match '\$b\.MinWidth = 88' -and $src -match "\`$b\.Padding = '16,0'")
+Check 'Kern: red line on the password after a failed sign-in, cleared on typing' ($sv -match "\`$pErr\.Background = Brush '#F87171'" -and $sv -match "if \(\`$kind -eq 'auth'\) \{ 'Visible' \}" -and $sv -match "Add_PasswordChanged\(\{ \`$ds\.tested = \`$false; \`$pErr\.Visibility = 'Hidden'")
+Check 'Kern: 8 between the result line and the buttons' ($sv -match "\`$rline\.Margin = '0,16,0,8'" -and $sv -match "\`$row\.Margin = '0'")
+Check 'Squint: Enter is Test until a Test passes, then Save' ($sv -match '\$bSave\.IsDefault = \$ok; \$bTest\.IsDefault = -not \$ok' -and $sv -notmatch '\$bSave\.IsDefault = \$true')
+Check "Squint: menu item 'Unread email count...', no 'Email count settings...'" (-not $src.Contains("'Email count settings...'") -and ([regex]::Matches($src, "'Unread email count\.\.\.'")).Count -ge 2)
+Check "Squint: no 'mail arrives' left" (-not $src.Contains('new mail arrives'))
+Check 'I5: no @jartrek.net address in tests outside the format checks' (@((Get-Content -LiteralPath $PSCommandPath) | Where-Object { $_ -match '[A-Za-z0-9.]+@jartrek\.net' -and $_ -notmatch "^(Check 'address|foreach \(\`$a in )" -and $_ -notmatch 'Get-ImapLoginBytes "cc`r`n' }).Count -eq 0)
 
 # --- source checks ---
 $tokens = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$tokens, [ref]$null)

@@ -496,6 +496,11 @@ Section "Uninstall"
   ${OrIf} $1 == 'wscript.exe "$INSTDIR\Start Launcher.vbs"'
     DeleteRegValue HKCU "${RUNKEY}" "${KEYNAME}"
   ${EndIf}
+  ; v1.4.0 (M14-I3): this Windows user's email count login. Only these files; the folder only if it is then empty.
+  Delete "$LOCALAPPDATA\ButtonLauncher\email-count.json"
+  Delete "$LOCALAPPDATA\ButtonLauncher\email-count.dat"
+  Delete "$LOCALAPPDATA\ButtonLauncher\email-count.*.tmp"
+  RMDir "$LOCALAPPDATA\ButtonLauncher"                 ; non-recursive: stays if anything else is in it
   ; Same as the IExpress uninstaller: the whole folder goes, including buttons.json and pictures.
   SetOutPath "$TEMP"
   !insertmacro SAFE_RMDIR "un." "$INSTDIR"
