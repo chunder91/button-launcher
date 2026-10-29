@@ -9,6 +9,7 @@ $src = $ast.Extent.Text
 foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-ChipFallbackPic') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
+$global:PathProbe = @{ DosDevice = { param($d) '\Device\HarddiskVolume3' }; Attr = { param($p) $null } }   # R6-L2 probes: plain local volume, no special attributes
 # Layout setting
 Check "layout default is 'two'" ((Get-LayoutMode ([pscustomobject]@{})) -eq 'two')
 Check "layout 'single'" ((Get-LayoutMode ([pscustomobject]@{ layout = 'single' })) -eq 'single')
@@ -64,20 +65,35 @@ foreach ($c in @(@('program', 'images/register.png'), @('file', 'images/guide.pn
 $gci = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-ChipIcon' }, $true)
 Invoke-Expression $gci.Extent.Text
 function global:Get-PicSource($b, $s) { 'fallback' }; function global:Resolve-Img($i) { $i }
-$global:safeOk = $true; function global:Test-SafeIconSource($t) { $global:safeOk }
+$global:safeOk = $true; function global:Resolve-IconTarget($t) { if (-not $global:safeOk) { return $null }; if ($global:lnkTo -and $t -like '*.lnk') { return $global:lnkTo }; $t }
+$global:iconCacheOrder = New-Object System.Collections.ArrayList; $global:IconCacheMax = 256
 $tf = Join-Path ([IO.Path]::GetTempPath()) ('chip-' + [guid]::NewGuid() + '.exe'); Set-Content $tf 'x'
-$global:iconCache = @{}; $cb = [pscustomobject]@{ type = 'program'; target = $tf; image = 'icon' }
+$global:iconCache = @{}; $global:iconCacheOrder.Clear(); $cb = [pscustomobject]@{ type = 'program'; target = $tf; image = 'icon' }
 [void](Get-ChipIcon $cb); [void](Get-ChipIcon $cb)
 $k1 = @($global:iconCache.Keys)
 Check 'OP-L3: one cache entry keyed path|LastWriteTimeUtc ticks after two draws' ($k1.Count -eq 1 -and $k1[0] -eq ($tf.ToLowerInvariant() + '|' + (Get-Item $tf).LastWriteTimeUtc.Ticks))
 (Get-Item $tf).LastWriteTimeUtc = (Get-Date).AddDays(-1).ToUniversalTime(); [void](Get-ChipIcon $cb)
 Check 'OP-L3: changed file -> new cache entry' ($global:iconCache.Count -eq 2)
 Check 'OP-L3: extraction only when the key is new' ($gci.Extent.Text -match '(?s)if \(-not \$global:iconCache\.ContainsKey\(\$ck\)\) \{.*?ExtractAssociatedIcon')
-$global:safeOk = $false; $global:iconCache = @{}; $script:gi = 0
+$global:safeOk = $false; $global:iconCache = @{}; $global:iconCacheOrder.Clear(); $script:gi = 0
 function global:Get-Item { $script:gi++; Microsoft.PowerShell.Management\Get-Item @args }
 Check 'OP-L1/L3: non-local target -> fallback, file never touched, nothing cached' ((Get-ChipIcon $cb) -eq 'fallback' -and $script:gi -eq 0 -and $global:iconCache.Count -eq 0)
-Remove-Item Function:\global:Get-Item; Remove-Item -LiteralPath $tf
-Check 'Get-ChipIcon checks Test-SafeIconSource before touching the file' ($gci.Extent.Text -match '(?s)if \(Test-SafeIconSource \$t\) \{\s+\$fi = \$null; try \{ \$fi = Get-Item')
+Remove-Item Function:\global:Get-Item
+# OP-N3: a .lnk chip caches/extracts its checked target, not the .lnk
+$global:safeOk = $true; $global:iconCache = @{}; $global:iconCacheOrder.Clear(); $global:lnkTo = $tf
+$lf = Join-Path ([IO.Path]::GetTempPath()) ('chip-' + [guid]::NewGuid() + '.lnk'); Set-Content $lf 'l'
+[void](Get-ChipIcon ([pscustomobject]@{ type = 'program'; target = $lf; image = 'icon' }))
+Check 'OP-N3: .lnk chip icon keyed and extracted from its checked target' (@($global:iconCache.Keys).Count -eq 1 -and @($global:iconCache.Keys)[0] -like ($tf.ToLowerInvariant() + '|*') -and $gci.Extent.Text -match 'ExtractAssociatedIcon\(\$src\)' -and $gci.Extent.Text -notmatch 'ExtractAssociatedIcon\(\$t\)')
+$global:lnkTo = $null; Remove-Item -LiteralPath $lf
+# R6-N2: cache capped, oldest dropped first
+$global:IconCacheMax = 3; $global:iconCache = @{}; $global:iconCacheOrder.Clear(); $fs = @()
+foreach ($i in 1..5) { $f = Join-Path ([IO.Path]::GetTempPath()) ('cap-' + $i + '-' + [guid]::NewGuid() + '.exe'); Set-Content $f 'x'; $fs += $f; [void](Get-ChipIcon ([pscustomobject]@{ type = 'program'; target = $f; image = 'icon' })) }
+$keys = @($global:iconCache.Keys)
+Check 'R6-N2: icon cache capped at IconCacheMax, oldest dropped' ($keys.Count -eq 3 -and $global:iconCacheOrder.Count -eq 3 -and -not ($keys | Where-Object { $_ -like ($fs[0].ToLowerInvariant() + '|*') -or $_ -like ($fs[1].ToLowerInvariant() + '|*') }) -and ($keys | Where-Object { $_ -like ($fs[4].ToLowerInvariant() + '|*') }))
+Check 'R6-N2: default cap 256' ($src -match '\$global:IconCacheMax = 256')
+foreach ($f in $fs) { Remove-Item -LiteralPath $f }; $global:IconCacheMax = 256
+Remove-Item -LiteralPath $tf
+Check 'Get-ChipIcon checks Resolve-IconTarget (local-only) before touching the file' ($gci.Extent.Text -match '(?s)\$src = Resolve-IconTarget \$t\s+if \(\$src\) \{\s+\$fi = \$null; try \{ \$fi = Get-Item -LiteralPath \$src')
 Check 'chip dot: only Get-SetupState missing (local-only check)' ($src -match '\$ss = Get-SetupState \$btn[^\n]*\n\s+if \(\$ss -eq ''missing''\) \{ \[void\]\$g\.Children\.Add\(\(New-MissingDot')
 Check 'helpers defined once' (([regex]::Matches($src, 'function global:Test-LocalFixedPath')).Count -eq 1 -and ([regex]::Matches($src, 'function global:Test-SafeIconSource')).Count -eq 1 -and ([regex]::Matches($src, 'function global:Get-DriveTypeName')).Count -eq 1)
 # Source checks
@@ -88,7 +104,7 @@ Check 're-dock on display/work-area/DPI change' ($src -match 'if \(\$global:sing
 Check 'chips: 65% fill, 16% white outline' ($src -match "Brush '#A6141414'" -and $src -match "Brush '#29FFFFFF'")
 Check 'chips: 12 px one-line label with ellipsis' ($src -match "New-Label \(Get-ChipLabel \`$btn\) '#FFFFFF' 12; \`$tb\.TextWrapping = 'NoWrap'; \`$tb\.TextTrimming = 'CharacterEllipsis'")
 Check '+N more is a 28 px button opening a flyout' ($src -match '\$more\.Height = 28' -and $src -match 'Primitives\.Popup')
-Check 'chips: icon from ExtractAssociatedIcon, Set A fallback' ($src -match 'ExtractAssociatedIcon\(\$t\)' -and $src -match "'website' \{ 'images/globe\.png' \}")
+Check 'chips: icon from ExtractAssociatedIcon, Set A fallback' ($src -match 'ExtractAssociatedIcon\(\$src\)' -and $src -match "'website' \{ 'images/globe\.png' \}")
 Check 'chips: same right-click menu kinds (edit/move/remove)' ($src -match "'Edit this icon\.\.\.'" -and $src -match "'Remove this icon'" -and $src -match "'Move earlier'")
 Check 'chips: whole chip drags in edit mode' ($src -match 'DragDrop\]::DoDragDrop\(\$chip')
 Check 'remove: 5 s Undo toast' ($src -match 'FromSeconds\(5\)' -and $src -match "Content = 'Undo'")

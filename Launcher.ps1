@@ -52,6 +52,8 @@ $global:hotkeyOk     = $false
 $global:trayIcon     = $null                                      # OP-N1: app.ico Icon behind the tray, disposed on exit
 $global:toastTimer   = $null                                      # CC OP-L1: one Undo-toast timer for all removes
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
+$global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
+$global:IconCacheMax = 256
 $global:AppVersion   = '1.2.0'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
@@ -1163,16 +1165,20 @@ function global:Get-ChipIcon($btn) {   # the target's own icon (local fixed driv
         $t = Expand $btn.target
         if ($t -and -not (Is-Todo $t)) {
             # OP-L3: local fixed-drive targets only (OP-L1); cached by path + last-write time, so a rebuild never re-reads the file
-            if (Test-SafeIconSource $t) {
-                $fi = $null; try { $fi = Get-Item -LiteralPath $t -ErrorAction Stop } catch {}
+            # OP-N3: the icon comes from the checked target (for a .lnk, its checked target), never the .lnk's own icon location
+            $src = Resolve-IconTarget $t
+            if ($src) {
+                $fi = $null; try { $fi = Get-Item -LiteralPath $src -ErrorAction Stop } catch {}
                 if ($fi -and -not $fi.PSIsContainer) {
-                    $ck = $t.ToLowerInvariant() + '|' + $fi.LastWriteTimeUtc.Ticks
+                    $ck = $src.ToLowerInvariant() + '|' + $fi.LastWriteTimeUtc.Ticks
                     if (-not $global:iconCache.ContainsKey($ck)) {
                         $bs = $null
-                        try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($t)
+                        try { $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($src)
                               $bs = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
                               $ico.Dispose(); $bs.Freeze() } catch { $bs = $null }
-                        $global:iconCache[$ck] = $bs }
+                        while ($global:iconCacheOrder.Count -ge $global:IconCacheMax) {   # R6-N2: capped, oldest dropped first
+                            [void]$global:iconCache.Remove($global:iconCacheOrder[0]); $global:iconCacheOrder.RemoveAt(0) }
+                        $global:iconCache[$ck] = $bs; [void]$global:iconCacheOrder.Add($ck) }
                     if ($global:iconCache[$ck]) { return $global:iconCache[$ck] } } } }
     }
     return Get-PicSource ([pscustomobject]@{ image = (Get-ChipFallbackPic $kind) }) 32
