@@ -1,6 +1,6 @@
 ﻿# Settable WPF properties per type (from the .NET Framework 4.8 reference), used by the box tests to catch
 # "The property 'X' cannot be found on this object" without Windows. Only types the launcher creates are listed.
-$fe = 'Margin Width Height MinWidth MinHeight MaxWidth MaxHeight HorizontalAlignment VerticalAlignment Visibility IsEnabled Opacity IsHitTestVisible ToolTip Cursor Focusable FocusVisualStyle Tag Style ContextMenu RenderTransform RenderTransformOrigin LayoutTransform ClipToBounds Resources DataContext Name UseLayoutRounding SnapsToDevicePixels OpacityMask Effect Clip CacheMode FlowDirection AllowDrop Language' -split ' '
+$fe = 'Margin Width Height MinWidth MinHeight MaxWidth MaxHeight HorizontalAlignment VerticalAlignment Visibility IsEnabled Opacity IsHitTestVisible ToolTip Cursor Focusable FocusVisualStyle Tag Style ContextMenu RenderTransform RenderTransformOrigin LayoutTransform ClipToBounds Resources DataContext Name UseLayoutRounding SnapsToDevicePixels OpacityMask Effect Clip CacheMode FlowDirection AllowDrop Language Uid' -split ' '
 $ctl = $fe + ('Background Foreground BorderBrush BorderThickness Padding FontFamily FontSize FontWeight FontStyle FontStretch HorizontalContentAlignment VerticalContentAlignment IsTabStop TabIndex Template' -split ' ')
 $cc = $ctl + 'Content'
 $pnl = $fe + 'Background'

@@ -404,6 +404,15 @@ function global:ConvertTo-CustomSlot($btn) {   # after a good edit: always half 
     Set-Prop $btn 'slot' 'custom'; Set-Prop $btn 'empty' $false; Set-Prop $btn 'width' 'half'; Set-Prop $btn 'args' ''; Set-Prop $btn 'runAsAdmin' $false
     foreach ($n in 'action', 'confirm', 'group', 'detect', 'vncPicker', 'email') { if ($btn.PSObject.Properties[$n]) { $btn.PSObject.Properties.Remove($n) } }
 }
+function global:Get-CustomFullName($btn) { $n = ((([string]$btn.label) -replace '\\n', ' ') -replace '\s+', ' ').Trim(); if ($n) { $n } else { 'this button' } }
+function global:Get-SlotSide($items, $btn) {   # 'left' / 'right' by order among the custom slots
+    $sl = @($items | Where-Object { Test-CustomSlot $_ }); $i = [array]::IndexOf($sl, $btn); if ($i -eq 1) { 'right' } else { 'left' }
+}
+function global:Get-SlotView($items, $btn, [bool]$locked) {   # Squint Major: 'add' (edit mode), 'blank' (locked, keeps its 82 DIP cell), 'hidden' (locked and both empty)
+    if (-not $locked) { return 'add' }
+    if (@($items | Where-Object { (Test-CustomSlot $_) -and -not (Test-SlotEmpty $_) }).Count) { return 'blank' }
+    return 'hidden'
+}
 function global:Remove-CustomRow($items) {   # only when every slot is empty; returns $true when the row went
     $slots = @($items | Where-Object { Test-CustomSlot $_ }); if (-not $slots.Count) { return $false }
     if (@($slots | Where-Object { -not (Test-SlotEmpty $_) }).Count) { return $false }
@@ -451,6 +460,9 @@ function global:New-Label($text, $fg, $size) {
 }
 
 # Kern-3/UX-6: label floor of 12 DIP (13 for 3+ line labels) on screen, after the panel's scale is applied.
+function global:Set-MaxLines($tb, [int]$n) {   # WPF has no MaxLines: cap the height at n lines and trim the rest with an ellipsis
+    $tb.TextTrimming = 'CharacterEllipsis'; $tb.Uid = ('maxlines=' + $n); $tb.MaxHeight = $n * [double]$tb.LineHeight
+}
 function global:Apply-MinFont($p) {
     $s = [Math]::Max(0.1, [double]$p.scale.ScaleX)
     if ($p.grip -and $p.grip.Child -is [System.Windows.Controls.TextBlock]) { $p.grip.Child.FontSize = [Math]::Max(12.0, 12.0 / $s) }   # Kern 12 px floor: the Editing bar too (built outside the label sink)
@@ -459,6 +471,7 @@ function global:Apply-MinFont($p) {
         $floor = if (([string]$tb.Text).Split("`n").Count -ge 3) { 13.0 } else { 12.0 }
         $tb.FontSize = [Math]::Max([double]$tb.Tag, $floor / $s)
         $tb.LineHeight = [Math]::Round($tb.FontSize * 1.2, 1)
+        if ([string]$tb.Uid -match '^maxlines=(\d)$') { $tb.MaxHeight = [int]$Matches[1] * $tb.LineHeight }   # keep the 3-line cap after scaling
     }
 }
 
@@ -589,6 +602,7 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
     $lab = Get-DisplayLabel $btn
     $text = New-Object System.Windows.Controls.StackPanel; $text.VerticalAlignment = 'Center'
     $main = New-Label $lab.main $fg $fs; [void]$text.Children.Add($main)
+    if ((Test-CustomSlot $btn) -and -not (Test-SlotEmpty $btn)) { Set-MaxLines $main 3 }   # Kern: custom labels max 3 lines + ellipsis (full name in the tile tooltip)
     if ($lab.sub) { $sl = New-Label $lab.sub $fg 12; $sl.FontWeight = [System.Windows.FontWeights]::Normal; $sl.LineHeight = 14; $sl.Opacity = 0.85; [void]$text.Children.Add($sl) }   # Kern: 12 px Regular
     $isRedDog = ([string]$btn.image) -match '(?i)reddog'
     if ($isRedDog -and $cls -eq 'hero') { $ipx = 64 }
@@ -678,6 +692,7 @@ function global:New-Tile($p, $btn) {
     else { $ss = Get-SetupState $btn
         if ($ss -eq 'missing') { [void]$g.Children.Add((New-MissingDot 'Not set up on this PC yet')) }
         elseif ($ss -eq 'unchecked') { $tile.ToolTip = [string]$btn.target + "`n(network location: not checked until you click)" } }
+    if (Test-CustomSlot $btn) { $tile.ToolTip = (Get-CustomFullName $btn) + "`n" + [string]$tile.ToolTip }   # Kern: full name, since the label may be trimmed
     $g.Background = [System.Windows.Media.Brushes]::Transparent
     $tile.Child = $g
     $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-4'; $ring.CornerRadius = [string]($rad + 4)
@@ -1152,14 +1167,18 @@ function global:Button-Menu($p, $btn) {
     return $m
 }
 
+function global:Get-RemoveSlotText($btn) { 'Remove "{0}" from this panel?' -f (Get-CustomFullName $btn) }
+function global:Get-RemoveRowLabel([bool]$can) { if ($can) { 'Remove this row' } else { 'Remove this row (remove both buttons first)' } }
 function global:Slot-Menu($p, $btn, $m) {   # custom row: Add/Edit, Remove this button (empties the slot), Remove this row (only when both are empty)
     if (Test-SlotEmpty $btn) { [void](Add-MenuItem $m 'Add a button here...' { Edit-CustomSlot $p $btn }.GetNewClosure()) }
     else {
         [void](Add-MenuItem $m 'Edit this button...' { Edit-CustomSlot $p $btn }.GetNewClosure())
-        [void](Add-MenuItem $m 'Remove this button' { Clear-CustomSlot $btn; Save-Config; Build-Panel $p; Layout-Panel $p }.GetNewClosure()) }
-    $rr = Add-MenuItem $m 'Remove this row' { if (Remove-CustomRow $p.items) { Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure()
-    $rr.IsEnabled = -not @($p.items | Where-Object { (Test-CustomSlot $_) -and -not (Test-SlotEmpty $_) }).Count
-    if (-not $rr.IsEnabled) { $rr.ToolTip = 'Remove both buttons first.' }
+        [void](Add-MenuItem $m 'Remove this button' {   # Squint: confirm, No is the default
+            if ([System.Windows.MessageBox]::Show((Get-RemoveSlotText $btn), 'Remove button', 'YesNo', 'Question', 'No') -ne 'Yes') { return }
+            Clear-CustomSlot $btn; Save-Config; Build-Panel $p; Layout-Panel $p }.GetNewClosure()) }
+    $canRow = -not @($p.items | Where-Object { (Test-CustomSlot $_) -and -not (Test-SlotEmpty $_) }).Count
+    $rr = Add-MenuItem $m (Get-RemoveRowLabel $canRow) { if (Remove-CustomRow $p.items) { Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure()
+    $rr.IsEnabled = $canRow   # Squint: disabled items show no tooltip, so the reason is in the label
     [void]$m.Items.Add((New-Object System.Windows.Controls.Separator))
     Panel-Menu $p $m
 }
@@ -1170,24 +1189,30 @@ function global:Edit-CustomSlot($p, $btn) {   # edits a copy, so Cancel or a ref
     foreach ($pr in $tmp.PSObject.Properties) { Set-Prop $btn $pr.Name $pr.Value }
     Save-Config; Build-Panel $p; Layout-Panel $p
 }
-function global:New-AddSlot($p, $btn) {   # empty slot: subtle dashed "+ Add", same size as a half tile; click or Enter adds
+function global:New-AddSlot($p, $btn) {   # empty slot: subtle dashed "+ Add", same size as a half tile; click or Enter adds (edit mode only)
     $h = if ($btn.height) { [Math]::Max(44, [double]$btn.height) } else { 82 }
     $wrap = New-Object System.Windows.Controls.Grid; $wrap.Margin = '3'; $wrap.Tag = 'half'
+    if ([bool]$global:cfg.locked) {   # Squint Major: locked = plain blank cell, same 82 DIP so the grid doesn't shift (Kern); nothing to click, focus or read
+        $wrap.Height = $h; $wrap.Focusable = $false; $wrap.IsHitTestVisible = $false
+        return $wrap }
+    $side = Get-SlotSide $p.items $btn
     $tile = New-Object System.Windows.Controls.Border; $tile.Height = $h; $tile.CornerRadius = '12'; $tile.Background = Brush '#0AFFFFFF'
     $tile.Focusable = $true; $tile.FocusVisualStyle = $null; $tile.Cursor = [System.Windows.Input.Cursors]::Hand; $tile.ToolTip = 'Add a button'
-    [System.Windows.Automation.AutomationProperties]::SetName($tile, 'Add a button')
+    [System.Windows.Automation.AutomationProperties]::SetName($tile, ('Add a button, ' + $side))   # Squint: Narrator tells the two apart
     $g = New-Object System.Windows.Controls.Grid; $g.Background = [System.Windows.Media.Brushes]::Transparent
     $dash = New-Object System.Windows.Shapes.Rectangle; $dash.IsHitTestVisible = $false; $dash.Stroke = Brush '#73FFFFFF'; $dash.StrokeThickness = 1.5
     $dash.StrokeDashArray = New-Object System.Windows.Media.DoubleCollection (,[double[]](4, 3)); $dash.RadiusX = 11; $dash.RadiusY = 11
     $txt = New-Label ('+  Add') '#C8C8D0' 14; $txt.HorizontalAlignment = 'Center'; $txt.VerticalAlignment = 'Center'; $txt.IsHitTestVisible = $false
     [void]$g.Children.Add($dash); [void]$g.Children.Add($txt); $tile.Child = $g
-    $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-4'; $ring.CornerRadius = '16'
+    $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-3'; $ring.CornerRadius = '15'   # Kern: pulled in so it doesn't crowd the next tile
     $ring.BorderThickness = '2'; $ring.BorderBrush = [System.Windows.Media.Brushes]::White; $ring.Visibility = 'Hidden'
     [void]$wrap.Children.Add($tile); [void]$wrap.Children.Add($ring)
-    $tile.Add_MouseEnter({ $tile.Background = Brush '#17FFFFFF' }.GetNewClosure())
-    $tile.Add_MouseLeave({ $tile.Background = Brush '#0AFFFFFF' }.GetNewClosure())
-    $tile.Add_MouseLeftButtonUp({ $_.Handled = $true; Edit-CustomSlot $p $btn }.GetNewClosure())
-    $tile.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; Edit-CustomSlot $p $btn } }.GetNewClosure())
+    # Kern: hover brightens the dash and the text only (no lift, no glow)
+    $tile.Add_MouseEnter({ $tile.Background = Brush '#17FFFFFF'; $dash.Stroke = Brush '#B3FFFFFF'; $txt.Foreground = Brush '#FFFFFF' }.GetNewClosure())
+    $tile.Add_MouseLeave({ $tile.Background = Brush '#0AFFFFFF'; $dash.Stroke = Brush '#73FFFFFF'; $txt.Foreground = Brush '#C8C8D0' }.GetNewClosure())
+    # Squint Major: belt and braces, the handlers also refuse while locked (the panel rebuilds on lock, but a stale tile must not add)
+    $tile.Add_MouseLeftButtonUp({ $_.Handled = $true; if (-not [bool]$global:cfg.locked) { Edit-CustomSlot $p $btn } }.GetNewClosure())
+    $tile.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; if (-not [bool]$global:cfg.locked) { Edit-CustomSlot $p $btn } } }.GetNewClosure())
     $tile.Add_IsKeyboardFocusedChanged({ $ring.Visibility = if ($tile.IsKeyboardFocused) { 'Visible' } else { 'Hidden' } }.GetNewClosure())
     $tile.Add_MouseRightButtonDown({ [void]$tile.Focus() }.GetNewClosure())
     $tile.ContextMenu = Button-Menu $p $btn
@@ -1196,7 +1221,9 @@ function global:New-AddSlot($p, $btn) {   # empty slot: subtle dashed "+ Add", s
 
 function global:Add-TileRows($p, $target, $list) {
     $pendingHalf = $null
+    $locked = [bool]$global:cfg.locked
     foreach ($btn in $list) {
+        if ((Test-SlotEmpty $btn) -and (Get-SlotView $p.items $btn $locked) -eq 'hidden') { continue }   # locked, both empty: no row, no gap
         $el = if (Test-SlotEmpty $btn) { New-AddSlot $p $btn } else { New-Tile $p $btn }
         if ($btn.width -eq 'half') {
             if ($pendingHalf) { [System.Windows.Controls.Grid]::SetColumn($el, 1); [void]$pendingHalf.Children.Add($el); $pendingHalf = $null }

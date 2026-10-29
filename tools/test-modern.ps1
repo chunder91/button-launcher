@@ -125,7 +125,7 @@ Check 'click re-checks the target and drops args/admin for slots' ($ib -match 'T
 $eb = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Edit-Button' }, $true).Extent.Text
 Check 'edit dialog: custom offers only Program, Website, File; Save refuses a bad target' ($eb.Contains("if (`$Custom) { `$types = [ordered]@{ program = 'Program'; website = 'Website'; file = 'File / PDF' }") -and $eb.Contains('Test-CustomSlotTarget $kk') -and $eb.Contains('ConvertTo-CustomSlot $btn'))
 $as = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-AddSlot' }, $true).Extent.Text
-Check '+Add: focusable, screen-reader name, click and Enter add' ($as.Contains('Focusable = $true') -and $as.Contains("SetName(`$tile, 'Add a button')") -and $as.Contains('Add_MouseLeftButtonUp') -and $as.Contains("Key -eq 'Enter'") -and $as.Contains("Tag = 'half'"))
+Check '+Add: focusable, screen-reader name, click and Enter add' ($as.Contains('Focusable = $true') -and $as.Contains("SetName(`$tile, ('Add a button, ' + `$side))") -and $as.Contains('Add_MouseLeftButtonUp') -and $as.Contains("Key -eq 'Enter'") -and $as.Contains("Tag = 'half'"))
 Check 'layout: empty slots render as +Add, others as tiles' ($src -match 'if \(Test-SlotEmpty \$btn\) \{ New-AddSlot \$p \$btn \} else \{ New-Tile \$p \$btn \}')
 Check 'Set up this PC never lists an empty slot as missing' ($src -match 'function global:Test-ButtonReady\(\$btn\) \{\s+if \(Test-SlotEmpty \$btn\) \{ return \$true \}')
 $os = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Open-Single' }, $true).Extent.Text
@@ -135,8 +135,33 @@ Check 'layout: one-panel and two-panel both draw tiles through Build-Panel -> Ad
 Check 'layout: a collapsed row leaves no element (only items are drawn; no spacer or placeholder for a removed row)' ($bp -notmatch 'slot' -and $src -notmatch 'New-Object System.Windows.Controls.Border; \$gap')
 Check 'layout: the 2 slots are half width, so Add-TileRows puts them side by side in one row' ((New-EmptySlot).width -eq 'half' -and $src.Contains("if (`$btn.width -eq 'half') {"))
 $sm = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Slot-Menu' }, $true).Extent.Text
-Check 'menus: slot menu has Add/Edit/Remove this button/Remove this row (disabled while filled); Setup restores the row' ($sm.Contains("'Add a button here...'") -and $sm.Contains("'Edit this button...'") -and $sm.Contains("'Remove this button'") -and $sm.Contains("'Remove this row'") -and $sm.Contains('$rr.IsEnabled = -not') -and $src.Contains("'Add the row of 2 custom buttons'"))
+Check 'menus: slot menu has Add/Edit/Remove this button/Remove this row (disabled while filled); Setup restores the row' ($sm.Contains("'Add a button here...'") -and $sm.Contains("'Edit this button...'") -and $sm.Contains("'Remove this button'") -and $sm.Contains('Get-RemoveRowLabel $canRow') -and $sm.Contains('$rr.IsEnabled = $canRow') -and $src.Contains("'Add the row of 2 custom buttons'"))
 Check 'restarts unchanged: ScreenConnect elevation and force-restart confirmation' ($ib.Contains("'restart-screenconnect' { return (Restart-ScreenConnect) }") -and $ib.Contains("CC-M4/LJ-L3: force restart ALWAYS asks") -and $ib.Contains("'YesNo', 'Warning', 'No'"))
+# --- v1.4.0 Squint/Kern custom-row fixes ---
+foreach ($n in 'Test-CustomSlot', 'Test-SlotEmpty', 'Get-CustomFullName', 'Get-SlotSide', 'Get-SlotView', 'Get-RemoveSlotText', 'Get-RemoveRowLabel') {
+    $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
+    Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
+$e1 = [pscustomobject]@{ slot = 'custom'; empty = $true; label = '' }; $e2 = [pscustomobject]@{ slot = 'custom'; empty = $true; label = '' }
+$f1 = [pscustomobject]@{ slot = 'custom'; empty = $false; label = 'Schedule' }; $o1 = [pscustomobject]@{ label = 'Email' }
+Check 'Squint Major: unlocked empty slot = +Add' ((Get-SlotView @($o1, $e1, $e2) $e1 $false) -eq 'add')
+Check 'Squint Major: locked, both empty = hidden (row collapses)' ((Get-SlotView @($o1, $e1, $e2) $e1 $true) -eq 'hidden' -and (Get-SlotView @($o1, $e1, $e2) $e2 $true) -eq 'hidden')
+Check 'Squint Major: locked, one filled = blank cell (keeps its place)' ((Get-SlotView @($o1, $f1, $e2) $e2 $true) -eq 'blank')
+Check 'Squint: Narrator sides left/right' ((Get-SlotSide @($o1, $e1, $e2) $e1) -eq 'left' -and (Get-SlotSide @($o1, $e1, $e2) $e2) -eq 'right' -and (Get-SlotSide @($o1, $f1, $e2) $e2) -eq 'right')
+Check 'Squint: remove confirm text' ((Get-RemoveSlotText $f1) -ceq 'Remove "Schedule" from this panel?' -and (Get-RemoveSlotText ([pscustomobject]@{ slot = 'custom'; label = 'Big\nSched' })) -ceq 'Remove "Big Sched" from this panel?')
+Check 'Squint: disabled row label carries the reason' ((Get-RemoveRowLabel $false) -ceq 'Remove this row (remove both buttons first)' -and (Get-RemoveRowLabel $true) -ceq 'Remove this row')
+Check 'Squint: Remove this button confirms with No default before clearing' ($sm.Contains("[System.Windows.MessageBox]::Show((Get-RemoveSlotText `$btn), 'Remove button', 'YesNo', 'Question', 'No') -ne 'Yes') { return }") -and $sm.IndexOf('Get-RemoveSlotText') -lt $sm.IndexOf('Clear-CustomSlot'))
+Check 'Squint Major: locked +Add slot is a plain blank cell (no handlers, not focusable, not hit-testable, same height) returned before any tile/dash/text/name' ($as -match "if \(\[bool\]\`$global:cfg\.locked\) \{[^}]*\`$wrap\.Height = \`$h; \`$wrap\.Focusable = \`$false; \`$wrap\.IsHitTestVisible = \`$false\s+return \`$wrap \}" -and $as.IndexOf('return $wrap }') -lt $as.IndexOf('SetName') -and $as.IndexOf('return $wrap }') -lt $as.IndexOf('Add_MouseLeftButtonUp'))
+Check 'Squint Major: click and Enter/Space also refuse while locked' ($as.Contains("Add_MouseLeftButtonUp({ `$_.Handled = `$true; if (-not [bool]`$global:cfg.locked) { Edit-CustomSlot") -and $as.Contains("`$_.Handled = `$true; if (-not [bool]`$global:cfg.locked) { Edit-CustomSlot `$p `$btn } } }"))
+$tr = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Add-TileRows' }, $true).Extent.Text
+$al = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Apply-Lock' }, $true).Extent.Text
+Check 'Squint Major: hidden slots are skipped (no gap); lock/unlock rebuilds every panel' ($tr.Contains("(Get-SlotView `$p.items `$btn `$locked) -eq 'hidden') { continue }") -and $al.Contains('foreach ($p in $global:panels) { Build-Panel $p }'))
+Check 'Kern: focus ring margin -3, radius 15' ($as.Contains("`$ring.Margin = '-3'; `$ring.CornerRadius = '15'"))
+Check 'Kern: hover brightens dash #B3FFFFFF and text #FFFFFF, restores on leave, no lift/glow' ($as.Contains("`$dash.Stroke = Brush '#B3FFFFFF'; `$txt.Foreground = Brush '#FFFFFF'") -and $as.Contains("`$dash.Stroke = Brush '#73FFFFFF'; `$txt.Foreground = Brush '#C8C8D0'") -and $as -notmatch 'Start-Anim|New-GlowBrush|TranslateTransform|Effect')
+$nc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-Content' }, $true).Extent.Text
+$nt = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-Tile' }, $true).Extent.Text
+$mf = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-MaxLines' }, $true).Extent.Text
+Invoke-Expression $mf; $tb = [pscustomobject]@{ TextTrimming = $null; Uid = ''; MaxHeight = 0; LineHeight = 15.6 }; Set-MaxLines $tb 3
+Check 'Kern: custom labels max 3 lines with ellipsis, kept after scaling, full name tooltip' ($tb.TextTrimming -eq 'CharacterEllipsis' -and [Math]::Abs($tb.MaxHeight - 46.8) -lt 0.01 -and $tb.Uid -eq 'maxlines=3' -and $nc.Contains('Set-MaxLines $main 3') -and $src.Contains("if ([string]`$tb.Uid -match '^maxlines=(\d)`$') { `$tb.MaxHeight") -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
 Remove-Item -LiteralPath $tmp -Recurse -Force
 # LJ: setup check at draw time touches only local fixed-drive paths (drive types mocked: C fixed, Z mapped network)
 foreach ($n in 'Expand', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Resolve-IconTarget', 'Get-SetupState', 'Test-ButtonSetUpQuick') {
