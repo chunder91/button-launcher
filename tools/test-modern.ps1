@@ -3,13 +3,14 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $fail = 0
 function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"; $script:fail++ } }
+if (-not $env:ProgramFiles) { $env:ProgramFiles = 'C:\Program Files' }   # Linux box: Windows sets this
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
 foreach ($n in 'Get-ButtonType', 'Set-Prop', 'Get-Color', 'Mix-Color', 'Get-TileColors', 'Test-DangerButton', 'Get-DisplayLabel', 'Update-OldDefaultOrder', 'ConvertTo-Hex', 'Get-D2Fill',
-         'Get-SafeUrl', 'Is-Todo', 'Test-CustomSlot', 'Test-SlotEmpty', 'New-EmptySlot', 'Clear-CustomSlot', 'Test-CustomSlotTarget', 'ConvertTo-CustomSlot', 'Remove-CustomRow', 'Add-CustomRow', 'Test-StockSecurityTile') {
+         'Get-SafeUrl', 'Is-Todo', 'Test-CustomSlot', 'Test-SlotEmpty', 'New-EmptySlot', 'Clear-CustomSlot', 'Test-CustomSlotTarget', 'ConvertTo-CustomSlot', 'Remove-CustomRow', 'Add-CustomRow', 'Test-StockSecurityTile', 'Test-SecurityLabel', 'Get-SecurityMigration', 'ConvertTo-SecuritySlot', 'Test-CustomFileExt') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
-foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(ModernFill|Acronyms|Theme|D2Fill|CustomSlotTypes|CustomSlotBadExt)\s*=') { Invoke-Expression $l.Extent.Text } }
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(ModernFill|Acronyms|Theme|D2Fill|CustomSlotTypes|CustomSlotBadExt|CustomFileExts|CustomFileFilter)\s*=') { Invoke-Expression $l.Extent.Text } }
 function L($label, $extra) { $o = [pscustomobject]@{ label = $label; type = 'website'; action = '' }; if ($extra) { foreach ($k in $extra.Keys) { $o | Add-Member $k $extra[$k] -Force } }; $o }
 $cases = @(
     @((L "RED DOG`nBACK`nOFFICE"), 'Red Dog Back Office', $null),
@@ -88,19 +89,27 @@ Update-OldDefaultOrder; $mb = $global:cfg.panels[1].buttons
 Check 'MB-L3: moved tiles keep their sizes (Security gone, Restarts untouched)' ((Test-SlotEmpty $mb[4]) -and (Test-SlotEmpty $mb[5]) -and $mb[6].width -eq 'full' -and $mb[6].height -eq 70 -and $mb[7].fontSize -eq 14 -and $mb[7].height -eq 85)
 # --- v1.4.0 custom row: migration keeps data and backs up ---
 $global:cfgPath = Join-Path $tmp 'buttons.json'; $v2 = $def | ConvertTo-Json -Depth 12 | ConvertFrom-Json
-$sb = @($v2.panels[1].buttons); $sec = [pscustomobject]@{ label = "START`nJARTREK`nSECURITY"; bg = '#8A6100'; width = 'full'; height = 80; type = 'program'; target = 'C:\JT\sec.exe' }
+$sb = @($v2.panels[1].buttons); $sec = [pscustomobject]@{ label = "START`nJARTREK`nSECURITY"; bg = '#8A6100'; width = 'full'; height = 80; type = 'program'; target = 'C:\Program Files\Jartrek\JSecurity.exe'; image = 'C:\pics\mine.png'; args = ''; runAsAdmin = $false }
 $v2.panels[1].buttons = @($sb[0..3]) + $sec + @($sb[6..7]); $v2.layoutVersion = 2; $v2.panels[0].buttons[0].label = 'MY RENAMED TILE'
 $before = $v2 | ConvertTo-Json -Depth 12; [IO.File]::WriteAllText($global:cfgPath, $before)
 Remove-Item -LiteralPath ($global:cfgPath + '.pre-v1.4.bak') -ErrorAction SilentlyContinue
 $global:cfg = $before | ConvertFrom-Json; Update-OldDefaultOrder
 $after = Get-Content $global:cfgPath -Raw | ConvertFrom-Json; $al = @($after.panels[1].buttons)
-Check 'v3 migration: a configured Security tile is dropped, 2 empty slots in its place' ($al.Count -eq 8 -and (Test-SlotEmpty $al[4]) -and (Test-SlotEmpty $al[5]) -and -not (@($al | Where-Object { Test-StockSecurityTile $_ }).Count) -and $after.layoutVersion -eq 3)
+Check 'CC M1: a configured Security tile (C:\Program Files\Jartrek\JSecurity.exe) becomes the LEFT custom slot (label, picture, target kept; no args, not admin), right slot empty' ($al.Count -eq 8 -and (Test-CustomSlot $al[4]) -and -not (Test-SlotEmpty $al[4]) -and $al[4].target -eq 'C:\Program Files\Jartrek\JSecurity.exe' -and $al[4].type -eq 'program' -and $al[4].image -eq 'C:\pics\mine.png' -and $al[4].label -eq "START`nJARTREK`nSECURITY" -and $al[4].args -eq '' -and -not $al[4].runAsAdmin -and $al[4].width -eq 'half' -and (Test-SlotEmpty $al[5]) -and -not (@($al | Where-Object { Test-StockSecurityTile $_ }).Count) -and $after.layoutVersion -eq 3)
 Check 'v3 migration: every other tile kept as is (no data loss)' ($after.panels[0].buttons[0].label -eq 'MY RENAMED TILE' -and @($after.panels[0].buttons).Count -eq @($v2.panels[0].buttons).Count -and (($al[0..3] | ConvertTo-Json -Depth 8) -eq (@($sb[0..3]) | ConvertTo-Json -Depth 8)) -and (($al[6..7] | ConvertTo-Json -Depth 8) -eq (@($sb[6..7]) | ConvertTo-Json -Depth 8)))
 Check 'v3 migration: one-time backup buttons.json.pre-v1.4.bak is the old file byte for byte' ((Get-Content ($global:cfgPath + '.pre-v1.4.bak') -Raw) -ceq $before -and (Test-Path ($global:cfgPath + '.bak')))
 $global:cfg = Get-Content $global:cfgPath -Raw | ConvertFrom-Json; $mt = (Get-Item $global:cfgPath).LastWriteTimeUtc; Start-Sleep -Milliseconds 30; Update-OldDefaultOrder
 Check 'v3 migration: runs once (a v3 file is not touched again)' ((Get-Item $global:cfgPath).LastWriteTimeUtc -eq $mt)
 $c3 = $before | ConvertFrom-Json; $c3.panels[1].buttons[4].label = "START`nJARTREK`nSECURITY 2"; $global:cfg = $c3; Update-OldDefaultOrder
 Check 'v3 migration: a user tile with a different label is kept' (@($global:cfg.panels[1].buttons | Where-Object { ([string]$_.label) -like '*SECURITY 2' }).Count -eq 1)
+# CC M1 / LJ M18-I3: stock (TODO) tile dropped; a target a custom slot can't hold is kept as is; label alone is not enough
+function MigOne($tgt, $lbl = "START`nJARTREK`nSECURITY") { $c = $before | ConvertFrom-Json; $c.panels[1].buttons[4].target = $tgt; $c.panels[1].buttons[4].label = $lbl; $global:cfg = $c; Update-OldDefaultOrder; return @($global:cfg.panels[1].buttons) }
+$m = MigOne 'TODO: set the Jartrek Security program'
+Check 'CC M1: stock TODO tile -> 2 empty slots' ($m.Count -eq 8 -and (Test-SlotEmpty $m[4]) -and (Test-SlotEmpty $m[5]))
+$m = MigOne 'C:\JT\run.bat'
+Check 'CC M1: configured target that fails the custom check -> tile kept exactly, no row added' ($m.Count -eq 7 -and $m[4].target -eq 'C:\JT\run.bat' -and -not (Test-CustomSlot $m[4]) -and -not @($m | Where-Object { Test-CustomSlot $_ }).Count)
+Check 'LJ M18-I3: match needs the stock label AND stock target' ((Test-StockSecurityTile ([pscustomobject]@{ label = "START`nJARTREK`nSECURITY"; target = 'TODO: set the Jartrek Security program' })) -and -not (Test-StockSecurityTile ([pscustomobject]@{ label = "START`nJARTREK`nSECURITY"; target = 'C:\x\other.exe' })) -and -not (Test-StockSecurityTile ([pscustomobject]@{ label = 'START JARTREK'; target = 'TODO: set the Jartrek Security program' })) -and (Get-SecurityMigration ([pscustomobject]@{ label = 'OTHER'; target = 'TODO: set the Jartrek Security program' })) -eq $null)
+$al = MigOne 'TODO: set the Jartrek Security program'   # the row model below starts from the stock (2 empty slots) migration
 # --- custom row model ---
 $items = New-Object System.Collections.ArrayList; foreach ($x in $al) { [void]$items.Add(($x | ConvertTo-Json -Depth 8 | ConvertFrom-Json)) }
 Check 'row: renders as 2 +Add slots (both empty, adjacent, half)' (@($items | Where-Object { Test-SlotEmpty $_ }).Count -eq 2 -and $items.IndexOf(@($items | Where-Object { Test-SlotEmpty $_ })[0]) -eq 4)
@@ -137,6 +146,24 @@ Check 'layout: the 2 slots are half width, so Add-TileRows puts them side by sid
 $sm = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Slot-Menu' }, $true).Extent.Text
 Check 'menus: slot menu has Add/Edit/Remove this button/Remove this row (disabled while filled); Setup restores the row' ($sm.Contains("'Add a button here...'") -and $sm.Contains("'Edit this button...'") -and $sm.Contains("'Remove this button'") -and $sm.Contains('Get-RemoveRowLabel $canRow') -and $sm.Contains('$rr.IsEnabled = $canRow') -and $src.Contains("'Add the row of 2 custom buttons'"))
 Check 'restarts unchanged: ScreenConnect elevation and force-restart confirmation' ($ib.Contains("'restart-screenconnect' { return (Restart-ScreenConnect) }") -and $ib.Contains("CC-M4/LJ-L3: force restart ALWAYS asks") -and $ib.Contains("'YesNo', 'Warning', 'No'"))
+# --- LJ M18 / CC L1: File allowlist, trailing dot/space, ADS, wildcards, expanded paths, userinfo ---
+foreach ($b in 'C:\x\a.chm', 'C:\x\a.jar', 'C:\x\a.wsc', 'C:\x\a.settingcontent-ms', 'C:\x\a.library-ms', 'C:\x\a.searchConnector-ms', 'C:\x\a.diagcab', 'C:\x\a.msix', 'C:\x\a.appx', 'C:\x\a.docm', 'C:\x\a.xlsm', 'C:\x\a.pptm', 'C:\x\a.iso', 'C:\x\a.img', 'C:\x\a.vhdx', 'C:\x\a.zip',
+                'C:\x\run.bat.', 'C:\x\run.bat ', 'C:\x\a.pdf.', 'C:\x\a.pdf ', 'C:\x.\a.pdf', 'C:\x\x.ps1:s', 'C:\x\a.pdf:s', 'C:\x\a.pdf::$DATA', 'C:\x\run.ba?', 'C:\x\*', 'C:\x\*.pdf', 'C:\x\[a].pdf', 'C:\x\a].pdf') {
+    Check "LJ M18: file target refused: $b" ([bool](Test-CustomSlotTarget 'file' $b)) }
+foreach ($b in 'C:\x\run.ex?', 'C:\x\*.exe', 'C:\x\a.exe.', 'C:\x\a.exe ', 'C:\x\a.exe:s', 'C:\x\[a].exe') { Check "LJ M18: program target refused: $b" ([bool](Test-CustomSlotTarget 'program' $b)) }
+foreach ($e in $global:CustomFileExts) { Check "LJ M18: allowlisted .$e passes" ($null -eq (Test-CustomSlotTarget 'file' "C:\Docs\a b.$e")) }
+Check 'LJ M18: allowlist has no macro, archive, image or script types' (-not @($global:CustomFileExts | Where-Object { $_ -match '^(docm|xlsm|pptm|zip|iso|img|vhdx?|exe|bat|cmd|ps1|js|chm|jar)$' }).Count)
+$env:BLT_DIR = 'C:\Docs'; $env:BLT_BAD = 'C:\x\run.bat'; $env:BLT_WILD = 'C:\x\*'
+Check 'CC L1: %VAR% expanded then checked (good)' ($null -eq (Test-CustomSlotTarget 'file' '%BLT_DIR%\a.pdf'))
+Check 'CC L1: %VAR% expanding to a script or wildcard is refused' ([bool](Test-CustomSlotTarget 'file' '%BLT_BAD%') -and [bool](Test-CustomSlotTarget 'file' '%BLT_WILD%\a.pdf') -and [bool](Test-CustomSlotTarget 'file' '%BLT_NOPE_UNSET%\a.pdf'))
+Check 'LJ M18-I2: website with user info refused, normal ones pass' ([bool](Test-CustomSlotTarget 'website' 'https://bank.com@evil.example') -and [bool](Test-CustomSlotTarget 'website' 'https://u:p@example.invalid/') -and $null -eq (Test-CustomSlotTarget 'website' 'https://example.invalid/a?b=1&c=[x]'))
+$rb = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Resolve-ButtonPath' }, $true).Extent.Text
+$ap = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Ask-ForPath' }, $true).Extent.Text
+$sct = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Start-CustomTarget' }, $true).Extent.Text
+Check 'LJ M18-M2: Resolve-ButtonPath uses Test-Path -LiteralPath only' ($rb.Contains('Test-Path -LiteralPath $t') -and $rb -notmatch 'Test-Path \$')
+Check 'LJ M18-M2: custom click re-checks the resolved path and launches exactly it via Process.Start (no Start-Process wildcard resolution)' ($ib.Contains('$why = Test-CustomSlotTarget $kind $path') -and $ib.Contains('Start-CustomTarget $path; return $true') -and $ib.IndexOf('Start-CustomTarget $path') -lt $ib.IndexOf('Start-Process -FilePath $path') -and $sct.Contains('[System.Diagnostics.Process]::Start($si)') -and $sct -notmatch '(?m)^[^#]*Start-Process' -and $ib.Contains("slot = 'custom'; empty = `$false"))
+Check 'LJ M18-L1: picker for a custom slot uses the type filter and runs the pick through Test-CustomSlotTarget' ($ap.Contains("if (`$custom) { if (`$kind -eq 'program') { 'Programs|*.exe' } else { `$global:CustomFileFilter } }") -and $ap.Contains('Test-CustomSlotTarget $kind $o.FileName') -and $ap.IndexOf('Test-CustomSlotTarget') -lt $ap.LastIndexOf('return $o.FileName') -and $eb.Contains("slot = `$(if (`$Custom) { 'custom' }"))
+Check 'LJ M18-L1: picker filter lists exactly the allowlist' ($global:CustomFileFilter -eq ('Documents, pictures and media|' + (($global:CustomFileExts | ForEach-Object { '*.' + $_ }) -join ';')))
 # --- v1.4.0 Squint/Kern custom-row fixes ---
 foreach ($n in 'Test-CustomSlot', 'Test-SlotEmpty', 'Get-CustomFullName', 'Get-SlotSide', 'Get-SlotView', 'Get-RemoveSlotText', 'Get-RemoveRowLabel') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)

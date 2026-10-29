@@ -375,4 +375,6 @@ if ([System.Windows.MessageBox].GetField('Calls')) {
     Check 'declined: nothing scanned, each network remembered as declined' ($pl.targets.Count -eq 0 -and $ui.state.declined.Count -eq 2 -and [System.Windows.MessageBox]::Calls -eq 2)
     [System.Windows.MessageBox]::Answer = 'Yes'
 } else { 'SKIP  scan plan with a stub MessageBox (real WPF loaded)' }
+foreach ($d in 'Bluetooth Device (Personal Area Network)', 'Bluetooth Device (Personal Area Network) #2') { Check "LJ M18-I4: '$d' never scanned (with or without a gateway)" (-not (Test-VncAdapter 'Ethernet' $d 'Bluetooth Network Connection' '192.168.44.5' 24 @()) -and -not (Test-VncAdapter 'Ethernet' $d 'Ethernet 5' '192.168.44.5' 24 @('192.168.44.1'))) }
+Check 'LJ M18-I4: an adapter named Bluetooth Network Connection never scanned' (-not (Test-VncAdapter 'Ethernet' 'Generic adapter' 'Bluetooth Network Connection' '192.168.44.5' 24 @()))
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

@@ -48,7 +48,7 @@ function global:Find-WpfPropMisuse($ast) {
 }
 # Parameters or assignments named after PowerShell automatic variables ($input is the pipeline enumerator, never the argument).
 function global:Find-AutomaticVarMisuse($ast) {
-    $auto = 'input', 'args', 'this', '_', 'psitem', 'myinvocation', 'psboundparameters', 'pscmdlet', 'host', 'error', 'executioncontext', 'home', 'pid', 'pwd', 'true', 'false', 'null', 'foreach', 'switch', 'psscriptroot', 'pscommandpath'
+    $auto = 'input', 'args', 'this', '_', 'psitem', 'myinvocation', 'psboundparameters', 'pscmdlet', 'host', 'error', 'executioncontext', 'home', 'pid', 'pwd', 'true', 'false', 'null', 'foreach', 'switch', 'psscriptroot', 'pscommandpath', 'matches', 'event', 'sender', 'eventargs'
     $bad = New-Object System.Collections.ArrayList
     foreach ($p in $ast.FindAll({ param($x) $x -is [System.Management.Automation.Language.ParameterAst] }, $true)) {
         if ($p.Name.VariablePath.UserPath.ToLowerInvariant() -in $auto) { [void]$bad.Add(('parameter ${0} (line {1})' -f $p.Name.VariablePath.UserPath, $p.Extent.StartLineNumber)) } }

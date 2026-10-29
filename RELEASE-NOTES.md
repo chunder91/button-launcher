@@ -2,7 +2,7 @@
 
 ## v1.4.0: unread email count on the Email button
 
-Pending review (build of 2026-10-29). Includes everything in v1.3.0. Waiting on the ClaudeCode and Lockjaw reviews, Charles's OK and a test on a real Windows PC.
+Pending review (build of 2026-10-29). Includes everything in v1.3.0. Waiting on the ClaudeCode and Lockjaw reviews, Charles's OK and a test on a real Windows PC. **v1.4.0 replaces v1.3.0, which was pulled.**
 
 - **Off unless you turn it on.** Setup > Unread email count... (or right-click the Email button > Unread email count... once it's on). Nothing checks email, and nothing is sent anywhere, until someone turns it on for their own Windows login.
 - **Your own Jartrek email.** Type the name part of your @jartrek.net address and the same password you use for webmail, press Test, then Save. Save only works after a good Test. The password is saved for this Windows user only, encrypted by Windows, and never in buttons.json or the log.
@@ -13,11 +13,18 @@ Pending review (build of 2026-10-29). Includes everything in v1.3.0. Waiting on 
 - **Turning it off** (untick the box, Save, Yes) clears the badge and forgets the login on this PC.
 - Clicking Email still opens your email exactly as before.
 - **Start Jartrek Security is gone.** In its spot there's a row of 2 buttons you set up yourself: click **+ Add** (or right-click > Add a button here...) and pick a Program, a Website (http or https) or a File, a name and a picture. Right-click a button to edit it or remove it. With both empty, right-click > Remove this row hides the row and the Restarts move up; Setup > Add the row of 2 custom buttons brings it back. These buttons never run scripts, take no command-line arguments and never run as admin. Upgrading keeps every other button as it is and saves your old buttons.json as buttons.json.pre-v1.4.bak.
+- **If you had set up Start Jartrek Security** (picked its program), your setup isn't lost: it becomes the left button of the new row, with the same name, picture and program, and the right spot is empty. If its target is something a custom button can't open (a script or shortcut, for example), the old button stays exactly where it was. Only the untouched, never-set-up button is removed.
+- **Custom buttons are strict about what they open.** A Program must be an .exe. A File must be a document, picture or media file (.pdf, .txt, .rtf, .csv, .doc/.docx, .xls/.xlsx, .ppt/.pptx, .odt, .ods, .png, .jpg/.jpeg, .gif, .bmp, .webp, .tif/.tiff, .mp3, .wav, .m4a, .mp4, .mov, .wmv, .avi); macro Office files, archives, disk images and anything else are refused. Paths with * ? [ ], a ':' after the drive letter, or a name ending in a dot or space are refused, and %VARIABLES% are checked after they're filled in. Web addresses can't contain a user name before the site (user@site). The "can't find it, pick it" window follows the same rules.
 - **Custom row, polish:** while the panels are locked, an empty spot is plain blank space (nothing to click), and with both spots empty the row disappears until you unlock. Removing a button asks first (No is the default). "Remove this row" says to remove both buttons first when it can't be used yet. Long button names stop at 3 lines with "..."; point at the button to see the full name.
 - **View Register finds computers on a local-only network.** The scan now also checks a wired or Wi-Fi connection that has no internet (no gateway), like a separate register network. Each network is still asked about once, and only its own /24 is checked. VPN, virtual and self-assigned (169.254) connections are still skipped.
 - **Fixed:** opening Setup > Unread email count... showed "The property 'Background' cannot be found on this object". The same fix covers Setup > View-only password and Add a computer.
 
-## v1.3.0: find computers you can view automatically, new 3D look
+### Known issues
+- Custom Program and File buttons may point at a network share or mapped drive (\\server\share\..., Z:\...). That's allowed on purpose, the same as other buttons: the share is only contacted when you click the button, and clicking it sends your Windows sign-in to that share, the same as opening it in File Explorer. Only point buttons at shares you trust.
+
+## v1.3.0: find computers you can view automatically, new 3D look (PULLED)
+
+**Pulled on Oct 29, 2026:** its Setup windows (View-only password, Add a computer) could crash with "The property 'Background' cannot be found on this object". Fixed in v1.4.0, which replaces it. The GitHub pre-release was deleted; the v1.3.0 tag is kept for history.
 
 Released Oct 29, 2026 as a private pre-release. Includes everything in v1.2.0. ClaudeCode and Lockjaw passed; Kern's and Squint's fixes are in. Still needs a test on a real Windows PC.
 

@@ -154,18 +154,22 @@ function global:Ask-ForPath($btn, $kind) {
     $o = New-Object System.Windows.Forms.OpenFileDialog
     $label = ([string]$btn.label) -replace "`n", ' '
     $o.Title = if ($btn.askTitle) { $btn.askTitle } else { "Pick the file for $label" }
-    $o.Filter = if ($btn.askFilter) { $btn.askFilter } elseif ($kind -eq 'program') { 'Programs and shortcuts|*.exe;*.lnk|All files|*.*' }
+    $custom = Test-CustomSlot $btn
+    $o.Filter = if ($custom) { if ($kind -eq 'program') { 'Programs|*.exe' } else { $global:CustomFileFilter } }   # LJ M18-L1
+                elseif ($btn.askFilter) { $btn.askFilter } elseif ($kind -eq 'program') { 'Programs and shortcuts|*.exe;*.lnk|All files|*.*' }
                 elseif ($kind -eq 'script') { 'Scripts|*.ps1;*.bat;*.cmd;*.vbs|All files|*.*' } else { 'All files|*.*' }
-    if ($o.ShowDialog() -eq 'OK') { return $o.FileName }
-    return $null
+    if ($o.ShowDialog() -ne 'OK') { return $null }
+    if ($custom) { $why = Test-CustomSlotTarget $kind $o.FileName   # LJ M18-L1: a pick for a custom button passes the same check, or nothing runs
+        if ($why) { [System.Windows.MessageBox]::Show("That can't be opened by this button.`n$why", 'Launcher') | Out-Null; return $null } }
+    return $o.FileName
 }
 
 # Returns a usable path, or $null. Auto-detects, else asks once, then saves the answer.
 function global:Resolve-ButtonPath($btn, $kind) {
     $t = Expand $btn.target
     if (-not (Is-Todo $t)) {
-        if (Test-Path $t) { return $t }
-        if ($kind -eq 'program' -and $t -notmatch '[\\/]') { return $t }       # e.g. shutdown.exe, notepad
+        if (Test-Path -LiteralPath $t) { return $t }   # LJ M18-M2: never a wildcard match
+        if ($kind -eq 'program' -and $t -notmatch '[\\/]' -and -not (Test-CustomSlot $btn)) { return $t }       # e.g. shutdown.exe, notepad
     }
     $canAsk = $btn.askTitle -or $btn.detect -or -not (Is-Todo $t)          # saved path missing on this PC -> ask too
     if (-not $canAsk) {
@@ -215,13 +219,18 @@ Set-Content -LiteralPath '$resQ' -Value `$out -Encoding UTF8
     return $true
 }
 
+function global:Start-CustomTarget([string]$path) {   # LJ M18-M2: Process.Start takes the path literally (Start-Process -FilePath would expand * ? [ ])
+    $si = New-Object System.Diagnostics.ProcessStartInfo; $si.FileName = $path; $si.Arguments = ''; $si.UseShellExecute = $true
+    $si.WorkingDirectory = [System.IO.Path]::GetDirectoryName($path)
+    [void][System.Diagnostics.Process]::Start($si)
+}
 function global:Invoke-Button($btn) {
     $kind = Get-ButtonType $btn
     if (Test-CustomSlot $btn) {   # untrusted target: re-checked on every click; no args, never elevated
         if (Test-SlotEmpty $btn) { return $false }
         $why = Test-CustomSlotTarget $kind ([string]$btn.target)
         if ($why) { [System.Windows.MessageBox]::Show("This button can't open its target.`n$why`nRight-click it > Edit this button to fix it.", 'Launcher') | Out-Null; return $false }
-        $btn = [pscustomobject]@{ type = $kind; target = [string]$btn.target; args = ''; runAsAdmin = $false; label = [string]$btn.label; image = [string]$btn.image }
+        $btn = [pscustomobject]@{ slot = 'custom'; empty = $false; type = $kind; target = [string]$btn.target; args = ''; runAsAdmin = $false; label = [string]$btn.label; image = [string]$btn.image }
     }
     $cText = [string]$btn.confirm
     if (-not $cText.Trim() -and $kind -eq 'builtin' -and [string]$btn.action -eq 'restart-computer') {
@@ -254,6 +263,10 @@ function global:Invoke-Button($btn) {
                 if (Test-VncPickerButton $btn) { Show-VncPicker $btn; return $false }   # v1.3.0: View Register opens the picker (no flash)
                 $path = Resolve-ButtonPath $btn $kind
                 if (-not $path) { return $false }
+                if (Test-CustomSlot $btn) {   # LJ M18-M2: launch exactly the path that passed the check, via ShellExecute (no wildcard resolution)
+                    $why = Test-CustomSlotTarget $kind $path
+                    if ($why) { [System.Windows.MessageBox]::Show("This button can't open its target.`n$why", 'Launcher') | Out-Null; return $false }
+                    Start-CustomTarget $path; return $true }
                 $wd = if ($path -match '[\\/]') { Split-Path -Parent $path } else { $global:here }
                 if ($kind -eq 'script' -and $path -like '*.ps1') {
                     Start-Process powershell.exe -WorkingDirectory $wd @verb -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$path`" $a"
@@ -375,6 +388,9 @@ function global:Test-DangerButton($btn) {
 # Only Program, Website (http/https) or File; never a script, never arguments, never elevated. Targets are untrusted input.
 $global:CustomSlotTypes = @('program', 'website', 'file')
 $global:CustomSlotBadExt = '(?i)\.(ps1|psm1|psd1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|msc|scr|pif|com|cpl|reg|inf|msi|msp|application|appref-ms|url|scf|lnk)$'
+# LJ M18-M1: File targets are an ALLOWLIST of documents, pictures and media (no macro Office types, no archives or disk images)
+$global:CustomFileExts = @('pdf', 'txt', 'rtf', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tif', 'tiff', 'mp3', 'wav', 'm4a', 'mp4', 'mov', 'wmv', 'avi')
+$global:CustomFileFilter = 'Documents, pictures and media|' + (($global:CustomFileExts | ForEach-Object { '*.' + $_ }) -join ';')
 function global:Test-CustomSlot($btn) { return ($null -ne $btn -and [string]$btn.slot -eq 'custom') }
 function global:Test-SlotEmpty($btn) { return ((Test-CustomSlot $btn) -and [bool]$btn.empty) }
 function global:New-EmptySlot {
@@ -385,6 +401,7 @@ function global:Clear-CustomSlot($btn) {   # "Remove this button": the slot stay
     $e = New-EmptySlot; foreach ($pr in $e.PSObject.Properties) { Set-Prop $btn $pr.Name $pr.Value }
     foreach ($n in 'action', 'confirm', 'group', 'detect', 'askTitle', 'askFilter', 'vncPicker', 'email') { if ($btn.PSObject.Properties[$n]) { $btn.PSObject.Properties.Remove($n) } }
 }
+function global:Test-CustomFileExt([string]$t) { $m = [regex]::Match($t, '\.([A-Za-z0-9]{1,5})$'); return ($m.Success -and $global:CustomFileExts -contains $m.Groups[1].Value.ToLowerInvariant()) }
 function global:Test-CustomSlotTarget([string]$type, [string]$target) {   # $null = OK, else a fixed message
     if ($type -notin $global:CustomSlotTypes) { return 'Custom buttons can only open a Program, a Website or a File.' }
     $t = ([string]$target).Trim()
@@ -393,11 +410,22 @@ function global:Test-CustomSlotTarget([string]$type, [string]$target) {   # $nul
     if ($type -eq 'website') {
         $u = Get-SafeUrl $t
         if (-not $u -or $u -notmatch '^(?i)https?://[^\s/?#]+') { return 'Web addresses must start with http:// or https://.' }
+        $ux = $null   # LJ M18-I2: no user@ part, so the address shown is the site it opens
+        if ($u -match '^(?i)https?://[^/?#]*@' -or -not [Uri]::TryCreate($u, [UriKind]::Absolute, [ref]$ux) -or $ux.UserInfo) { return "Web addresses can't contain a user name or '@' before the site." }
         return $null }
     if ($t -match '^[a-z][a-z0-9+.-]*:(?![\\/])' -and $t -notmatch '^[a-zA-Z]:\\') { return 'Pick a file on this PC or the network, not a link.' }
     if ($t -notmatch '^([a-zA-Z]:\\|\\\\|%[A-Za-z_()0-9]+%\\)') { return 'Use the full path (Browse...).' }
+    if ($t -match '[*?\[\]]') { return "That target has characters that aren't allowed." }   # LJ M18-M2: no wildcards in a path
+    if ($t.Contains('%')) {   # CC L1: check the path as it will run (env vars expanded once); the expanded form must pass on its own
+        $x = [Environment]::ExpandEnvironmentVariables($t)
+        if ($x.Contains('%') -or $x -notmatch '^([a-zA-Z]:\\|\\\\)') { return 'Use the full path (Browse...).' }
+        return (Test-CustomSlotTarget $type $x) }
+    if (([string]$target).TrimStart() -match '[. ]$') { return "That path isn't allowed (a name ends with a dot or a space)." }   # checked before Trim: 'run.bat ' must not pass
+    if (($t -replace '^[a-zA-Z]:', '').Contains(':')) { return "That path isn't allowed (':' after the drive letter)." }   # LJ M18-M1: no alternate data streams
+    if (@($t -split '\\' | Where-Object { $_ -match '[. ]$' }).Count) { return "That path isn't allowed (a name ends with a dot or a space)." }   # Windows drops them: run.bat. runs run.bat
     if ($t -match $global:CustomSlotBadExt) { return "Scripts and shortcuts can't be custom buttons. Pick the program or file itself." }
     if ($type -eq 'program' -and $t -notmatch '(?i)\.exe$') { return 'A program must be an .exe file.' }
+    if ($type -eq 'file' -and -not (Test-CustomFileExt $t)) { return 'Files can only be documents, pictures or media (like .pdf, .docx, .xlsx, .jpg, .mp4).' }
     return $null
 }
 function global:ConvertTo-CustomSlot($btn) {   # after a good edit: always half width, no args, never elevated
@@ -423,8 +451,22 @@ function global:Add-CustomRow($items) {   # puts 2 empty slots back just above t
     $at = $items.Count; for ($i = 0; $i -lt $items.Count; $i++) { if (Test-DangerButton $items[$i]) { $at = $i; break } }
     $items.Insert($at, (New-EmptySlot)); $items.Insert($at + 1, (New-EmptySlot)); return $true
 }
-function global:Test-StockSecurityTile($btn) {
-    return (-not (Test-CustomSlot $btn) -and ((([string]$btn.label) -replace '\r', '' -replace '\\n', "`n").Trim() -ceq "START`nJARTREK`nSECURITY"))
+function global:Test-SecurityLabel($btn) { return (-not (Test-CustomSlot $btn) -and ((([string]$btn.label) -replace '\r', '' -replace '\\n', "`n").Trim() -ceq "START`nJARTREK`nSECURITY")) }
+function global:Test-StockSecurityTile($btn) {   # LJ M18-I3 / CC M1: the stock label AND the stock (unset) target
+    return ((Test-SecurityLabel $btn) -and (([string]$btn.target).Trim() -ceq 'TODO: set the Jartrek Security program' -or -not ([string]$btn.target).Trim()))
+}
+function global:Get-SecurityMigration($btn) {   # CC M1: 'drop' (stock, unset) | 'convert' (user set a target that a custom slot allows) | 'keep' | $null (not this tile)
+    if (-not (Test-SecurityLabel $btn)) { return $null }
+    if (Test-StockSecurityTile $btn) { return 'drop' }
+    $t = ([string]$btn.target).Trim(); $k = if ($t -match '(?i)\.exe$') { 'program' } else { 'file' }
+    if (-not (Test-CustomSlotTarget $k $t)) { return 'convert' }
+    return 'keep'
+}
+function global:ConvertTo-SecuritySlot($btn) {   # CC M1: the user's configured tile becomes the LEFT custom slot (label, picture, colours, target kept; no args, never admin)
+    $t = ([string]$btn.target).Trim(); $n = New-EmptySlot
+    foreach ($pr in 'label', 'image', 'bg', 'fg') { if ($btn.PSObject.Properties[$pr] -and [string]$btn.$pr) { Set-Prop $n $pr $btn.$pr } }
+    Set-Prop $n 'target' $t; Set-Prop $n 'type' $(if ($t -match '(?i)\.exe$') { 'program' } else { 'file' }); ConvertTo-CustomSlot $n
+    return $n
 }
 # Title Case for display only. Stored labels are never rewritten; only ALL-CAPS labels are converted.
 function global:Get-DisplayLabel($btn) {
@@ -802,7 +844,7 @@ function global:Edit-Button($btn, [switch]$Custom) {
     [void](AddRow 'confirm' 'Ask first (Yes/No)' $tC $null)
     $bBrowse.Add_Click({
         $k = ($types.GetEnumerator() | Where-Object { $_.Value -eq $cType.SelectedItem }).Key
-        $p = Ask-ForPath ([pscustomobject]@{ label = $btn.label; askTitle = $null; askFilter = $(if ($k -eq 'file') { 'Documents|*.pdf;*.doc;*.docx;*.xlsx;*.txt|All files|*.*' } else { $null }) }) $k
+        $p = Ask-ForPath ([pscustomobject]@{ slot = $(if ($Custom) { 'custom' } else { '' }); label = $btn.label; askTitle = $null; askFilter = $(if ($k -eq 'file') { 'Documents|*.pdf;*.doc;*.docx;*.xlsx;*.txt|All files|*.*' } else { $null }) }) $k
         if ($p) { $tT.Text = $p } }.GetNewClosure())
     $show = {
         $k = ($types.GetEnumerator() | Where-Object { $_.Value -eq $cType.SelectedItem }).Key
@@ -1344,9 +1386,10 @@ function global:Update-OldDefaultOrder {
     }
     # v1.4.0 (layoutVersion 3): the stock Start Jartrek Security tile goes; 2 empty custom slots take its spot. Nothing else moves.
     foreach ($pc in @($global:cfg.panels)) {
-        $bs = @($pc.buttons); $i = -1; for ($j = 0; $j -lt $bs.Count; $j++) { if (Test-StockSecurityTile $bs[$j]) { $i = $j; break } }
-        if ($i -lt 0) { continue }
-        $nb = @(); if ($i -gt 0) { $nb += $bs[0..($i - 1)] }; $nb += (New-EmptySlot); $nb += (New-EmptySlot); if ($i -lt $bs.Count - 1) { $nb += $bs[($i + 1)..($bs.Count - 1)] }
+        $bs = @($pc.buttons); $i = -1; $how = $null; for ($j = 0; $j -lt $bs.Count; $j++) { $how = Get-SecurityMigration $bs[$j]; if ($how) { $i = $j; break } }
+        if ($i -lt 0 -or $how -eq 'keep') { continue }   # CC M1: a configured tile a custom slot can't hold stays exactly as it is (no data loss)
+        $left = if ($how -eq 'convert') { ConvertTo-SecuritySlot $bs[$i] } else { New-EmptySlot }
+        $nb = @(); if ($i -gt 0) { $nb += $bs[0..($i - 1)] }; $nb += $left; $nb += (New-EmptySlot); if ($i -lt $bs.Count - 1) { $nb += $bs[($i + 1)..($bs.Count - 1)] }
         $pc.buttons = $nb; $dropped = $true }
     if ($dropped) { Add-Content -LiteralPath $global:logPath -Value ("{0}  removed Start Jartrek Security; added the custom row" -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
     $keep = $global:cfgPath + '.pre-v1.4.bak'   # a one-time copy of the old file, never overwritten
@@ -1861,7 +1904,7 @@ function global:Get-VncScanTargets([string]$ip, [int]$adapterPrefix, $cfgPrefix)
     return $out.ToArray()
 }
 # H1: only Ethernet (6) / Wi-Fi (71) adapters that are up, not VPN/virtual by name, with an IPv4 gateway inside their own subnet. Never PPP.
-$global:VncAdapterDeny = '(?i)VPN|\bTAP\b|TAP-|\bTUN\d*\b|WireGuard|Wintun|AnyConnect|GlobalProtect|PANGP|Forti|OpenVPN|Zscaler|Tailscale|ZeroTier|Juniper|Pulse Secure|Hyper-V|vEthernet|\bWSL\b|VirtualBox|VMware|Npcap|Loopback|WAN Miniport|Teredo|isatap|Virtual|Tunnel|NordLynx|WARP|Cloudflare|Surfshark|Mullvad|Proton|Windscribe|Sophos|Check ?Point|SonicWall|NetExtender|Citrix|Ivanti'
+$global:VncAdapterDeny = '(?i)VPN|\bTAP\b|TAP-|\bTUN\d*\b|WireGuard|Wintun|AnyConnect|GlobalProtect|PANGP|Forti|OpenVPN|Zscaler|Tailscale|ZeroTier|Juniper|Pulse Secure|Hyper-V|vEthernet|\bWSL\b|VirtualBox|VMware|Npcap|Loopback|WAN Miniport|Teredo|isatap|Virtual|Tunnel|NordLynx|WARP|Cloudflare|Surfshark|Mullvad|Proton|Windscribe|Sophos|Check ?Point|SonicWall|NetExtender|Citrix|Ivanti|Bluetooth|Personal Area Network'
 function global:Test-VncAdapter([string]$type, [string]$desc, [string]$name, [string]$ip, [int]$prefix, $gateways) {
     if ($type -notin 'Ethernet', 'GigabitEthernet', 'Wireless80211') { return $false }   # Ppp, Tunnel, Loopback, Unknown, ... never
     if (($desc -match $global:VncAdapterDeny) -or ($name -match $global:VncAdapterDeny)) { return $false }
