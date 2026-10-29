@@ -1,0 +1,30 @@
+LICENSES - button launcher polished mockup icons (Smudge, Oct 29 2026)
+All mockups only. Nothing applied until Charles picks a direction.
+
+1. Fluent UI System Icons - Copyright (c) Microsoft Corporation - MIT License
+   https://github.com/microsoft/fluentui-system-icons (branch main, assets/<Name>/SVG/)
+2. Fluent Emoji (3D) - Copyright (c) Microsoft Corporation - MIT License
+   https://github.com/microsoft/fluentui-emoji (branch main, assets/<Name>/3D/)
+   Full MIT texts: LICENSE-fluentui-system-icons.txt, LICENSE-fluentui-emoji.txt in this folder.
+3. Red Dog logo (reddog-48/256.png) - copied unchanged from art/reddog/reddog-full-{48,256}.png
+   (source https://reddogpos.com/red-dog-pos-logo.png). Red Dog POS trademark; not MIT; used as the vendor's own app logo.
+4. Font in renders: Selawik (Microsoft's open Segoe UI fallback) - SIL Open Font License 1.1
+   https://github.com/microsoft/Selawik . Font substitute for Segoe UI Variable (not redistributable). No font files shipped here.
+5. Smudge's own work: assets/power-color.svg (gradient power glyph, phase-1 placeholder, not used in final directions)
+   - Copyright (c) 2026 Keystone Bingo Supply, released under MIT.
+
+FILES
+register-48/256.png <- receipt.png [Fluent Emoji 3D, MIT]
+globe-48/256.png <- globe_with_meridians.png [Fluent Emoji 3D, MIT]
+email-48/256.png <- e-mail.png [Fluent Emoji 3D, MIT]
+guide-backoffice-48/256.png <- open_book.png [Fluent Emoji 3D, MIT]
+guide-register-48/256.png <- books.png [Fluent Emoji 3D, MIT]
+badge-48/256.png <- police_car_light.png [Fluent Emoji 3D, MIT]
+revenue-48/256.png <- classical_building.png [Fluent Emoji 3D, MIT]
+security-48/256.png <- locked_with_key.png [Fluent Emoji 3D, MIT]
+screenconnect-48/256.png <- laptop.png [Fluent Emoji 3D, MIT]
+power-48/256.png <- counterclockwise_arrows_button_3d.png [Fluent Emoji 3D "Counterclockwise arrows button", MIT, unmodified; resized only] (replaced electric_plug Oct 29: 1.42:1 on restart tile)
+chip-document-48/256.png <- page_facing_up.png [Fluent Emoji 3D, MIT]
+chip-files-48/256.png <- card_file_box.png [Fluent Emoji 3D, MIT]
+jartrek-security.png (48), jartrek-security@256.png, jartrek-security-48/256.png <- key_3d.png [Fluent Emoji 3D "Key", MIT, unmodified; resized only] (Jartrek chip; replaces shared receipt, Oct 29 2026)
+reddog-48/256.png <- art/reddog/reddog-full-*.png [Red Dog POS, unchanged]

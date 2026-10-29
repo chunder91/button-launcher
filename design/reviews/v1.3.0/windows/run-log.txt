@@ -1,0 +1,12 @@
+12:44:48.784  PowerShell: C:\windows\System32\WindowsPowerShell\v1.0\powershell.exe (5.1.26100.9444)
+12:44:48.791  AppliedDPI (read only): 96
+12:44:48.950  launched Launcher.ps1 pid 39200
+12:45:04.012  panel window 269x1032 at 1651,0, DPI 96
+12:46:04.113  idle CPU: 0 ms over 60.0 s = 0.000% of one core, 0.000% of 32 logical CPUs; WS 257.0 MB; 10 s samples (cumulative ms): 2672, 2672, 2672, 2672, 2672, 2672
+12:46:06.130  stopped launcher pid 39200: exited=True
+12:46:06.142  launched harness pid 45148
+12:53:06.138  harness timeout 420 s; stopping it
+12:53:06.148  harness exit code -1
+12:53:06.154  HKCU Run unchanged: True
+12:53:06.155  test-folder entries in HKCU Run: False
+12:53:06.464  done

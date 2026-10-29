@@ -1,0 +1,29 @@
+LICENSES - button launcher polished mockup icons (Smudge, Oct 29 2026)
+All mockups only. Nothing applied until Charles picks a direction.
+
+1. Fluent UI System Icons - Copyright (c) Microsoft Corporation - MIT License
+   https://github.com/microsoft/fluentui-system-icons (branch main, assets/<Name>/SVG/)
+2. Fluent Emoji (3D) - Copyright (c) Microsoft Corporation - MIT License
+   https://github.com/microsoft/fluentui-emoji (branch main, assets/<Name>/3D/)
+   Full MIT texts: LICENSE-fluentui-system-icons.txt, LICENSE-fluentui-emoji.txt in this folder.
+3. Red Dog logo (reddog-48/256.png) - copied unchanged from art/reddog/reddog-full-{48,256}.png
+   (source https://reddogpos.com/red-dog-pos-logo.png). Red Dog POS trademark; not MIT; used as the vendor's own app logo.
+4. Font in renders: Selawik (Microsoft's open Segoe UI fallback) - SIL Open Font License 1.1
+   https://github.com/microsoft/Selawik . Font substitute for Segoe UI Variable (not redistributable). No font files shipped here.
+5. Smudge's own work: assets/power-color.svg (gradient power glyph, phase-1 placeholder, not used in final directions)
+   - Copyright (c) 2026 Keystone Bingo Supply, released under MIT.
+
+FILES
+register-48/256.png <- receipt.svg [Fluent UI System Icons, MIT]
+globe-48/256.png <- globe.svg [Fluent UI System Icons, MIT]
+email-48/256.png <- mail24.svg [Fluent UI System Icons, MIT]
+guide-backoffice-48/256.png <- book_open.svg [Fluent UI System Icons, MIT]
+guide-register-48/256.png <- book_open.svg [Fluent UI System Icons, MIT]
+badge-48/256.png <- shield.svg [Fluent UI System Icons, MIT]
+revenue-48/256.png <- building_government.svg [Fluent UI System Icons, MIT]
+security-48/256.png <- lock_closed.svg [Fluent UI System Icons, MIT]
+screenconnect-48/256.png <- arrow_sync_regular.svg [Fluent UI System Icons, MIT] (Fluent Regular glyph recoloured #E5484D per spec)
+power-48/256.png <- power_regular.svg [Fluent UI System Icons, MIT] (Fluent Regular glyph recoloured #E5484D per spec)
+chip-document-48/256.png <- document_text.svg [Fluent UI System Icons, MIT]
+chip-files-48/256.png <- document.svg [Fluent UI System Icons, MIT]
+reddog-48/256.png <- art/reddog/reddog-full-*.png [Red Dog POS, unchanged]

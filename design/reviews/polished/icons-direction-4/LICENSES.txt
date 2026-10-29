@@ -1,0 +1,29 @@
+LICENSES - button launcher polished mockup icons (Smudge, Oct 29 2026)
+All mockups only. Nothing applied until Charles picks a direction.
+
+1. Fluent UI System Icons - Copyright (c) Microsoft Corporation - MIT License
+   https://github.com/microsoft/fluentui-system-icons (branch main, assets/<Name>/SVG/)
+2. Fluent Emoji (3D and Flat) - Copyright (c) Microsoft Corporation - MIT License
+   https://github.com/microsoft/fluentui-emoji (branch main, assets/<Name>/3D/ and /Flat/)
+   Full MIT texts: LICENSE-fluentui-system-icons.txt, LICENSE-fluentui-emoji.txt in this folder.
+3. Red Dog logo (reddog-48/256.png) - copied unchanged from art/reddog/reddog-full-{48,256}.png
+   (source https://reddogpos.com/red-dog-pos-logo.png). Red Dog POS trademark; not MIT; used as the vendor's own app logo.
+4. Font in renders: Selawik (Microsoft's open Segoe UI fallback) - SIL Open Font License 1.1
+   https://github.com/microsoft/Selawik . Font substitute for Segoe UI Variable (not redistributable). No font files shipped here.
+5. Smudge own work: none used in directions 3-5.
+
+FILES
+FILES (tint = MIT glyph recoloured, a permitted modification)
+register-48/256.png <- receipt.svg [Fluent Emoji Flat, MIT]
+globe-48/256.png <- globe_with_meridians.svg [Fluent Emoji Flat, MIT]
+email-48/256.png <- e-mail.svg [Fluent Emoji Flat, MIT]
+guide-backoffice-48/256.png <- open_book.svg [Fluent Emoji Flat, MIT]
+guide-register-48/256.png <- books.svg [Fluent Emoji Flat, MIT]
+badge-48/256.png <- police_car_light.svg [Fluent Emoji Flat, MIT]
+revenue-48/256.png <- classical_building.svg [Fluent Emoji Flat, MIT]
+security-48/256.png <- locked_with_key.svg [Fluent Emoji Flat, MIT]
+screenconnect-48/256.png <- laptop.svg [Fluent Emoji Flat, MIT]
+power-48/256.png <- electric_plug.svg [Fluent Emoji Flat, MIT]
+chip-document-48/256.png <- page_facing_up.svg [Fluent Emoji Flat, MIT]
+chip-files-48/256.png <- card_file_box.svg [Fluent Emoji Flat, MIT]
+reddog-48/256.png <- art/reddog/reddog-full-*.png [Red Dog POS, unchanged]

@@ -1,0 +1,4 @@
+badge text #FACC15 on #111111: 12.33 (AA 4.5)
+badge fill #111111 vs Email stops incl flash, min: 5.42
+label #111 on flash stops: [7.17, 5.42]
+error ring #4A4A4A vs rest/hover/pressed stops, min: 3.5

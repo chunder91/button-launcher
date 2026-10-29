@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>User guide</title>
+  <defs>
+    <!-- sticker: cream rim (dilate 7) with a 2px ink edge (dilate 9) and a hard drop shadow -->
+    <filter id="sticker" filterUnits="userSpaceOnUse" x="0" y="0" width="256" height="256" color-interpolation-filters="sRGB">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="9" result="d9"/>
+      <feMorphology in="SourceAlpha" operator="dilate" radius="7" result="d7"/>
+      <feFlood flood-color="#1b1b2a" result="ink"/>
+      <feComposite in="ink" in2="d9" operator="in" result="edge"/>
+      <feOffset in="edge" dx="5" dy="6" result="sh0"/>
+      <feComponentTransfer in="sh0" result="sh"><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feFlood flood-color="#fffdf2"/>
+      <feComposite in2="d7" operator="in" result="rim"/>
+      <feMerge><feMergeNode in="sh"/><feMergeNode in="edge"/><feMergeNode in="rim"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sticker)" stroke="#1b1b2a" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+
+    <path d="M18 70 q55 -24 110 4 q55 -28 110 -4 v128 q-55 -22 -110 4 q-55 -26 -110 -4z" fill="#2f6fdb"/>
+    <path d="M30 62 q48 -20 98 6 v126 q-50 -24 -98 -6z" fill="#fffaf0"/>
+    <path d="M226 62 q-48 -20 -98 6 v126 q50 -24 98 -6z" fill="#f1eadb"/>
+    <g fill="none" stroke-width="7" stroke="#9aa3b5">
+      <path d="M48 92 q30 -8 60 4 M48 116 q30 -8 60 4 M48 140 q30 -8 60 4"/>
+      <path d="M148 96 q30 -12 60 -4 M148 120 q30 -12 60 -4 M148 144 q30 -12 60 -4"/>
+    </g>
+    <path d="M170 76 v74 l14 -12 l14 12 v-80" fill="#ff3b30" transform="translate(0,46)"/>
+    <circle cx="206" cy="46" r="30" fill="#ffd23f"/>
+    <path d="M195 38 q0 -14 12 -14 q12 0 12 12 q0 8 -10 12 v6" fill="none" stroke-width="8"/>
+    <circle cx="209" cy="66" r="3" fill="#1b1b2a" stroke-width="4"/>
+  </g>
+</svg>

@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Liquor control enforcement</title>
+  <defs>
+    <!-- sticker: cream rim (dilate 7) with a 2px ink edge (dilate 9) and a hard drop shadow -->
+    <filter id="sticker" filterUnits="userSpaceOnUse" x="0" y="0" width="256" height="256" color-interpolation-filters="sRGB">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="9" result="d9"/>
+      <feMorphology in="SourceAlpha" operator="dilate" radius="7" result="d7"/>
+      <feFlood flood-color="#1b1b2a" result="ink"/>
+      <feComposite in="ink" in2="d9" operator="in" result="edge"/>
+      <feOffset in="edge" dx="5" dy="6" result="sh0"/>
+      <feComponentTransfer in="sh0" result="sh"><feFuncA type="linear" slope="0.45"/></feComponentTransfer>
+      <feFlood flood-color="#fffdf2"/>
+      <feComposite in2="d7" operator="in" result="rim"/>
+      <feMerge><feMergeNode in="sh"/><feMergeNode in="edge"/><feMergeNode in="rim"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#sticker)" stroke="#1b1b2a" stroke-width="9" stroke-linejoin="round" stroke-linecap="round">
+
+    <path d="M70 22 h40 v40 q34 22 34 58 v104 q0 12 -12 12 h-84 q-12 0 -12 -12 v-104 q0 -36 34 -58z" fill="#2e9e5b"/>
+    <path d="M78 34 v30 q-26 18 -28 50" stroke="#ffffff" stroke-opacity="0.85" fill="none" stroke-width="7"/>
+    <rect x="64" y="12" width="52" height="22" rx="6" fill="#8b5a2b"/>
+    <rect x="44" y="126" width="92" height="64" rx="8" fill="#fffaf0"/>
+    <path d="M58 146 h64 M58 168 h44" fill="none" stroke="#9aa3b5" stroke-width="7"/>
+    <path d="M178 96 l52 18 v40 q0 46 -52 72 q-52 -26 -52 -72 v-40z" fill="#ffc533"/>
+    <path d="M178 112 l36 12 v30 q0 32 -36 52 z" fill="#e3a514" stroke="none"/>
+    <path d="M178 128 l9 18 l20 3 l-15 14 l4 20 l-18 -10 l-18 10 l4 -20 l-15 -14 l20 -3z" fill="#ffffff" stroke-width="6"/>
+  </g>
+</svg>

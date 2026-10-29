@@ -1,0 +1,95 @@
+{
+ "note": "BOX MOCKUP values, rev 2. Written by hand after gen.py (gen.py writes the raw button rows).",
+ "buttons": [
+  {
+   "family": "cyan",
+   "b_fill": "#0B6E99",
+   "label": "#FFFFFF",
+   "b_ratio": 5.67,
+   "a_tile": "#1C4152",
+   "a_ratio": 10.9,
+   "b_fill_vs_panel": 3.25
+  },
+  {
+   "family": "green",
+   "b_fill": "#0E7A4B",
+   "label": "#FFFFFF",
+   "b_ratio": 5.38,
+   "a_tile": "#1D4634",
+   "a_ratio": 10.62,
+   "b_fill_vs_panel": 3.42
+  },
+  {
+   "family": "violet",
+   "b_fill": "#7B4FD6",
+   "label": "#FFFFFF",
+   "b_ratio": 5.34,
+   "a_tile": "#463669",
+   "a_ratio": 10.54,
+   "b_fill_vs_panel": 3.45
+  },
+  {
+   "family": "yellow",
+   "b_fill": "#FACC15",
+   "label": "#111111",
+   "b_ratio": 12.33,
+   "a_tile": "#776520",
+   "a_ratio": 5.73,
+   "b_fill_vs_panel": 12.03
+  },
+  {
+   "family": "grey",
+   "b_fill": "#5F6368",
+   "label": "#FFFFFF",
+   "b_ratio": 6.05,
+   "a_tile": "#3C3D3F",
+   "a_ratio": 10.87,
+   "b_fill_vs_panel": 3.05
+  },
+  {
+   "family": "red",
+   "b_fill": "#C40000",
+   "label": "#FFFFFF",
+   "b_ratio": 6.27,
+   "a_tile": "#621818",
+   "a_ratio": 12.63,
+   "b_fill_vs_panel": 2.94
+  },
+  {
+   "family": "khaki",
+   "b_fill": "#F0E68C",
+   "label": "#111111",
+   "b_ratio": 14.75,
+   "a_tile": "#736F4D",
+   "a_ratio": 5.11,
+   "b_fill_vs_panel": 14.39
+  },
+  {
+   "family": "gold",
+   "b_fill": "#8A6100",
+   "label": "#FFFFFF",
+   "b_ratio": 5.54,
+   "a_tile": "#4C3C18",
+   "a_ratio": 10.68,
+   "b_fill_vs_panel": 3.33
+  }
+ ],
+ "restart_tiles": {
+  "fill": "#2A2A2A",
+  "label_white": 14.35,
+  "icon_outline": "#E5484D",
+  "E5484D_vs_panel": 4.71,
+  "E5484D_vs_tile": 3.67,
+  "kern_B3261E_vs_panel_rejected": 2.82
+ },
+ "editing_bar": {
+  "fill": "#F59E0B",
+  "text": "#111111",
+  "ratio": 8.79
+ },
+ "menu_caption": {
+  "text": "#A0A0A0",
+  "on": "#2B2B2B",
+  "ratio": 5.41
+ }
+}
