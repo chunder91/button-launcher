@@ -65,6 +65,7 @@ param([switch]$Quiet)
 Add-Type -AssemblyName PresentationFramework
 $AppName = '__NAME__'
 $dest = $PSScriptRoot
+$KeyName = if ($AppName -eq 'Launcher') { 'ButtonLauncher' } else { 'ButtonLauncher-' + $AppName }   # R-L2: per-title Uninstall key + Run value
 $expected = Join-Path $env:LOCALAPPDATA ('Programs\' + $AppName)
 $ok = $AppName -and ($AppName -match '^[A-Za-z0-9 _-]+$') -and $dest -and
       ([IO.Path]::GetFullPath($dest).TrimEnd('\') -ieq [IO.Path]::GetFullPath($expected).TrimEnd('\')) -and
@@ -76,11 +77,16 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" | Where-Object { $
 foreach ($l in @((Join-Path ([Environment]::GetFolderPath('Programs')) "$AppName.lnk"), (Join-Path ([Environment]::GetFolderPath('Desktop')) "$AppName.lnk"),
                  (Join-Path ([Environment]::GetFolderPath('Startup')) "$AppName.lnk"), (Join-Path ([Environment]::GetFolderPath('Programs')) "Uninstall $AppName.lnk"))) {
     Remove-Item -LiteralPath $l -ErrorAction SilentlyContinue }
-Remove-Item -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ButtonLauncher' -Recurse -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath ('HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\' + $AppName) -Recurse -ErrorAction SilentlyContinue   # older builds
+$uk = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\'
+Remove-Item -LiteralPath ($uk + $KeyName) -Recurse -ErrorAction SilentlyContinue
+foreach ($old in @('ButtonLauncher', $AppName) | Select-Object -Unique) {   # older builds: only if that key points at this folder
+    if ($old -eq $KeyName) { continue }
+    $il = (Get-ItemProperty -LiteralPath ($uk + $old) -Name 'InstallLocation' -ErrorAction SilentlyContinue).InstallLocation
+    if ($il -and ($il.TrimEnd('\') -ieq $dest.TrimEnd('\'))) { Remove-Item -LiteralPath ($uk + $old) -Recurse -ErrorAction SilentlyContinue } }
 $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$rv = (Get-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue).ButtonLauncher
-if ($rv -and $rv.IndexOf($dest, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Remove-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue }
+foreach ($rn in @($KeyName, 'ButtonLauncher') | Select-Object -Unique) {   # only remove a Run value that starts this folder's exe
+    $rv = (Get-ItemProperty -LiteralPath $run -Name $rn -ErrorAction SilentlyContinue).$rn
+    if ($rv -and $rv.IndexOf($dest, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Remove-ItemProperty -LiteralPath $run -Name $rn -ErrorAction SilentlyContinue } }
 # Delete the folder from a child PowerShell after this script exits (no cmd.exe, -LiteralPath only).
 $q = $dest.Replace("'", "''")
 $cmd = "Start-Sleep -Seconds 2; Remove-Item -LiteralPath '$q' -Recurse -Force -ErrorAction SilentlyContinue"
@@ -94,6 +100,7 @@ param([switch]$Desktop, [switch]$NoAutostart)   # defaults: no desktop shortcut 
 Add-Type -AssemblyName PresentationFramework, System.IO.Compression.FileSystem
 $AppName = '__NAME__'
 $dest = Join-Path $env:LOCALAPPDATA ("Programs\" + $AppName)
+$KeyName = if ($AppName -eq 'Launcher') { 'ButtonLauncher' } else { 'ButtonLauncher-' + $AppName }   # R-L2: per-title Uninstall key + Run value
 if ([System.Windows.MessageBox]::Show("Install $AppName for this user?`n`nIt goes in the Start menu and starts with Windows (you can turn that off: unlock, right-click a panel > Start with Windows).", "$AppName Setup", 'OKCancel', 'Question') -ne 'OK') { exit }
 if (-not $Desktop) { $Desktop = ([System.Windows.MessageBox]::Show("Also put a shortcut on the desktop?", "$AppName Setup", 'YesNo', 'Question', 'No') -eq 'Yes') }
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*$dest\Launcher.ps1*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
@@ -133,12 +140,19 @@ Remove-Item -LiteralPath (Join-Path ([Environment]::GetFolderPath('Startup')) "$
 
 # Start with Windows: per-user Run key, ON by default
 $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-if ($NoAutostart) { Remove-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue }
-else { New-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -Value ('"' + $exe + '"') -PropertyType String -Force | Out-Null }
+if ($KeyName -ne 'ButtonLauncher') {   # older builds always used 'ButtonLauncher': drop it only if it starts this folder
+    $rv = (Get-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue).ButtonLauncher
+    if ($rv -and $rv.IndexOf($dest, [StringComparison]::OrdinalIgnoreCase) -ge 0) { Remove-ItemProperty -LiteralPath $run -Name 'ButtonLauncher' -ErrorAction SilentlyContinue } }
+if ($NoAutostart) { Remove-ItemProperty -LiteralPath $run -Name $KeyName -ErrorAction SilentlyContinue }
+else { New-ItemProperty -LiteralPath $run -Name $KeyName -Value ('"' + $exe + '"') -PropertyType String -Force | Out-Null }
 
 # Installed apps entry
-Remove-Item -LiteralPath "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$AppName" -Recurse -ErrorAction SilentlyContinue   # older builds
-$k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\ButtonLauncher'
+$uk = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\'
+foreach ($old in @('ButtonLauncher', $AppName) | Select-Object -Unique) {   # older builds: only if that key points at this folder
+    if ($old -eq $KeyName) { continue }
+    $il = (Get-ItemProperty -LiteralPath ($uk + $old) -Name 'InstallLocation' -ErrorAction SilentlyContinue).InstallLocation
+    if ($il -and ($il.TrimEnd('\') -ieq $dest.TrimEnd('\'))) { Remove-Item -LiteralPath ($uk + $old) -Recurse -ErrorAction SilentlyContinue } }
+$k = $uk + $KeyName
 New-Item -Path $k -Force | Out-Null
 $kb = [int][Math]::Ceiling(((Get-ChildItem -LiteralPath $dest -Recurse -File | Measure-Object Length -Sum).Sum) / 1KB)
 $vals = [ordered]@{ DisplayName = $AppName; DisplayVersion = '__VERSION__'; Publisher = 'Charles Cipolla'; DisplayIcon = "$exe,0"

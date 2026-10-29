@@ -810,20 +810,37 @@ function global:Show-AllPanels {
     }
 }
 
-# Start with Windows: per-user HKCU Run value 'ButtonLauncher' (no admin).
+# R-L1/R-L2: same name rules as Build-Installer.ps1 (tools/test-installer-dryrun.ps1 checks the two copies match).
+function global:Get-SafeAppName([string]$n) {
+    $reserved = '^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$'
+    $raw = ([string]$n).Trim()
+    if ((($raw -split '\.')[0]).Trim() -match $reserved) { return 'Launcher' }
+    $s = (($raw -replace '[^A-Za-z0-9 _-]', '') -replace '\s+', ' ').Trim()
+    if ($s.Length -gt 64) { $s = $s.Substring(0, 64) }
+    $s = $s.TrimEnd('.', ' ')
+    if (-not $s -or $s -match $reserved) { return 'Launcher' }
+    return $s
+}
+function global:Get-AppKeyName {
+    $AppName = Get-SafeAppName ([string]$global:cfg.title)
+    if ($AppName -eq 'Launcher') { return 'ButtonLauncher' } else { return 'ButtonLauncher-' + $AppName }
+}
+# Start with Windows: per-user HKCU Run value named by Get-AppKeyName (no admin), same name the installer writes.
 function global:Get-AutostartCommand {
     $exe = Join-Path $global:here 'ButtonLauncher.exe'
     if (Test-Path -LiteralPath $exe) { return '"' + $exe + '"' }
     return 'wscript.exe "' + (Join-Path $global:here 'Start Launcher.vbs') + '"'
 }
 function global:Get-Autostart {
-    $v = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'ButtonLauncher' -ErrorAction SilentlyContinue).ButtonLauncher
+    $n = Get-AppKeyName
+    $v = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $n -ErrorAction SilentlyContinue).$n
     return [bool]$v
 }
 function global:Set-Autostart([bool]$on) {
     $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-    if ($on) { New-ItemProperty -LiteralPath $k -Name 'ButtonLauncher' -Value (Get-AutostartCommand) -PropertyType String -Force | Out-Null }
-    else { Remove-ItemProperty -LiteralPath $k -Name 'ButtonLauncher' -ErrorAction SilentlyContinue }
+    $n = Get-AppKeyName
+    if ($on) { New-ItemProperty -LiteralPath $k -Name $n -Value (Get-AutostartCommand) -PropertyType String -Force | Out-Null }
+    else { Remove-ItemProperty -LiteralPath $k -Name $n -ErrorAction SilentlyContinue }
 }
 
 function global:New-PanelFromMenu {

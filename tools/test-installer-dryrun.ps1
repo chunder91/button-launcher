@@ -19,7 +19,7 @@ foreach ($k in '$uninstTemplate', '$install') {
 }
 Check 'uninstall uses $PSScriptRoot' ($tmpl['$uninstTemplate'] -match '\$dest = \$PSScriptRoot')
 Check 'uninstall has no cmd rmdir' ($tmpl['$uninstTemplate'] -notmatch 'rmdir')
-Check 'uninstall removes Run value' ($tmpl['$uninstTemplate'] -match "Remove-ItemProperty -LiteralPath \`$run -Name 'ButtonLauncher'")
+Check 'uninstall removes Run value' ($tmpl['$uninstTemplate'] -match 'Remove-ItemProperty -LiteralPath \$run -Name \$rn')
 # H1/L4: sanitizer (same expression as the builder)
 $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-SafeAppName' }, $true)
 Check 'builder defines Get-SafeAppName' ([bool]$fn)
