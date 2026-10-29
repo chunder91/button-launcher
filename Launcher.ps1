@@ -438,7 +438,11 @@ function global:Save-Config {
     foreach ($p in $global:panels) { Set-Prop $p.cfg 'buttons' @($p.items.ToArray()) }
     $global:cfg.panels = @($global:panels | ForEach-Object { $_.cfg })
     $json = $global:cfg | ConvertTo-Json -Depth 12
-    [IO.File]::WriteAllText($global:cfgPath, $json, (New-Object Text.UTF8Encoding $false))
+    # CC-M2: write to a temp file, then swap it in and keep the previous copy as buttons.json.bak
+    $tmp = $global:cfgPath + '.tmp'
+    [IO.File]::WriteAllText($tmp, $json, (New-Object Text.UTF8Encoding $false))
+    if (Test-Path -LiteralPath $global:cfgPath) { [IO.File]::Replace($tmp, $global:cfgPath, $global:cfgPath + '.bak') }
+    else { [IO.File]::Move($tmp, $global:cfgPath) }
 }
 
 function global:Get-Screen($pc) {
@@ -689,8 +693,13 @@ function global:New-PanelFromMenu {
 
 # ================= MAIN (runs only after every function above is defined) =================
 try {
-    try { $global:cfg = Get-Content $global:cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json }
-    catch { throw "Couldn't read buttons.json: $($_.Exception.Message)" }
+    try { $global:cfg = Get-Content -LiteralPath $global:cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if (-not $global:cfg) { throw 'buttons.json is empty.' } }
+    catch {
+        $why = $_.Exception.Message; $bak = $global:cfgPath + '.bak'   # CC-M2: fall back to the last good copy
+        try { $global:cfg = Get-Content -LiteralPath $bak -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json } catch { $global:cfg = $null }
+        if (-not $global:cfg) { throw "Couldn't read buttons.json: $why" }
+        Add-Content -LiteralPath $global:logPath -Value ("{0}  buttons.json unreadable ({1}); loaded buttons.json.bak" -f (Get-Date -Format s), $why) -ErrorAction SilentlyContinue
+    }
     if (-not $global:cfg.panels) { throw 'buttons.json has no "panels" list.' }
     if ($global:cfg.clickSound -eq $null) { $global:cfg | Add-Member -NotePropertyName clickSound -NotePropertyValue $false }
     if ($global:cfg.locked -eq $null) { $global:cfg | Add-Member -NotePropertyName locked -NotePropertyValue $true }
