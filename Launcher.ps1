@@ -31,7 +31,9 @@ $global:RaisedBrush  = $null
 $global:SunkenBrush  = $null
 $global:app          = $null
 $global:relayoutTimer = $null
-$global:labelSink    = $null                                      # labels collected while a panel is built (min font)
+$global:labelSink    = $null
+$global:AppVersion   = '1.1.0'
+$global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
     if ($err -is [Exception]) { $ex = $err; $trace = $err.StackTrace } else { $ex = $err.Exception; $trace = $err.ScriptStackTrace }
@@ -679,6 +681,8 @@ function global:Panel-Menu($p, $menu) {
         $si = Add-MenuItem $mon ("Monitor {0} ({1}x{2})" -f ($k + 1), $all[$k].Bounds.Width, $all[$k].Bounds.Height) { $p.cfg.monitor = $kk; Save-Config; Layout-Panel $p }.GetNewClosure()
         $si.IsCheckable = $true; $si.IsChecked = ([int]$p.cfg.monitor -eq $k) }
     [void]$menu.Items.Add($mon)
+    $as = Add-MenuItem $menu 'Start with Windows' { Set-Autostart (-not (Get-Autostart)) }
+    $as.IsCheckable = $true; $as.IsChecked = (Get-Autostart)
     $cs = Add-MenuItem $menu 'Click sound' { $global:cfg.clickSound = -not [bool]$global:cfg.clickSound; Save-Config }
     $cs.IsCheckable = $true; $cs.IsChecked = [bool]$global:cfg.clickSound
     [void](Add-MenuItem $menu 'Rename panel...' { $n = [Microsoft.VisualBasic.Interaction]::InputBox('Panel name:', 'Rename panel', $p.cfg.name); if ($n) { $p.cfg.name = $n; $p.win.Title = $n; Save-Config } }.GetNewClosure())
@@ -691,7 +695,9 @@ function global:Panel-Menu($p, $menu) {
     [void](Add-MenuItem $menu 'Set up this PC...' { Show-SetupWindow })
     [void](Add-MenuItem $menu 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" })
     [void](Add-MenuItem $menu 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
-    [void](Add-MenuItem $menu 'Reload' { Save-Config; Start-Process wscript.exe "`"$(Join-Path $global:here 'Start Launcher.vbs')`""; $global:app.Shutdown() })
+    [void](Add-MenuItem $menu 'Reload' { Save-Config   # CC-M3: the new copy waits on the mutex until this one has saved and exited
+        Start-Process powershell.exe -WindowStyle Hidden -ArgumentList "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -STA -File `"$(Join-Path $global:here 'Launcher.ps1')`" -Reload"
+        $global:app.Shutdown() })
     [void](Add-MenuItem $menu 'Close this panel' { $p.win.Close() }.GetNewClosure())
     [void](Add-MenuItem $menu 'Close all' { $global:app.Shutdown() })
 }
@@ -791,6 +797,34 @@ function global:Open-Panel($pc) {
     return $p
 }
 
+# Second launch (Start menu, exe, shortcut) while running: show every panel and bring it to the front.
+function global:Show-AllPanels {
+    $reopen = @($global:panels | Where-Object { -not $_.deleted -and -not $_.win.IsVisible })
+    foreach ($p in $reopen) { [void]$global:panels.Remove($p); [void](Open-Panel $p.cfg) }
+    if ($reopen.Count) { Apply-Lock }
+    foreach ($p in $global:panels) {
+        if ($p.win.WindowState -eq 'Minimized') { $p.win.WindowState = 'Normal' }
+        $t = $p.win.Topmost; $p.win.Topmost = $true; $p.win.Topmost = $t
+        [void]$p.win.Activate()
+    }
+}
+
+# Start with Windows: per-user HKCU Run value 'ButtonLauncher' (no admin).
+function global:Get-AutostartCommand {
+    $exe = Join-Path $global:here 'ButtonLauncher.exe'
+    if (Test-Path -LiteralPath $exe) { return '"' + $exe + '"' }
+    return 'wscript.exe "' + (Join-Path $global:here 'Start Launcher.vbs') + '"'
+}
+function global:Get-Autostart {
+    $v = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'ButtonLauncher' -ErrorAction SilentlyContinue).ButtonLauncher
+    return [bool]$v
+}
+function global:Set-Autostart([bool]$on) {
+    $k = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    if ($on) { New-ItemProperty -LiteralPath $k -Name 'ButtonLauncher' -Value (Get-AutostartCommand) -PropertyType String -Force | Out-Null }
+    else { Remove-ItemProperty -LiteralPath $k -Name 'ButtonLauncher' -ErrorAction SilentlyContinue }
+}
+
 function global:New-PanelFromMenu {
     $n = [Microsoft.VisualBasic.Interaction]::InputBox('Name for the new panel:', 'Add new panel', 'New panel')
     if (-not $n) { return }
@@ -810,10 +844,13 @@ try {
     $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($global:here.ToLowerInvariant()))) -replace '-', '').Substring(0, 16)
     $created = $false
     $global:mutex = New-Object System.Threading.Mutex($true, "Local\ButtonLauncher-$hash", [ref]$created)
+    $global:showEvent = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, "Local\ButtonLauncher-$hash-show")
     if (-not $created) {
         $got = $false
-        try { $got = $global:mutex.WaitOne(10000) } catch [System.Threading.AbandonedMutexException] { $got = $true }
-        if (-not $got) { exit 0 }   # already running
+        if ($args -contains '-Reload') {   # Reload: wait for the old copy to save and exit
+            try { $got = $global:mutex.WaitOne(10000) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+        }
+        if (-not $got) { [void]$global:showEvent.Set(); exit 0 }   # already running: ask it to show its panels, then quit quietly
     }
     try { $global:cfg = Get-Content -LiteralPath $global:cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if (-not $global:cfg) { throw 'buttons.json is empty.' } }
     catch {
@@ -844,6 +881,8 @@ try {
     foreach ($pc in @($global:cfg.panels)) { [void](Open-Panel $pc) }
     Apply-Lock                                          # builds every panel (menus know every panel) + tool-window style + placement
     if ($global:panels.Count -eq 0) { throw 'No panels could be opened.' }
+    $showTimer = New-Object System.Windows.Threading.DispatcherTimer; $showTimer.Interval = [TimeSpan]::FromMilliseconds(400)
+    $showTimer.Add_Tick({ if ($global:showEvent.WaitOne(0)) { Show-AllPanels } }); $showTimer.Start()
     if (-not [bool]$global:cfg.setupDone) {   # UX-2a: first run (right after install) lists every button that still needs a file
         Set-Prop $global:cfg 'setupDone' $true
         [void]$global:app.Dispatcher.BeginInvoke([Action]{ Show-SetupWindow -OnlyIfNeeded }, [System.Windows.Threading.DispatcherPriority]::ApplicationIdle)
