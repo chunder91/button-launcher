@@ -951,7 +951,7 @@ function global:Panel-Menu($p, $menu) {
     $setup = New-Object System.Windows.Controls.MenuItem; $setup.MinHeight = 44
     $hs = New-Object System.Windows.Controls.StackPanel
     $h1 = New-Object System.Windows.Controls.TextBlock; $h1.Text = 'Setup'
-    $h2 = New-Object System.Windows.Controls.TextBlock; $h2.Text = 'PC setup, panels, installer'; $h2.FontSize = 12; $h2.Foreground = Brush '#A0A0A0'
+    $h2 = New-Object System.Windows.Controls.TextBlock; $h2.Text = $(if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { 'PC setup, panels, installer' } else { 'PC setup, panels' }); $h2.FontSize = 12; $h2.Foreground = Brush '#A0A0A0'
     [void]$hs.Children.Add($h1); [void]$hs.Children.Add($h2); $setup.Header = $hs
     [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
     if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" }) }   # installed copies ship without the builder

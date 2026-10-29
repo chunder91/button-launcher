@@ -139,11 +139,32 @@ Function .onInit
     Quit
   ${EndIf}
   StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APPNAME}"   ; fixed location (no /D override)
+  ; N4: an EMPTY leftover Programs\Launcher (no files, no links, not itself a link) counts as a fresh install
+  ${If} ${FileExists} "$INSTDIR\*.*"
+  ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
+  ${AndIfNot} ${FileExists} "$INSTDIR\.buttonlauncher"
+    StrCpy $R6 "$INSTDIR"
+    Call IsLink
+    StrCpy $3 0
+    FindFirst $1 $2 "$INSTDIR\*.*"
+    ${DoWhile} $2 != ""
+      ${If} $2 != "."
+      ${AndIf} $2 != ".."
+        IntOp $3 $3 + 1
+      ${EndIf}
+      FindNext $1 $2
+    ${Loop}
+    FindClose $1
+    ${If} $R5 = 0
+    ${AndIf} $3 = 0
+      RMDir "$INSTDIR"                          ; non-recursive: only an empty folder can go
+    ${EndIf}
+  ${EndIf}
   ; R14-L3: never merge into some other app's Programs\Launcher
   ${If} ${FileExists} "$INSTDIR\*.*"
   ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
   ${AndIfNot} ${FileExists} "$INSTDIR\.buttonlauncher"
-    MessageBox MB_OK|MB_ICONSTOP "Setup stopped: $INSTDIR already exists and isn't a Button Launcher install, so nothing was changed." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Setup stopped: $INSTDIR already exists but has no Launcher.ps1 or .buttonlauncher marker, so it may belong to another program (or it is a link). Nothing was changed." /SD IDOK
     SetErrorLevel 1
     Quit
   ${EndIf}
@@ -160,6 +181,24 @@ Function .onInit
   ${ElseIfNot} ${Silent}
     MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Also put a shortcut on the desktop?" IDNO +2
     StrCpy $WantDesk 1
+  ${EndIf}
+FunctionEnd
+
+;; R15-L1: after a failure that left the install untouched, drop the new pictures backup if the install's pictures are there;
+;; otherwise keep it and say where. KeepNote only appends the location.
+Function DropKeep
+  ${If} $5 = 1
+    ${If} ${FileExists} "$INSTDIR\images\*.*"
+      !insertmacro SAFE_RMDIR "" "$Keep"
+    ${Else}
+      Call KeepNote
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+Function KeepNote
+  ${If} $5 = 1
+  ${AndIf} ${FileExists} "$Keep\*.*"
+    StrCpy $R9 "$R9$\n$\nA copy of your changed pictures is kept in:$\n$Keep"
   ${EndIf}
 FunctionEnd
 
@@ -184,24 +223,38 @@ Section "Install"
   Pop $0
   Sleep 500
   ; Staged swap (R6-L1): copy the current install beside it, add the new files there, check, then swap folders.
-  System::Call 'kernel32::GetTickCount()i.r1'
+  ; N2/R14-I1: folder suffix = local time + 4 hex digits (tick xor pid); refuse if any of the three names exists
+  ${GetTime} "" "L" $R0 $R1 $R2 $R3 $R4 $R5 $R6
+  System::Call 'kernel32::GetTickCount()i.r6'
+  System::Call 'kernel32::GetCurrentProcessId()i.r7'
+  IntOp $6 $6 ^ $7
+  IntOp $6 $6 & 0xFFFF
+  IntFmt $6 "%04x" $6
+  StrCpy $1 "$R2$R1$R0-$R4$R5$R6-$6"
   StrCpy $Stage "$INSTDIR.new-$1"
   StrCpy $Old "$INSTDIR.old-$1"
   StrCpy $Keep "$INSTDIR.pictures-backup-$1"   ; beside the install, so a failed restore never loses pictures (R14-M1)
+  StrCpy $5 0                                 ; 1 = pictures were set aside in $Keep
   CreateDirectory "$LOCALAPPDATA\Programs"
-  ; Nit: clean up stage/old folders left by an interrupted earlier run (never the pictures backups)
-  FindFirst $3 $4 "$INSTDIR.new-*"
-  ${DoWhile} $4 != ""
-    !insertmacro SAFE_RMDIR "" "$LOCALAPPDATA\Programs\$4"
-    FindNext $3 $4
-  ${Loop}
-  FindClose $3
-  FindFirst $3 $4 "$INSTDIR.old-*"
-  ${DoWhile} $4 != ""
-    !insertmacro SAFE_RMDIR "" "$LOCALAPPDATA\Programs\$4"
-    FindNext $3 $4
-  ${Loop}
-  FindClose $3
+  ${If} ${FileExists} "$Stage\*.*"
+  ${OrIf} ${FileExists} "$Old\*.*"
+  ${OrIf} ${FileExists} "$Keep\*.*"
+    StrCpy $R9 "${APPNAME} could not be installed: a working folder name is already taken ($1). Nothing was changed. Run Setup again."
+    Call Fail
+  ${EndIf}
+  ; R15-H1: never auto-delete Launcher.old-*/.new-*. If the install is missing but one exists, it may be the user's only copy.
+  ${IfNot} ${FileExists} "$INSTDIR\*.*"
+    FindFirst $3 $4 "$INSTDIR.old-*"
+    ${If} $4 == ""
+      FindClose $3
+      FindFirst $3 $4 "$INSTDIR.new-*"
+    ${EndIf}
+    FindClose $3
+    ${If} $4 != ""
+      StrCpy $R9 "Setup stopped: $INSTDIR is missing, but $LOCALAPPDATA\Programs\$4 exists. It may be your previous install.$\n$\nRename the Launcher.old-... folder back to Launcher (or contact support), then run Setup again. Nothing was changed."
+      Call Fail
+    ${EndIf}
+  ${EndIf}
   CreateDirectory "$Stage"
   ${If} ${FileExists} "$INSTDIR\*.*"
     StrCpy $R6 "$INSTDIR"
@@ -235,16 +288,21 @@ Section "Install"
     nsExec::ExecToLog `${PS} "& {${PICS_SAVE}}"`
     Pop $0
     ; R14-M1: proceed only on exit 0 AND the success file the script writes last (a stub or blocked PowerShell writes neither)
-    ${If} $0 != 0
+    ${If} $0 S!= "0"                            ; N1: "error"/"timeout" are failures too
     ${OrIfNot} ${FileExists} "$PLUGINSDIR\saved.ok"
       !insertmacro SAFE_RMDIR "" "$Stage"
       !insertmacro SAFE_RMDIR "" "$Keep"
       StrCpy $R9 "${APPNAME} could not be updated: Setup could not check your pictures (PowerShell did not run: $0).$\n$\nYour current install was not changed, so no pictures were lost."
       Call Fail
     ${EndIf}
-    StrCpy $5 1                                 ; 1 = pictures were set aside in $Keep
-  ${Else}
-    StrCpy $5 0
+    StrCpy $5 1
+    StrCpy $R6 "$Keep"
+    Call IsLink
+    ${If} $R5 = 1
+      !insertmacro SAFE_RMDIR "" "$Stage"
+      StrCpy $R9 "${APPNAME} could not be updated: the pictures backup folder is a link.$\n$Keep$\n$\nYour current install was not changed."
+      Call Fail
+    ${EndIf}
   ${EndIf}
   Delete "$Stage\Uninstall.ps1"                 ; older IExpress uninstaller; Uninstall.exe replaces it
   ClearErrors
@@ -255,6 +313,7 @@ Section "Install"
     SetOutPath "$TEMP"
     !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be installed: unpacking the files failed.$\n$\nNothing was added to the Start menu or the registry. Your current install was not changed."
+    Call DropKeep
     Call Fail
   ${EndIf}
   FileOpen $9 "$Stage\.buttonlauncher" w     ; R14-L3 marker
@@ -266,7 +325,7 @@ Section "Install"
     SetOutPath "$TEMP"                          ; child cwd must not be the stage, or the swap rename fails
     nsExec::ExecToLog `${PS} "& {${PICS_RESTORE}}"`
     Pop $0
-    ${If} $0 != 0
+    ${If} $0 S!= "0"
     ${OrIfNot} ${FileExists} "$PLUGINSDIR\restored.ok"
       !insertmacro SAFE_RMDIR "" "$Stage"
       StrCpy $R9 "${APPNAME} could not be updated: putting your pictures back failed ($0).$\n$\nYour current install was not changed. A copy of your changed pictures is kept in:$\n$Keep"
@@ -284,6 +343,7 @@ Section "Install"
     SetOutPath "$TEMP"
     !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be installed: core files are missing after unpacking.$\n$\nNothing was added to the Start menu or the registry. Your current install was not changed."
+    Call DropKeep
     Call Fail
   ${EndIf}
   SetOutPath "$TEMP"
@@ -294,6 +354,7 @@ Section "Install"
     ${If} ${Errors}
       !insertmacro SAFE_RMDIR "" "$Stage"
       StrCpy $R9 "${APPNAME} could not be updated (a file may be in use). Your current install was not changed."
+      Call DropKeep
       Call Fail
     ${EndIf}
     StrCpy $2 1
@@ -305,12 +366,14 @@ Section "Install"
       ClearErrors
       Rename "$Old" "$INSTDIR"
       ${If} ${Errors}   ; both failed: delete nothing, say where everything is (R7-L2)
-        StrCpy $R9 "${APPNAME} could not be updated, and the old install could not be put back automatically.$\n$\nNothing was deleted:$\nOld install: $Old$\nNew files: $Stage$\n$\nRename the old folder back to:$\n$INSTDIR$\nor run this installer again."
+        StrCpy $R9 "${APPNAME} could not be updated, and the old install could not be put back automatically.$\n$\nNothing was deleted:$\nOld install: $Old$\nNew files: $Stage$\n$\nRename the old folder back to:$\n$INSTDIR$\nbefore running Setup again (Setup will refuse until you do)."
+        Call KeepNote
         Call Fail
       ${EndIf}
     ${EndIf}
     !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be updated (a file may be in use). Your current install was not changed."
+    Call DropKeep
     Call Fail
   ${EndIf}
   ${If} $2 = 1
