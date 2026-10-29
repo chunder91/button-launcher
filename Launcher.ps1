@@ -412,9 +412,15 @@ function global:Edit-Button($btn) {
         $o = New-Object System.Windows.Forms.OpenFileDialog; $o.Filter = 'Pictures|*.png;*.jpg;*.jpeg;*.ico;*.bmp;*.gif'
         if ($o.ShowDialog() -eq 'OK') {
             $dir = Join-Path $global:here 'images'; if (-not (Test-Path $dir)) { New-Item -ItemType Directory $dir | Out-Null }
-            $dest = Join-Path $dir ([IO.Path]::GetFileName($o.FileName))
-            if ($o.FileName -ne $dest) { Copy-Item $o.FileName $dest -Force }
-            $tI.Text = 'images/' + [IO.Path]::GetFileName($o.FileName) } }.GetNewClosure())
+            $fn = [IO.Path]::GetFileName($o.FileName); $dest = Join-Path $dir $fn
+            if ($o.FileName -ne $dest) {
+                # CC-L3: never overwrite a different picture with the same name; add -1, -2, ...
+                $base = [IO.Path]::GetFileNameWithoutExtension($fn); $ext = [IO.Path]::GetExtension($fn); $i = 0
+                while ((Test-Path -LiteralPath $dest) -and ((Get-FileHash -LiteralPath $dest).Hash -ne (Get-FileHash -LiteralPath $o.FileName).Hash)) {
+                    $i++; $fn = "$base-$i$ext"; $dest = Join-Path $dir $fn }
+                if (-not (Test-Path -LiteralPath $dest)) { Copy-Item -LiteralPath $o.FileName -Destination $dest }
+            }
+            $tI.Text = 'images/' + $fn } }.GetNewClosure())
     [void](AddRow 'img' 'Picture' $tI $bI)
     $bIco = Btn 'Use icon'; $bIco.Add_Click({ $tI.Text = 'icon' }.GetNewClosure())
     $cM = Combo @('left','above','only','background') $(if ($btn.imageMode) { $btn.imageMode } else { 'left' }); [void](AddRow 'mode' 'Picture spot' $cM $bIco)
