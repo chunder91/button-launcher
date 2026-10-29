@@ -11,7 +11,7 @@ $fns = 'Set-Prop', 'Get-ButtonType', 'Test-VncIPv4', 'Test-VncHost', 'Get-VncPor
        'Save-VncFavorites', 'Set-VncFavorite', 'Read-VncCache', 'Save-VncCache', 'Test-VncCacheStale', 'Merge-VncRows', 'Test-VncPickerButton',
        'Test-VncAdapter', 'Get-VncRangeText', 'Get-VncNewRanges', 'Test-VncAutoScan', 'Test-VncBannerText', 'Get-VncDisplayName', 'Get-VncInvalidText',
        'Get-VncRowView', 'Test-VncUsePassword', 'Get-VncWorkerFault', 'Get-VncTempAction', 'Remove-VncTempDir',
-       'Get-VncSubnetGateway', 'Get-VncRangeKey', 'Get-VncRangeState', 'Get-VncAgeText', 'Test-VncRangeKeyCurrent', 'ConvertTo-VncGatewayId'
+       'Get-VncSubnetGateway', 'Get-VncRangeKey', 'Get-VncRangeState', 'Get-VncAgeText', 'Test-VncRangeKeyCurrent', 'ConvertTo-VncGatewayId', 'Select-VncGatewayMac'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
@@ -313,6 +313,15 @@ Check 'Picker Minor: shortcut text #B4B4B4' ($xaml2 -match 'Text="\{TemplateBind
 Check 'Picker Minor: More menu above, right-aligned, 4 px gap' ($src -match "\`$m\.Placement = 'Top'; \`$m\.VerticalOffset = -4" -and $src -match 'HorizontalOffset = \$bMore\.ActualWidth - \$m\.ActualWidth')
 Check 'Picker Minor: list border 12% white' ($xaml2 -match 'Background="#2E000000" BorderBrush="#1FFFFFFF"')
 Check 'N1: -All cleanup after picker close and on exit' ($src -match 'Clear-VncDeadWorkers -All \} \}\.GetNewClosure\(\)\); \$ct\.Start\(\)' -and $src -match 'Add_Exit\(\{ Stop-TrayAndHotkey; try \{ Clear-VncDeadWorkers -All \}')
-$xmlOk = $true; try { [void][xml]$global:VncPickerXaml } catch { $xmlOk = $false }
+$xmlOk = $true; try { if (-not $xaml2) { throw "empty" }; [void][xml]$xaml2 } catch { $xmlOk = $false }
 Check 'picker XAML still well-formed XML' $xmlOk
+# ---- R4-L1 (ClaudeCode): gateway MAC pick ----
+function NB($mac, $state = 'Reachable', $ix = 7) { [pscustomobject]@{ LinkLayerAddress = $mac; State = $state; InterfaceIndex = $ix } }
+Check 'R4-L1: half-resolved entry ahead of the good one is skipped' ((Select-VncGatewayMac @((NB '' 'Incomplete'), (NB '00-00-00-00-00-00' 'Stale'), (NB 'AA-AA-AA-AA-AA-AA')) 7) -eq 'AA-AA-AA-AA-AA-AA')
+Check 'R4-L1: other adapters are ignored' ((Select-VncGatewayMac @((NB '11-11-11-11-11-11' 'Reachable' 3), (NB '22-22-22-22-22-22' 'Reachable' 7)) 7) -eq '22-22-22-22-22-22')
+Check 'R4-L1: unreachable / invalid only -> empty' ((Select-VncGatewayMac @((NB 'AA-AA-AA-AA-AA-AA' 'Unreachable'), (NB 'zz-bb-cc-dd-ee-ff'), (NB 'aabbccddeeff')) 7) -eq '' -and (Select-VncGatewayMac @() 7) -eq '')
+Check 'R4-L1: Get-NetNeighbor filtered by -InterfaceIndex; empty id never cached' ($src -match 'Get-NetNeighbor -IPAddress \$gw -AddressFamily IPv4 -InterfaceIndex \$ifIndex' -and $src -match 'if \(\$id\) \{ \$global:VncGwIdCache\[\$ck\] = \$id \}')
+$rm = [regex]::Match($xaml2, '(?s)<Window\.Resources>(.*?)</Window\.Resources>')
+$rdOk = $rm.Success; try { [void][xml]('<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">' + $rm.Groups[1].Value + '</ResourceDictionary>') } catch { $rdOk = $false }
+Check 'N2: dialog styles come from the resources block alone (well-formed)' ($rdOk -and $src.Contains('[regex]::Match($global:VncPickerXaml, ''(?s)<Window\.Resources>(.*?)</Window\.Resources>'')'))
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

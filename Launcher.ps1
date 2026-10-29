@@ -1755,9 +1755,21 @@ function global:Get-VncGatewayId([string]$gw, $ifIndex) {   # the router's MAC (
     if (-not $gw) { return '' }
     $ck = '{0}|{1}' -f $gw, $ifIndex; if ($global:VncGwIdCache.ContainsKey($ck)) { return $global:VncGwIdCache[$ck] }
     $mac = ''; $prof = ''
-    try { foreach ($nb in @(Get-NetNeighbor -IPAddress $gw -AddressFamily IPv4 -ErrorAction Stop)) { if (-not $mac -and [string]$nb.State -ne 'Unreachable') { $mac = [string]$nb.LinkLayerAddress } } } catch {}
-    if (-not (ConvertTo-VncGatewayId $mac '')) { try { if ($ifIndex) { foreach ($cp in @(Get-NetConnectionProfile -InterfaceIndex $ifIndex -ErrorAction Stop)) { if (-not $prof) { $prof = [string]$cp.Name } } } } catch {} }
-    $id = ConvertTo-VncGatewayId $mac $prof; $global:VncGwIdCache[$ck] = $id; return $id
+    try { $nbs = if ($ifIndex) { @(Get-NetNeighbor -IPAddress $gw -AddressFamily IPv4 -InterfaceIndex $ifIndex -ErrorAction Stop) } else { @(Get-NetNeighbor -IPAddress $gw -AddressFamily IPv4 -ErrorAction Stop) }
+          $mac = Select-VncGatewayMac $nbs $ifIndex } catch {}
+    if (-not $mac) { try { if ($ifIndex) { foreach ($cp in @(Get-NetConnectionProfile -InterfaceIndex $ifIndex -ErrorAction Stop)) { if (-not $prof) { $prof = [string]$cp.Name } } } } catch {} }
+    $id = ConvertTo-VncGatewayId $mac $prof
+    if ($id) { $global:VncGwIdCache[$ck] = $id }   # R4-L1: a failed lookup isn't cached, so the next open tries again
+    return $id
+}
+function global:Select-VncGatewayMac($neighbors, $ifIndex) {   # R4-L1: first entry on this adapter with a real MAC (half-resolved, empty or all-zero entries skipped)
+    foreach ($nb in @($neighbors)) {
+        if (-not $nb) { continue }
+        if ($ifIndex -and $nb.InterfaceIndex -and [int]$nb.InterfaceIndex -ne [int]$ifIndex) { continue }
+        if ([string]$nb.State -in 'Unreachable', 'Incomplete') { continue }
+        $m = [string]$nb.LinkLayerAddress
+        if ((ConvertTo-VncGatewayId $m '') -like 'mac=*') { return $m } }
+    return ''
 }
 function global:Get-VncNewRanges($ranges, $confirmed) { $c = @($confirmed); $out = @(); foreach ($r in @($ranges)) { if ($r -and $c -notcontains $r) { $out += $r } }; return $out }   # ranges never confirmed yet
 function global:Get-VncRangeState([string]$key, $confirmed, $declined) { if (@($confirmed) -contains $key) { 'ok' } elseif (@($declined) -contains $key) { 'declined' } else { 'new' } }   # R2-L2
@@ -1986,7 +1998,10 @@ function global:New-VncTempConfig([string]$h, [int]$port, [string]$hex) {   # %T
 # ---------- D2 dialogs (Kern v1.3.0 Minor 6): panel gradient, 16 px padding, 32 px fields (radius 6, 6% fill, 12% rim, 2 px green focus line) ----------
 $global:D2DialogRes = $null
 function global:Get-D2DialogResources {   # the picker's button styles (Chip, Green, Blue), parsed once
-    if (-not $global:D2DialogRes) { try { $global:D2DialogRes = ([Windows.Markup.XamlReader]::Parse($global:VncPickerXaml)).Resources } catch { Write-LauncherLog ('D2 dialog styles: ' + $_.Exception.Message) } }
+    if (-not $global:D2DialogRes) {   # ClaudeCode N2: parse only the picker's <Window.Resources> block as a ResourceDictionary, not the whole window
+        try { $m = [regex]::Match($global:VncPickerXaml, '(?s)<Window\.Resources>(.*?)</Window\.Resources>')
+              $x = '<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">' + $m.Groups[1].Value + '</ResourceDictionary>'
+              $global:D2DialogRes = [Windows.Markup.XamlReader]::Parse($x) } catch { Write-LauncherLog ('D2 dialog styles: ' + $_.Exception.Message) } }
     return $global:D2DialogRes
 }
 function global:New-D2Dialog([string]$title, $owner, [int]$width) {

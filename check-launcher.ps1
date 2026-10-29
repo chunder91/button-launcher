@@ -25,7 +25,7 @@ foreach ($f in $ast.FindAll({ $args[0] -is [System.Management.Automation.Languag
 
 # 2. Calls: unknown commands, and top-level calls before definition
 $builtin = @{}; Get-Command -CommandType Cmdlet, Function, Alias, Application -ErrorAction SilentlyContinue | % { $builtin[$_.Name] = $true }
-$winOnly = 'Unblock-File','Get-CimInstance','Get-Service','Restart-Service','Set-ItemProperty','New-Item','Start-Process'
+$winOnly = 'Unblock-File','Get-CimInstance','Get-Service','Restart-Service','Set-ItemProperty','New-Item','Start-Process','Get-NetNeighbor','Get-NetConnectionProfile'
 $firstTop = @{}
 foreach ($c in $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.CommandAst] }, $true)) {
     $n = $c.GetCommandName(); if (-not $n) { continue }
