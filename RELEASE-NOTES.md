@@ -2,13 +2,14 @@
 
 ## v1.3.0: find registers automatically, new 3D look
 
-Not released yet. Includes everything in v1.2.0. Waiting on the ClaudeCode, Lockjaw, Kern and Squint reviews and a test on a real Windows PC.
+Pending release (build of 2026-10-29). Includes everything in v1.2.0. ClaudeCode and Lockjaw passed; Kern's and Squint's fixes are in. Waiting on Charles's OK and a test on a real Windows PC.
 
 ### New look (Fluent 3D)
 - **Glassy panel and 3D buttons.** The panel is dark glass with a thin light edge. Buttons have a soft top shine, a gentle color fade and colorful 3D icons. The Red Dog button keeps the real Red Dog logo.
 - **Glow on hover.** A button lifts and glows in its own color when you point at it, and presses in when you click. It's all cheap drawing, so the launcher still uses next to no CPU when idle.
 - **Restarts look the same as before:** dark, with the red outline, at the bottom. Restart Computer still asks first.
 - Your own button colors still work; they get the same 3D treatment.
+- **Register list is clearer.** Before any scan it says "Not scanned yet" instead of "No registers found". The scan question is in plain words, and Rescan defaults to Yes. Add a register is one small window (address, optional name); Cancel adds nothing.
 
 ### Find registers
 

@@ -55,7 +55,8 @@ PICTURES ON BUTTONS
   In the edit window click "Picture..." and pick a png/jpg/ico (it's copied
   into the images folder), or "Use icon" for the program's own icon.
   "Picture spot": left (of the text), above, only (no text), or background.
-  The included pictures are in images (PNG); the drawings are in images\svg.
+  The included pictures are in images (PNG, Microsoft Fluent Emoji 3D, MIT
+  licence in images\LICENSES). images\svg has only the Red Dog logo drawing.
 
 BUTTON CLICKS
   Buttons light up when you point at them, press in when clicked, and flash
