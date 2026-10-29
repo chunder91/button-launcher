@@ -3,3 +3,4 @@
 build/
 dist/
 launcher-error.log
+installer-output/
