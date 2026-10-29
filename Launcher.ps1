@@ -593,7 +593,8 @@ function global:Panel-Menu($p, $menu) {
     [void](Add-MenuItem $menu 'Add new panel...' { New-PanelFromMenu }.GetNewClosure())
     [void](Add-MenuItem $menu 'Delete this panel...' {
         if ([System.Windows.MessageBox]::Show("Delete the panel ""$($p.cfg.name)"" and all its buttons?", 'Launcher', 'YesNo', 'Warning') -eq 'Yes') {
-            $global:panels.Remove($p); $p.deleted = $true; Save-Config; $p.win.Close() } }.GetNewClosure())
+            $global:panels.Remove($p); $p.deleted = $true; Save-Config; $p.win.Close()
+            foreach ($o in $global:panels) { Build-Panel $o } } }.GetNewClosure())   # CC-L5: drop the deleted panel from Move menus
     [void]$menu.Items.Add((New-Object System.Windows.Controls.Separator))
     [void](Add-MenuItem $menu 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" })
     [void](Add-MenuItem $menu 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
