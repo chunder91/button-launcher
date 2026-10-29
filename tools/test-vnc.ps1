@@ -313,7 +313,7 @@ Check 'Picker Minor: shortcut text #B4B4B4' ($xaml2 -match 'Text="\{TemplateBind
 Check 'Picker Minor: More menu above, right-aligned, 4 px gap' ($src -match "\`$m\.Placement = 'Top'; \`$m\.VerticalOffset = -4" -and $src -match 'HorizontalOffset = \$bMore\.ActualWidth - \$m\.ActualWidth')
 Check 'Picker Minor: list border 12% white' ($xaml2 -match 'Background="#2E000000" BorderBrush="#1FFFFFFF"')
 Check 'N1: -All cleanup after picker close and on exit' ($src -match 'Clear-VncDeadWorkers -All \} \}\.GetNewClosure\(\)\); \$ct\.Start\(\)' -and $src -match 'Add_Exit\(\{ Stop-TrayAndHotkey; try \{ Clear-VncDeadWorkers -All \}')
-$xmlOk = $true; try { if (-not $xaml2) { throw "empty" }; [void][xml]$xaml2 } catch { $xmlOk = $false }
+$xmlOk = $true; try { $px = [regex]::Match($xaml2, "(?s)@'\r?\n(.*)\r?\n'@").Groups[1].Value; if (-not $px) { throw 'empty' }; [void][xml]$px } catch { $xmlOk = $false }
 Check 'picker XAML still well-formed XML' $xmlOk
 # ---- R4-L1 (ClaudeCode): gateway MAC pick ----
 function NB($mac, $state = 'Reachable', $ix = 7) { [pscustomobject]@{ LinkLayerAddress = $mac; State = $state; InterfaceIndex = $ix } }
