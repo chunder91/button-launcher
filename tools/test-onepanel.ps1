@@ -202,6 +202,15 @@ Check 'R11-N1: shutdown unsubscribes PowerModeChanged' ($sth -match '\[BL\.Waits
 # Laptop: one-panel bottom group cut off -> the window fills the work area
 $ls = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Layout-Single' }, $true).Extent.Text
 Check 'Layout-Single sets the window height (DIPs) in both branches' (([regex]::Matches($ls, '\$s\.win\.Height = \$hDip')).Count -eq 2 -and $ls -match "\`$s\.win\.SizeToContent = 'Manual'")
-$swp = [regex]::Match($ls, 'SetWindowPos\(\$s\.hwnd[^\n]*').Value
+$swp = ([regex]::Matches($ls, 'SetWindowPos\(\$s\.hwnd[^\n]*') | Select-Object -Last 1).Value   # the final size+position call
 Check 'Layout-Single SetWindowPos passes width/height and no SWP_NOSIZE' ($swp -match '\$wPx, \[int\]\$wa\.H, 0x0014\)' -and $swp -notmatch '0x0015|0x0001\b|, 0, 0, ')
+# R12-L2: Layout-Single sizes for the target monitor's DPI and moves there first when the scale differs
+$ls2 = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Layout-Single' }, $true).Extent.Text
+Check 'R12-L2: DPI from the dock target monitor (GetDpiForMonitor via MonitorFromPoint)' ($ls2 -match '\$dpi = Get-WorkAreaDpi \$wa' -and $src -match 'GetDpiForMonitor\(IntPtr mon' -and $src -match 'MonitorFromPoint\(POINT pt')
+Check 'R12-L2: moves to the target monitor before sizing when its scale differs' ($ls2 -match '(?s)Get-WorkAreaDpi.*?if \(\[Math\]::Abs\(\(Get-Dpi \$global:panels\[0\]\) - \$dpi\).*?SetWindowPos\(\$s\.hwnd, \[IntPtr\]::Zero, \[int\]\$wa\.L, \[int\]\$wa\.T, 0, 0, 0x0015\).*?\$s\.win\.Height = \$hDip')
+$nat2 = $src.Substring(0, $src.IndexOf("'@"))
+Check 'R12-L2: BL.Native still has no WindowsBase' ($nat2 -notmatch 'WindowsBase|Dispatcher|ReferencedAssemblies')
+Check 'R12-N1: WatchHandle and WatchResume in separate trys' ($src -match '(?s)\[BL\.Waits\]::WatchHandle\([^\n]*\$showWatch = \$true\s+\} catch \{' -and $src -match "try \{ if \('BL\.Waits' -as \[type\]\) \{ \[BL\.Waits\]::WatchResume")
+$vw = Get-Content (Join-Path $root 'tools/verify-waits.sh') -Raw
+Check 'R12-L1: verify-waits builds without node reuse / shared compiler, offline when cached, shuts build servers' ($vw -match '-nodeReuse:false' -and $vw -match 'UseSharedCompilation=false' -and $vw -match 'RestoreSources' -and $vw -match 'build-server shutdown')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

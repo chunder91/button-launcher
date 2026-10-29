@@ -13,6 +13,9 @@ Add-Type -Namespace BL -Name Native -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr h, int id);
 [DllImport("shell32.dll")] public static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA d);
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+[StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+[DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(POINT pt, uint flags);
+[DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr mon, int type, out uint dpiX, out uint dpiY);
 [StructLayout(LayoutKind.Sequential)] public struct APPBARDATA { public uint cbSize; public IntPtr hWnd; public uint msg; public uint edge; public RECT rc; public IntPtr lParam; }
 '@
 # R6-L2: subst drive targets, for the local-only path check
@@ -791,6 +794,15 @@ function global:Get-WorkArea($screen) {
     return $r
 }
 
+# R12-L2: DPI scale of the monitor holding a work area (the dock target), before the window is on it
+function global:Get-WorkAreaDpi($wa, $fallbackPanel) {
+    try {
+        $pt = New-Object BL.Native+POINT; $pt.X = [int](($wa.L + $wa.R) / 2); $pt.Y = [int](($wa.T + $wa.B) / 2)
+        $mon = [BL.Native]::MonitorFromPoint($pt, 2)                                    # MONITOR_DEFAULTTONEAREST
+        $x = [uint32]0; $y = [uint32]0
+        if ($mon -ne [IntPtr]::Zero -and [BL.Native]::GetDpiForMonitor($mon, 0, [ref]$x, [ref]$y) -eq 0 -and $x -gt 0) { return $x / 96.0 }   # MDT_EFFECTIVE_DPI
+    } catch {}
+    return (Get-Dpi $fallbackPanel) }
 function global:Get-Dpi($p) { try { $d = [BL.Native]::GetDpiForWindow($p.hwnd); if ($d -gt 0) { return $d / 96.0 } } catch {}; return 1.0 }
 
 function global:Layout-Panel($p) {
@@ -1450,7 +1462,9 @@ function global:Layout-Single {
     $s = $global:single; if (-not $s -or -not $s.hwnd -or $s.hwnd -eq [IntPtr]::Zero) { return }
     $pc = $global:panels[0].cfg
     $wa = Get-WorkArea (Get-Screen $pc)
-    $dpi = Get-Dpi $global:panels[0]
+    $dpi = Get-WorkAreaDpi $wa $global:panels[0]   # R12-L2: target monitor's scale, so the first layout / a monitor move isn't sized for the old one
+    if ([Math]::Abs((Get-Dpi $global:panels[0]) - $dpi) -gt 0.001) {   # on another monitor's scale: move there first, then size (WPF rescales on the move)
+        [void][BL.Native]::SetWindowPos($s.hwnd, [IntPtr]::Zero, [int]$wa.L, [int]$wa.T, 0, 0, 0x0015) }
     $pct = if ($pc.size -is [string] -and $global:SizePct[[string]$pc.size]) { $global:SizePct[[string]$pc.size] } elseif ($pc.size) { [double]$pc.size } else { 14 }
     $wDip = [Math]::Max(180, [Math]::Min(560, ($wa.W * $pct / 100.0) / $dpi))
     $sc = $wDip / $global:BaseWidth
@@ -1591,8 +1605,9 @@ try {
     try {
         if (-not ('BL.Waits' -as [type])) { Add-Type -ReferencedAssemblies WindowsBase, System -TypeDefinition $global:WaitsSource }
         [BL.Waits]::WatchHandle($global:showEvent, $global:app.Dispatcher, [Action]{ Show-AllPanels }); $showWatch = $true
-        [BL.Waits]::WatchResume($global:app.Dispatcher, [Action]{ $global:forceRelayout = $true; Request-Relayout })   # R10-L1: re-dock after sleep
     } catch { Add-Content -LiteralPath $global:logPath -Value ("{0}  event waits unavailable ({1}); polling for the show signal instead" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }
+    try { if ('BL.Waits' -as [type]) { [BL.Waits]::WatchResume($global:app.Dispatcher, [Action]{ $global:forceRelayout = $true; Request-Relayout }) } }   # R12-N1: own try; R10-L1 re-dock after sleep
+    catch { Add-Content -LiteralPath $global:logPath -Value ("{0}  resume watch unavailable ({1})" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }
     if (-not $showWatch) {
         $showTimer = New-Object System.Windows.Threading.DispatcherTimer; $showTimer.Interval = [TimeSpan]::FromMilliseconds(1000)
         $showTimer.Add_Tick({ if ($global:showEvent.WaitOne(0)) { Show-AllPanels } }); $showTimer.Start() }
