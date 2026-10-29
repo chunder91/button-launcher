@@ -177,6 +177,12 @@ foreach ($title in 'Launcher', 'Shop Panel') {
         $instFile3 = New-TestInstaller @{ 'badge.png' = 'new-badge'; 'power.png' = 'new-power' } @()
         & $instFile3
         Check ($p + 'R4-L1: no manifest: v1.1.0 badge.png refreshed') ((& $img 'badge.png') -eq 'new-badge')
+        # R5-L1: a picture shipped by a review-fixes-1 build (772f83a) is also recognised
+        Microsoft.PowerShell.Management\Remove-Item -LiteralPath (Join-Path $dest 'shipped-images.txt')
+        $raw2 = [System.Diagnostics.Process]::Start((New-Object System.Diagnostics.ProcessStartInfo -Property @{ FileName = 'git'; Arguments = "-C `"$root`" show 772f83a:images/reddog-small.png"; RedirectStandardOutput = $true; UseShellExecute = $false }))
+        $ms2 = New-Object IO.MemoryStream; $raw2.StandardOutput.BaseStream.CopyTo($ms2); $raw2.WaitForExit(); [IO.File]::WriteAllBytes((Join-Path $dest 'images/reddog-small.png'), $ms2.ToArray())
+        & (New-TestInstaller @{ 'reddog-small.png' = 'new-small' } @())
+        Check ($p + 'R5-L1: no manifest: 772f83a reddog-small.png refreshed') ((& $img 'reddog-small.png') -eq 'new-small')
         Check ($p + 'R4-L1: no manifest: unknown power.png kept') ((& $img 'power.png') -eq 'user-made')
     } else { Check ($p + 'R4-L1: origin/main available for the test') $false }
     Check ($p + 'upgrade again: user-replaced reddog.png still kept') ((& $img 'reddog.png') -eq 'custom')
