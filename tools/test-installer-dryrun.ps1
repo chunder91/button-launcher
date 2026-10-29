@@ -122,7 +122,7 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     $key = if ($safe -eq 'Launcher') { 'ButtonLauncher' } else { 'ButtonLauncher-' + $safe }
     $unB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((Convert-ForTest $tmpl['$uninstTemplate']).Replace('__NAME__', $safe)))   # same as the builder
     # Payload zip built in memory: shipped-images.txt in the builder's format, plus optional hostile entry names (LJ-N7)
-    function New-TestInstaller([hashtable]$imgs, [string[]]$evil) {
+    function New-TestInstaller([hashtable]$imgs, [string[]]$evil, [string]$omit) {
         $pz = Join-Path $tb ('p-' + [guid]::NewGuid() + '.zip')
         $fs = [IO.File]::Open($pz, 'CreateNew'); $za = New-Object IO.Compression.ZipArchive($fs, [IO.Compression.ZipArchiveMode]::Create)
         $files = [ordered]@{ 'Launcher.ps1' = '#'; 'ButtonLauncher.exe' = 'MZ'; 'buttons.default.json' = '{"default":true}' }
@@ -130,6 +130,7 @@ foreach ($title in 'Launcher', 'Shop Panel') {
             $h = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($imgs[$k]))).Replace('-', '').ToLowerInvariant()
             $man += "$h  images/$k" }
         $files['shipped-images.txt'] = ($man -join "`n")
+        if ($omit) { $files.Remove($omit) }
         foreach ($k in @($files.Keys) + @($evil | Where-Object { $_ })) {
             $w = New-Object IO.StreamWriter($za.CreateEntry($k).Open()); $w.Write($(if ($files.Contains($k)) { $files[$k] } else { 'evil' })); $w.Dispose() }
         $za.Dispose(); $fs.Dispose()
@@ -149,6 +150,18 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     $progs = Join-Path $env:BL_MOCK_FOLDERS 'Programs'; $desk = Join-Path $env:BL_MOCK_FOLDERS 'Desktop'
     Check ($p + 'install: Start menu, uninstall and desktop shortcuts') ((Test-Path (Join-Path $progs "$safe.lnk")) -and (Test-Path (Join-Path $progs "Uninstall $safe.lnk")) -and (Test-Path (Join-Path $desk "$safe.lnk")))
     Check ($p + 'install: launches the exe') (@($global:Started) -match 'ButtonLauncher\.exe').Count -ge 1
+    # R5-L2: a payload missing a core file stops before shortcuts or registry are written
+    foreach ($om in 'ButtonLauncher.exe', 'Launcher.ps1', 'buttons.default.json') {
+        $sbx = Join-Path $tb ('sbx-' + [guid]::NewGuid()); $saveL = $env:LOCALAPPDATA; $env:LOCALAPPDATA = $sbx; $saveF = $env:BL_MOCK_FOLDERS; $env:BL_MOCK_FOLDERS = Join-Path $sbx 'folders'
+        $saveReg = $global:Reg; $global:Reg = @{}; $saveSt = @($global:Started); $global:Started.Clear()
+        $bad = New-TestInstaller @{ 'reddog.png' = 'png' } @() $om
+        & $bad
+        $sd = Join-Path (Join-Path $sbx 'Programs') $safe
+        $lg = Join-Path $sd 'install.log'; $lt = if (Test-Path -LiteralPath $lg) { Get-Content -LiteralPath $lg -Raw } else { '' }
+        $lnks = @(Get-ChildItem -Recurse -Filter *.lnk -LiteralPath $env:BL_MOCK_FOLDERS -ErrorAction SilentlyContinue)
+        Check ($p + "R5-L2: missing $om -> no shortcuts, no registry, no launch, logged") ($lnks.Count -eq 0 -and $global:Reg.Count -eq 0 -and $global:Started.Count -eq 0 -and $lt -match "missing after extraction: .*$([regex]::Escape($om))")
+        $global:Reg = $saveReg; $global:Started.Clear(); foreach ($s in $saveSt) { [void]$global:Started.Add($s) }
+        $env:LOCALAPPDATA = $saveL; $env:BL_MOCK_FOLDERS = $saveF }
     # R-M2 + Pictures/R3-N1: an upgrade keeps buttons.json, pictures the user added, and a user-replaced reddog.png,
     # but refreshes shipped pictures the user never touched.
     Set-Content (Join-Path $dest 'buttons.json') '{"mine":1}'

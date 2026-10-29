@@ -174,6 +174,13 @@ foreach ($e in $z.Entries) {
     [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $t, $true)
 }
 $z.Dispose(); Remove-Item -LiteralPath $zip
+# R5-L2: stop before any shortcut or registry write if the core files didn't land
+$missingCore = @('Launcher.ps1', 'ButtonLauncher.exe', 'buttons.default.json' | Where-Object { -not (Test-Path -LiteralPath (Join-Path $dest $_)) })
+if ($missingCore.Count) {
+    Add-Content -LiteralPath (Join-Path $dest 'install.log') -Value ("{0}  install stopped: missing after extraction: {1}" -f (Get-Date -Format s), ($missingCore -join ', ')) -ErrorAction SilentlyContinue
+    [System.Windows.MessageBox]::Show("$AppName could not be installed: these files are missing after unpacking:`n" + ($missingCore -join "`n") + "`n`nNothing was added to the Start menu or the registry. Try the installer again.", "$AppName Setup", 'OK', 'Error') | Out-Null
+    exit 1
+}
 # R-M2: keep this PC's buttons.json (edits, saved paths). Only a first install gets the default. The payload never
 # contains buttons.json, and extraction only writes payload files, so pictures the user added to images\ stay too.
 $userCfg = Join-Path $dest 'buttons.json'
