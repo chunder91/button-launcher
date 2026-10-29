@@ -21,8 +21,16 @@ try {   # CC-L7: temp stage/zip/work dirs are always cleaned up
 New-Item -ItemType Directory $stage | Out-Null
 $AppVersion = '1.1.0'
 if (-not (Test-Path -LiteralPath (Join-Path $here 'ButtonLauncher.exe'))) { throw 'ButtonLauncher.exe is missing from this folder (build it with exe/build-exe.sh).' }
+# R-M1: only package the exe whose SHA-256 was recorded at build time (exe\ButtonLauncher.exe.sha256 in the repo,
+# ButtonLauncher.exe.sha256 next to an installed copy). tools/verify-exe.sh proves that hash rebuilds from exe\ButtonLauncher.cs.
+$shaFile = @((Join-Path $here 'exe\ButtonLauncher.exe.sha256'), (Join-Path $here 'ButtonLauncher.exe.sha256')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $shaFile) { throw 'ButtonLauncher.exe.sha256 is missing, so the exe cannot be checked. Rebuild it with exe/build-exe.sh.' }
+$wantSha = ((Get-Content -LiteralPath $shaFile -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+$haveSha = (Get-FileHash -LiteralPath (Join-Path $here 'ButtonLauncher.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($wantSha -notmatch '^[0-9a-f]{64}$' -or $haveSha -ne $wantSha) { throw "ButtonLauncher.exe does not match its recorded SHA-256.`nexpected $wantSha`nfound    $haveSha" }
 foreach ($f in 'Launcher.ps1','buttons.json','ButtonLauncher.exe','Start Launcher.vbs','Start Launcher.cmd','README.txt','Build-Installer.ps1') {
     if (Test-Path (Join-Path $here $f)) { Copy-Item (Join-Path $here $f) $stage } }
+Copy-Item -LiteralPath $shaFile -Destination (Join-Path $stage 'ButtonLauncher.exe.sha256')   # lets an installed copy build installers too
 if (Test-Path (Join-Path $here 'images')) { Copy-Item -LiteralPath (Join-Path $here 'images') -Destination (Join-Path $stage 'images') -Recurse -Force }
 # Kern-2: make sure every picture a button uses actually ships. Stop the build if one is missing.
 $missingPics = @()

@@ -8,6 +8,10 @@
     <LangVersion>7.3</LangVersion>
     <Nullable>disable</Nullable>
     <Deterministic>true</Deterministic>
+    <!-- R-M1: same bytes from any build folder, so tools/verify-exe.sh can compare hashes -->
+    <PathMap>$(MSBuildProjectDirectory)=/_/</PathMap>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System.Windows.Forms" />
