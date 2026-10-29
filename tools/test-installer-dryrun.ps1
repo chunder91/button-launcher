@@ -203,9 +203,13 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     New-Item -ItemType Directory -Force (Join-Path $dest 'images/deep/deeper') | Out-Null; Write-Raw (Join-Path $dest 'images/deep/deeper/ro.txt') 'x'
     [IO.File]::SetAttributes((Join-Path $dest 'images/deep/deeper/ro.txt'), [IO.FileAttributes]::ReadOnly)
     try { New-Item -ItemType SymbolicLink -Path (Join-Path $dest 'images/deep/deeper/link2') -Target $victim -ErrorAction Stop | Out-Null } catch { }
+    $vfile = Join-Path $victim 'ro-target.txt'; Write-Raw $vfile 'keep'; [IO.File]::SetAttributes($vfile, [IO.FileAttributes]::ReadOnly)
+    try { New-Item -ItemType SymbolicLink -Path (Join-Path $dest 'images/filelink.txt') -Target $vfile -ErrorAction Stop | Out-Null } catch { }
     Check ($p + 'LJ-N5: test link created') $linkOk
     Invoke-Expression ($cmdText.Replace('Start-Sleep -Seconds 2; ', '').Replace('catch { }', 'catch { throw }'))
     Check ($p + 'LJ-N5: install folder deleted') (-not (Test-Path -LiteralPath $dest))
+    Check ($p + 'LJ-N10: read-only file behind a file link keeps its read-only bit') ((Test-Path $vfile) -and (([IO.File]::GetAttributes($vfile) -band [IO.FileAttributes]::ReadOnly) -ne 0))
+    [IO.File]::SetAttributes($vfile, [IO.FileAttributes]::Normal)
     Check ($p + 'LJ-N5: link target and its files survive') ((Test-Path (Join-Path $victim 'sub/keep.txt')) -and ([IO.File]::ReadAllText((Join-Path $victim 'sub/keep.txt')) -eq 'keep'))
     $env:LOCALAPPDATA = $savedLad; $env:TEMP = $savedTemp
     Microsoft.PowerShell.Management\Remove-Item -LiteralPath $tb -Recurse -Force
