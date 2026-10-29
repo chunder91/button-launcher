@@ -13,7 +13,8 @@ Add-Type -Namespace BL -Name Native -MemberDefinition @'
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 [StructLayout(LayoutKind.Sequential)] public struct APPBARDATA { public uint cbSize; public IntPtr hWnd; public uint msg; public uint edge; public RECT rc; public IntPtr lParam; }
 '@
-try { [void][BL.Native]::SetProcessDpiAwarenessContext([IntPtr](-4)) } catch {}   # -4 = PER_MONITOR_AWARE_V2
+$global:dpiCtxOk = $false
+try { $global:dpiCtxOk = [BL.Native]::SetProcessDpiAwarenessContext([IntPtr](-4)) } catch {}   # -4 = PER_MONITOR_AWARE_V2
 try { [AppContext]::SetSwitch('Switch.System.Windows.DoNotScaleForDpiChanges', $false) } catch {}
 
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Drawing, System.Windows.Forms, Microsoft.VisualBasic
@@ -733,6 +734,10 @@ try {
     if ($global:cfg.clickSound -eq $null) { $global:cfg | Add-Member -NotePropertyName clickSound -NotePropertyValue $false }
     if ($global:cfg.locked -eq $null) { $global:cfg | Add-Member -NotePropertyName locked -NotePropertyValue $true }
 
+    if (-not $global:dpiCtxOk) {   # CC-N3: note once when the host already fixed DPI awareness (helps diagnose scaling)
+        $dpiNote = Join-Path $global:here 'launcher-dpi.log'
+        if (-not (Test-Path -LiteralPath $dpiNote)) { Set-Content -LiteralPath $dpiNote -Value ("{0}  SetProcessDpiAwarenessContext(PMv2) returned false (host manifest already set DPI mode)." -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
+    }
     $global:RaisedBrush = New-BevelBrush $false
     $global:SunkenBrush = New-BevelBrush $true
 
