@@ -80,6 +80,7 @@ Check 'committed exe matches exe/ButtonLauncher.exe.sha256' ((Get-FileHash -Lite
 Check 'RELEASE.md lists verify-exe, dry-run, check-launcher (R3-L2)' ((Get-Content (Join-Path $root 'RELEASE.md') -Raw) -match 'verify-exe\.sh' -and (Get-Content (Join-Path $root 'RELEASE.md') -Raw) -match 'test-installer-dryrun' -and (Get-Content (Join-Path $root 'RELEASE.md') -Raw) -match 'check-launcher')
 Check 'builder prints the RELEASE.md reminder (R3-L2)' ($ast.Extent.Text -match 'RELEASE\.md checklist')
 Check 'builder checks the exe SHA-256' ($ast.Extent.Text -match 'does not match its recorded SHA-256')
+Check 'R4-L2: uninstall delete has no recursive Directory.Delete' ($tmpl['$uninstTemplate'] -notmatch 'Delete\(\$d, \$true\)' -and $tmpl['$uninstTemplate'] -match 'for \(\$i = \$order\.Count - 1')
 Check 'builder never ships buttons.json' ($ast.Extent.Text -notmatch "'Launcher.ps1','buttons.json'" -and $ast.Extent.Text -match "Join-Path \`$stage 'buttons.default.json'")
 
 # Simulated install -> reinstall -> uninstall in a temp dir. Registry, shortcuts, message boxes, processes are mocked.
@@ -198,6 +199,9 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     $linkOk = $true
     try { New-Item -ItemType SymbolicLink -Path (Join-Path $dest 'images/link') -Target $victim -ErrorAction Stop | Out-Null } catch { $linkOk = $false }
     if (-not $linkOk -and -not ($IsLinux -or $IsMacOS)) { cmd /c mklink /J "$(Join-Path $dest 'images\link')" "$victim" | Out-Null; $linkOk = $LASTEXITCODE -eq 0 }
+    New-Item -ItemType Directory -Force (Join-Path $dest 'images/deep/deeper') | Out-Null; Write-Raw (Join-Path $dest 'images/deep/deeper/ro.txt') 'x'
+    [IO.File]::SetAttributes((Join-Path $dest 'images/deep/deeper/ro.txt'), [IO.FileAttributes]::ReadOnly)
+    try { New-Item -ItemType SymbolicLink -Path (Join-Path $dest 'images/deep/deeper/link2') -Target $victim -ErrorAction Stop | Out-Null } catch { }
     Check ($p + 'LJ-N5: test link created') $linkOk
     Invoke-Expression ($cmdText.Replace('Start-Sleep -Seconds 2; ', '').Replace('catch { }', 'catch { throw }'))
     Check ($p + 'LJ-N5: install folder deleted') (-not (Test-Path -LiteralPath $dest))
