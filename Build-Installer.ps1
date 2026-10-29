@@ -54,6 +54,11 @@ foreach ($pc in @($cfg.panels)) { foreach ($b in @($pc.buttons)) {
     if (-not $img -or $img -eq 'icon' -or [IO.Path]::IsPathRooted($img)) { continue }
     if (-not (Test-Path -LiteralPath (Join-Path $stage $img))) { $missingPics += "$img  ($(([string]$b.label) -replace '\n',' '))" } } }
 if ($missingPics.Count) { throw ("These button pictures are missing from images\ and would not ship:`n" + ($missingPics -join "`n")) }
+# Pictures/R3-N1: record each shipped picture and its SHA-256, so a later upgrade only overwrites pictures the user never changed.
+$stImg = Join-Path $stage 'images'
+$man = @(if (Test-Path -LiteralPath $stImg) { Get-ChildItem -LiteralPath $stImg -Recurse -File | ForEach-Object {
+    (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() + '  images/' + $_.FullName.Substring($stImg.Length + 1).Replace('\', '/') } })
+Set-Content -LiteralPath (Join-Path $stage 'shipped-images.txt') -Value $man -Encoding UTF8
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force
 $b64 = [Convert]::ToBase64String([IO.File]::ReadAllBytes($zip))
 
@@ -112,6 +117,13 @@ New-Item -ItemType Directory -Force $dest | Out-Null
 $zip = Join-Path $env:TEMP ("bl-payload-" + [guid]::NewGuid() + ".zip")   # LJ-I4/CC-L7: unpredictable name
 [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String('__B64__'))
 $z = [IO.Compression.ZipFile]::OpenRead($zip)
+# Pictures/R3-N1: what the previous install shipped (name -> SHA-256). An existing picture is replaced only if it is
+# still byte-for-byte what we shipped; pictures the user added or replaced are kept and logged.
+$oldMan = @{}
+$manPath = Join-Path $dest 'shipped-images.txt'
+if (Test-Path -LiteralPath $manPath) { foreach ($ml in Get-Content -LiteralPath $manPath) {
+    if ($ml -match '^([0-9a-fA-F]{64})\s+(.+)$') { $oldMan[$matches[2].Trim().ToLowerInvariant()] = $matches[1].ToLowerInvariant() } } }
+$instLog = Join-Path $dest 'install.log'
 $destRoot = [IO.Path]::GetFullPath($dest).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 foreach ($e in $z.Entries) {
     # LJ-N7: skip entries that are rooted, contain '..', or resolve outside $dest
@@ -120,6 +132,13 @@ foreach ($e in $z.Entries) {
     $t = Join-Path $dest $en
     if (-not [IO.Path]::GetFullPath($t).StartsWith($destRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
     if ($e.FullName.EndsWith('/') -or $e.FullName.EndsWith('\')) { New-Item -ItemType Directory -Force $t | Out-Null; continue }
+    $rel = $en.Replace('\', '/')
+    if ($rel -like 'images/*' -and (Test-Path -LiteralPath $t)) {
+        $was = $oldMan[$rel.ToLowerInvariant()]
+        $now = (Get-FileHash -LiteralPath $t -Algorithm SHA256).Hash.ToLowerInvariant()
+        if (-not $was -or $was -ne $now) {
+            Add-Content -LiteralPath $instLog -Value ("{0}  kept your picture {1} (added or changed on this PC); the shipped one was not copied" -f (Get-Date -Format s), $rel) -ErrorAction SilentlyContinue
+            continue } }
     New-Item -ItemType Directory -Force (Split-Path $t) | Out-Null
     [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $t, $true)
 }
