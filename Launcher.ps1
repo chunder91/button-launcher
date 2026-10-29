@@ -1612,9 +1612,9 @@ function global:Get-VncScanTargets([string]$ip, [int]$adapterPrefix, $cfgPrefix)
     return $out.ToArray()
 }
 # H1: only Ethernet (6) / Wi-Fi (71) adapters that are up, not VPN/virtual by name, with an IPv4 gateway inside their own subnet. Never PPP.
-$global:VncAdapterDeny = '(?i)VPN|\bTAP\b|TAP-|\bTUN\d*\b|WireGuard|Wintun|AnyConnect|GlobalProtect|PANGP|Forti|OpenVPN|Zscaler|Tailscale|ZeroTier|Juniper|Pulse Secure|Hyper-V|vEthernet|\bWSL\b|VirtualBox|VMware|Npcap|Loopback|WAN Miniport|Teredo|isatap|Virtual'
+$global:VncAdapterDeny = '(?i)VPN|\bTAP\b|TAP-|\bTUN\d*\b|WireGuard|Wintun|AnyConnect|GlobalProtect|PANGP|Forti|OpenVPN|Zscaler|Tailscale|ZeroTier|Juniper|Pulse Secure|Hyper-V|vEthernet|\bWSL\b|VirtualBox|VMware|Npcap|Loopback|WAN Miniport|Teredo|isatap|Virtual|Tunnel|NordLynx|WARP|Cloudflare|Surfshark|Mullvad|Proton|Windscribe|Sophos|Check ?Point|SonicWall|NetExtender|Citrix|Ivanti'
 function global:Test-VncAdapter([string]$type, [string]$desc, [string]$name, [string]$ip, [int]$prefix, $gateways) {
-    if ($type -notin 'Ethernet', 'Wireless80211') { return $false }   # Ppp, Tunnel, Loopback, Unknown, ... never
+    if ($type -notin 'Ethernet', 'GigabitEthernet', 'Wireless80211') { return $false }   # Ppp, Tunnel, Loopback, Unknown, ... never
     if (($desc -match $global:VncAdapterDeny) -or ($name -match $global:VncAdapterDeny)) { return $false }
     if (-not (Test-Rfc1918 $ip) -or $prefix -lt 1 -or $prefix -gt 30) { return $false }
     $size = [Math]::Pow(2, 32 - $prefix); $net = [Math]::Floor((ConvertTo-VncUInt $ip) / $size)
@@ -1636,11 +1636,22 @@ function global:Get-VncLocalSubnets {   # @{ ip; prefix; label } for adapters th
             $a = $u.Address.ToString(); $pl = 24; try { $pl = [int]$u.PrefixLength } catch {}
             if (-not (Test-VncAdapter ([string]$nic.NetworkInterfaceType) ([string]$nic.Description) ([string]$nic.Name) $a $pl $gws)) { continue }
             $lbl = if ([string]$nic.NetworkInterfaceType -eq 'Wireless80211') { 'Wi-Fi' } else { 'Ethernet' }
-            $res += @{ ip = $a; prefix = $pl; label = $lbl } } }
+            $gw = Get-VncSubnetGateway $a $pl $gws
+            $res += @{ ip = $a; prefix = $pl; label = $lbl; gw = $gw; dns = [string]$props.DnsSuffix } } }
     return $res
 }
+function global:Get-VncSubnetGateway([string]$ip, [int]$prefix, $gateways) {   # first IPv4 gateway inside the adapter's subnet, else ''
+    $size = [Math]::Pow(2, 32 - $prefix); $net = [Math]::Floor((ConvertTo-VncUInt $ip) / $size)
+    foreach ($g in @($gateways)) { $gs = [string]$g; if ((Test-VncIPv4 $gs) -and $gs -ne '0.0.0.0' -and [Math]::Floor((ConvertTo-VncUInt $gs) / $size) -eq $net) { return $gs } }
+    return ''
+}
+function global:Get-VncRangeKey([string]$range, [string]$gw, [string]$dns) {   # R2-L1: same numbers on another network (home vs shop) ask again
+    $d = ([string]$dns).Trim().ToLowerInvariant(); if ($d -notmatch '^[a-z0-9.-]{0,253}$') { $d = '?' }
+    return ('{0}|gw={1}|dns={2}' -f $range, $gw, $d)
+}
 function global:Get-VncNewRanges($ranges, $confirmed) { $c = @($confirmed); $out = @(); foreach ($r in @($ranges)) { if ($r -and $c -notcontains $r) { $out += $r } }; return $out }   # ranges never confirmed yet
-function global:Test-VncAutoScan([bool]$hasFavs, $cache, [datetime]$nowUtc, [bool]$hasNewRange) {   # favourites-first: with favourites, only a new range scans on open
+function global:Get-VncRangeState([string]$key, $confirmed, $declined) { if (@($confirmed) -contains $key) { 'ok' } elseif (@($declined) -contains $key) { 'declined' } else { 'new' } }   # R2-L2
+function global:Test-VncAutoScan([bool]$hasFavs, $cache, [datetime]$nowUtc, [bool]$hasNewRange) {   # favourites-first: with favourites, only a new (never answered) range scans on open
     if ($hasFavs) { return $hasNewRange }
     return ($hasNewRange -or (Test-VncCacheStale $cache $nowUtc))
 }
@@ -1702,7 +1713,7 @@ function global:Get-VncState($cfg) {
         if (-not (Test-VncHost ([string]$f.host)) -or ($f.port -ne $null -and -not (Get-VncPort $f.port))) { [void]$bad.Add($f); continue }   # L5: kept as-is, not shown
         $p = Get-VncPort $f.port; if (-not $p) { $p = $port }
         [void]$favs.Add([pscustomobject]@{ host = [string]$f.host; port = $p; name = [string]$f.name; pinned = [bool]$f.pinned }) }
-    return @{ port = $port; prefix = (Get-VncPrefix $v.prefix); favorites = $favs; invalid = $bad; confirmed = @(@($v.confirmedRanges) | Where-Object { $_ } | ForEach-Object { [string]$_ }) }
+    return @{ port = $port; prefix = (Get-VncPrefix $v.prefix); favorites = $favs; invalid = $bad; confirmed = @(@($v.confirmedRanges) | Where-Object { $_ } | ForEach-Object { [string]$_ }); declined = @(@($v.declinedRanges) | Where-Object { $_ } | ForEach-Object { [string]$_ }) }
 }
 function global:Save-VncFavorites($cfg, $favs, $invalid) {   # invalid entries are written back untouched (L5)
     if (-not $cfg.vnc) { [void](Get-VncState $cfg) }
@@ -1741,6 +1752,13 @@ function global:Save-VncCache([string]$path, $hosts, [datetime]$time) {
     if (Test-Path -LiteralPath $path) { [IO.File]::Replace($tmp, $path, [NullString]::Value) } else { [IO.File]::Move($tmp, $path) }
 }
 function global:Test-VncCacheStale($cache, [datetime]$nowUtc) { return (($nowUtc - $cache.time) -gt $global:VncCacheMaxAge -or $cache.time -gt $nowUtc.AddMinutes(5)) }   # L3: by age only
+function global:Get-VncAgeText($cacheTime, [datetime]$nowUtc) {   # '5 min ago', '3 h ago', '2 days ago'; '' if never
+    if ($cacheTime -le [datetime]::MinValue) { return '' }
+    $d = $nowUtc - $cacheTime; if ($d.TotalMinutes -lt 1) { return 'just now' }
+    if ($d.TotalHours -lt 1) { return ('{0} min ago' -f [int][Math]::Floor($d.TotalMinutes)) }
+    if ($d.TotalDays -lt 1) { return ('{0} h ago' -f [int][Math]::Floor($d.TotalHours)) }
+    $n = [int][Math]::Floor($d.TotalDays); if ($n -eq 1) { return '1 day ago' }; return ('{0} days ago' -f $n)
+}
 function global:Merge-VncRows($favs, $hosts) {   # pinned first (by name), then the rest by address; seen = in the latest scan
     $rows = New-Object System.Collections.ArrayList
     foreach ($f in $favs) { $h = $null; foreach ($x in $hosts) { if ($x.host -eq $f.host -and $x.port -eq $f.port) { $h = $x; break } }
@@ -1750,10 +1768,10 @@ function global:Merge-VncRows($favs, $hosts) {   # pinned first (by name), then 
     $sorted = @($rows | Sort-Object @{ e = { -not $_.pinned } }, @{ e = { if ($_.pinned) { $_.name } else { '' } } }, @{ e = { if (Test-VncIPv4 $_.host) { ConvertTo-VncUInt $_.host } else { [uint32]::MaxValue } } })
     return $sorted
 }
-function global:Get-VncRowView($r, [bool]$fresh, [bool]$scanning) {   # display fields for one row (Squint 1, 3)
+function global:Get-VncRowView($r, [bool]$fresh, [bool]$scanning, [string]$age = '', [bool]$stale = $false) {   # display fields for one row (Squint 1, 3)
     $named = [bool]$r.name
-    $seen = if ($r.seen) { if ($fresh) { 'Now' } else { 'Last scan' } } elseif ($scanning) { 'Looking...' } else { 'Not found last scan' }
-    $dim = (-not $r.seen) -and -not $scanning
+    $seen = if ($r.seen) { if ($fresh) { 'Now' } elseif ($age) { 'Last scan, ' + $age } else { 'Last scan' } } elseif ($scanning) { 'Looking...' } else { 'Not found last scan' }
+    $dim = ((-not $r.seen) -and -not $scanning) -or ($r.seen -and $stale -and -not $fresh)
     $addr = if ($r.port -eq 5900) { $r.host } else { '{0}:{1}' -f $r.host, $r.port }
     $tip = $addr; if ($r.banner) { $tip += '   ' + (Get-SafeText $r.banner 12) }
     return [pscustomobject]@{
@@ -1770,7 +1788,7 @@ function global:Test-VncPickerButton($btn) {   # L2: the explicit flag, else onl
     if ((([string]$btn.label) -replace '\s+', ' ').Trim() -ne 'VIEW REGISTER') { return $false }
     return (([string]$btn.askTitle) -eq 'Pick the UltraVNC Viewer (vncviewer.exe)' -or (@($btn.detect.lnkNames) -contains 'UltraVNC Viewer'))
 }
-function global:Test-VncUsePassword($row, [bool]$hasSecret) { $hasSecret -and (Test-VncBannerText ([string]$row.banner)) }   # L4: the password file only goes to a host that greeted as RFB
+function global:Test-VncUsePassword($row, [bool]$hasSecret) { $hasSecret -and [bool]$row.session -and (Test-VncBannerText ([string]$row.banner)) }   # L4 + V2-I1: only to a host that greeted RFB in this session's scan
 
 # ----- view-only password: one shared value, DPAPI CurrentUser + app entropy, in vnc-viewonly.dat beside buttons.json -----
 function global:Get-VncSecretPath { Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-viewonly.dat' }
@@ -1964,26 +1982,32 @@ function global:Get-VncWorkerFault($ps, [bool]$doneFlag) {   # M1: '' while fine
     if ($st -in 'Stopped', 'Completed' -and -not $doneFlag) { return 'the scan ended early' }
     return ''
 }
-function global:Get-VncScanPlan($ui) {   # @{ targets; ranges; labels } for the ranges the user has confirmed (asks once per new range, H1)
+function global:Get-VncScanPlan($ui, [bool]$Ask) {   # targets for confirmed networks. New: ask once. Declined: skipped, asked again only from Rescan ($Ask).
     $plan = @{ targets = @(); ranges = @(); labels = @(); none = $false; declined = $false }
     $nets = @(Get-VncLocalSubnets); if ($nets.Count -eq 0) { $plan.none = $true; return $plan }
     foreach ($n in $nets) {
-        $rg = Get-VncRangeText $n.ip $n.prefix $ui.state.prefix
-        if ($plan.ranges -contains $rg) { continue }
-        if (@(Get-VncNewRanges @($rg) $ui.state.confirmed).Count) {
+        $rg = Get-VncRangeText $n.ip $n.prefix $ui.state.prefix; $key = Get-VncRangeKey $rg $n.gw $n.dns
+        if ($plan.ranges -contains $key) { continue }
+        $st = Get-VncRangeState $key $ui.state.confirmed $ui.state.declined
+        if ($st -eq 'declined' -and -not $Ask) { $plan.declined = $true; continue }
+        if ($st -ne 'ok') {
             $a = [System.Windows.MessageBox]::Show(("Scan {0} ({1}) for registers?`n`nThis briefly checks port {2} on each address on this network. You'll only be asked again if the network changes." -f $rg, $n.label, $ui.state.port), 'View Register', 'YesNo', 'Question', 'No')
-            if ($a -ne 'Yes') { $plan.declined = $true; continue }
-            $ui.state.confirmed = @($ui.state.confirmed) + $rg; Set-Prop $global:cfg.vnc 'confirmedRanges' @($ui.state.confirmed); Save-Config }
-        $plan.ranges += $rg; $plan.labels += ('{0} ({1})' -f $rg, $n.label)
+            if ($a -ne 'Yes') {
+                $plan.declined = $true
+                if ($st -eq 'new') { $ui.state.declined = @($ui.state.declined) + $key; Set-Prop $global:cfg.vnc 'declinedRanges' @($ui.state.declined); Save-Config }
+                continue }
+            $keep = @(); foreach ($dk in @($ui.state.declined)) { if ($dk -ne $key) { $keep += $dk } }; $ui.state.declined = $keep; Set-Prop $global:cfg.vnc 'declinedRanges' @($ui.state.declined)
+            $ui.state.confirmed = @($ui.state.confirmed) + $key; Set-Prop $global:cfg.vnc 'confirmedRanges' @($ui.state.confirmed); Save-Config }
+        $plan.ranges += $key; $plan.labels += ('{0} ({1})' -f $rg, $n.label)
         $plan.targets += @(Get-VncScanTargets $n.ip $n.prefix $ui.state.prefix) }
     $plan.targets = @($plan.targets | Select-Object -Unique)
     return $plan
 }
-function global:Start-VncScan($ui) {
-    Stop-VncScan $ui   # L1: a Rescan cancels and disposes the old workers, name lookups included
-    $plan = Get-VncScanPlan $ui
+function global:Start-VncScan($ui, [switch]$Rescan) {
+    Stop-VncScan $ui   # L1: a Rescan cancels the old workers, name lookups included
+    $plan = Get-VncScanPlan $ui ([bool]$Rescan)
     if ($plan.none) { $ui.showEmpty.Invoke('nonet'); $ui.setStatus.Invoke('No shop network found on this PC, so nothing was scanned.'); return }
-    if ($plan.targets.Count -eq 0) { $ui.setStatus.Invoke('Not scanned. Press Rescan (F5) to look, or use Add... to type an address.'); $ui.refresh.Invoke(); return }
+    if ($plan.targets.Count -eq 0) { $ui.setStatus.Invoke('Not scanned. Press Rescan (F5) to scan anyway, or use Add... to type an address.'); $ui.refresh.Invoke(); return }
     $sync = [hashtable]::Synchronized(@{ cancel = $false; done = $false; scanned = 0; total = $plan.targets.Count; found = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]); names = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]); namesDone = $false })
     $rs = $null; $ps = $null
     try {
@@ -1998,13 +2022,22 @@ function global:Start-VncScan($ui) {
     $ui.setStatus.Invoke(('Looking for registers on {0} (0 of {1})...' -f $ui.scan.range, $plan.targets.Count))
     $ui.timer.Start()
 }
+$global:VncDeadWorkers = New-Object System.Collections.ArrayList   # stopping workers, disposed once they have ended (never blocks the UI)
+function global:Clear-VncDeadWorkers([switch]$All) {
+    foreach ($w in @($global:VncDeadWorkers)) {
+        $st = ''; try { $st = [string]$w.ps.InvocationStateInfo.State } catch {}
+        if ($All -or $st -in 'Stopped', 'Completed', 'Failed', '') { try { $w.ps.Dispose() } catch {}; try { $w.rs.Dispose() } catch {}; $global:VncDeadWorkers.Remove($w) } }
+}
 function global:Stop-VncScan($ui) {
     if ($ui.timer) { $ui.timer.Stop() }
     $ui.scanning = $false; if ($ui.busy) { $ui.busy.Invoke($false) }
+    Clear-VncDeadWorkers
     if (-not $ui.scan) { return }
-    $ui.scan.sync.cancel = $true
-    foreach ($x in $ui.scan.ps, $ui.scan.nameps) { if ($x) { try { $x.Stop() } catch {}; try { $x.Dispose() } catch {} } }
-    foreach ($r in $ui.scan.rs, $ui.scan.namers) { if ($r) { try { $r.Dispose() } catch {} } }
+    $ui.scan.sync.cancel = $true   # the workers check this between connects
+    foreach ($pair in @(@($ui.scan.ps, $ui.scan.rs), @($ui.scan.nameps, $ui.scan.namers))) {
+        if (-not $pair[0]) { if ($pair[1]) { try { $pair[1].Dispose() } catch {} }; continue }
+        try { [void]$pair[0].BeginStop($null, $null) } catch {}   # nit: async stop, no UI freeze
+        [void]$global:VncDeadWorkers.Add(@{ ps = $pair[0]; rs = $pair[1] }) }
     $ui.scan = $null
 }
 function global:Write-LauncherLog([string]$m) { Add-Content -LiteralPath $global:logPath -Value ("{0}  {1}" -f (Get-Date -Format s), $m) -ErrorAction SilentlyContinue }
@@ -2014,7 +2047,7 @@ function global:Step-VncScan($ui) {   # UI thread, every 200 ms while a scan run
     while ($sc.sync.found.TryDequeue([ref]$it)) {
         if (-not (Test-VncIPv4 ([string]$it.ip))) { continue }
         $bn = Get-RfbBanner ([byte[]]$it.bytes); if (-not $bn.rfb) { continue }
-        [void]$sc.hits.Add([pscustomobject]@{ host = [string]$it.ip; port = [int]$ui.state.port; name = ''; banner = $bn.text }); $changed = $true }
+        [void]$sc.hits.Add([pscustomobject]@{ host = [string]$it.ip; port = [int]$ui.state.port; name = ''; banner = $bn.text }); $ui.sessionSeen[('{0}:{1}' -f $it.ip, $ui.state.port)] = $true; $changed = $true }
     while ($sc.sync.names.TryDequeue([ref]$it)) {
         $nm = ([string]$it.name).TrimEnd('.'); if (-not (Test-VncHost $nm) -or $nm -eq $it.ip) { continue }
         foreach ($h in $sc.hits) { if ($h.host -eq $it.ip) { $h.name = $nm; $changed = $true } } }
@@ -2029,7 +2062,7 @@ function global:Step-VncScan($ui) {   # UI thread, every 200 ms while a scan run
     if ($sc.hits.Count -gt 0 -and -not $sc.sync.namesDone) {
         if (Get-VncWorkerFault $sc.nameps $false) { $sc.sync.namesDone = $true }   # names are best effort: a failed lookup just ends it
         else { $ui.setStatus.Invoke(('Found {0}. Looking up names...' -f $sc.hits.Count)); return } }
-    $found = $sc.hits.Count; $total = $sc.sync.total; $range = $sc.range
+    $found = $sc.hits.Count; $range = $sc.range
     $ui.hosts = @($sc.hits)
     Stop-VncScan $ui
     try { Save-VncCache $ui.cachePath $ui.hosts ([datetime]::UtcNow) } catch {}
@@ -2047,7 +2080,7 @@ $global:VncPickerXaml = @'
     <LinearGradientBrush x:Key="Stroke" StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#47FFFFFF" Offset="0"/><GradientStop Color="#0FFFFFFF" Offset="1"/></LinearGradientBrush>
     <ControlTemplate x:Key="ChipTpl" TargetType="Button">
       <Grid x:Name="root" RenderTransformOrigin="0.5,0.5" Background="Transparent">
-        <Border x:Name="glow" CornerRadius="10" Background="{TemplateBinding Background}" Opacity="0"/>
+        <Border x:Name="glow" CornerRadius="13" Margin="-3" Background="{TemplateBinding Tag}" Opacity="0" IsHitTestVisible="False"/>
         <Border x:Name="bg" CornerRadius="10" Background="{TemplateBinding Background}" BorderBrush="{StaticResource Stroke}" BorderThickness="1"/>
         <Border CornerRadius="9,9,0,0" Height="8" VerticalAlignment="Top" Margin="1,1,1,0" Background="#24FFFFFF" IsHitTestVisible="False"/>
         <Border CornerRadius="0,0,9,9" Height="1" VerticalAlignment="Bottom" Margin="2,0,2,1" Background="#40000000" IsHitTestVisible="False"/>
@@ -2056,16 +2089,16 @@ $global:VncPickerXaml = @'
       </Grid>
       <ControlTemplate.Triggers>
         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="root" Property="RenderTransform"><Setter.Value><TranslateTransform Y="-1"/></Setter.Value></Setter>
-          <Setter TargetName="bg" Property="Effect"><Setter.Value><DropShadowEffect ShadowDepth="0" BlurRadius="12" Opacity="0.7" Color="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" RenderingBias="Performance"/></Setter.Value></Setter></Trigger>
+          <Setter TargetName="glow" Property="Opacity" Value="0.35"/></Trigger>
         <Trigger Property="IsPressed" Value="True"><Setter TargetName="root" Property="RenderTransform"><Setter.Value><ScaleTransform ScaleX="0.97" ScaleY="0.97"/></Setter.Value></Setter>
-          <Setter TargetName="bg" Property="Effect"><Setter.Value><DropShadowEffect ShadowDepth="0" BlurRadius="8" Opacity="0.3" Color="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" RenderingBias="Performance"/></Setter.Value></Setter></Trigger>
+          <Setter TargetName="glow" Property="Opacity" Value="0.15"/></Trigger>
         <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ring" Property="Visibility" Value="Visible"/></Trigger>
-        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="bg" Property="Background" Value="#2A2A2A"/><Setter TargetName="bg" Property="Effect" Value="{x:Null}"/><Setter Property="Foreground" Value="#8A8A8A"/></Trigger>
+        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="bg" Property="Background" Value="#2A2A2A"/><Setter TargetName="glow" Property="Opacity" Value="0"/><Setter Property="Foreground" Value="#8A8A8A"/></Trigger>
       </ControlTemplate.Triggers>
     </ControlTemplate>
     <Style x:Key="Chip" TargetType="Button">
       <Setter Property="Template" Value="{StaticResource ChipTpl}"/><Setter Property="Height" Value="32"/><Setter Property="Padding" Value="14,0"/>
-      <Setter Property="FontSize" Value="14"/><Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Tag" Value="#000000"/>
+      <Setter Property="FontSize" Value="14"/><Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Tag"><Setter.Value><SolidColorBrush Color="#26FFFFFF"/></Setter.Value></Setter>
       <Setter Property="Background"><Setter.Value><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#2E2E2E" Offset="0"/><GradientStop Color="#1E1E1E" Offset="1"/></LinearGradientBrush></Setter.Value></Setter>
       <Style.Triggers>
         <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background"><Setter.Value><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#333333" Offset="0"/><GradientStop Color="#242424" Offset="1"/></LinearGradientBrush></Setter.Value></Setter></Trigger>
@@ -2073,7 +2106,7 @@ $global:VncPickerXaml = @'
       </Style.Triggers>
     </Style>
     <Style x:Key="Green" TargetType="Button" BasedOn="{StaticResource Chip}">
-      <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Tag" Value="#22C55E"/>
+      <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Tag"><Setter.Value><SolidColorBrush Color="#22C55E"/></Setter.Value></Setter>
       <Setter Property="Background"><Setter.Value><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#0E7A4B" Offset="0"/><GradientStop Color="#0A5A38" Offset="1"/></LinearGradientBrush></Setter.Value></Setter>
       <Style.Triggers>
         <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background"><Setter.Value><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#187F52" Offset="0"/><GradientStop Color="#0B643E" Offset="1"/></LinearGradientBrush></Setter.Value></Setter></Trigger>
@@ -2081,7 +2114,7 @@ $global:VncPickerXaml = @'
       </Style.Triggers>
     </Style>
     <Style x:Key="Blue" TargetType="Button" BasedOn="{StaticResource Chip}">
-      <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Tag" Value="#38BDF8"/>
+      <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Tag"><Setter.Value><SolidColorBrush Color="#38BDF8"/></Setter.Value></Setter>
       <Setter Property="Background"><Setter.Value><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#0B6E99" Offset="0"/><GradientStop Color="#085171" Offset="1"/></LinearGradientBrush></Setter.Value></Setter>
       <Style.Triggers>
         <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background"><Setter.Value><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#15749D" Offset="0"/><GradientStop Color="#095A7D" Offset="1"/></LinearGradientBrush></Setter.Value></Setter></Trigger>
@@ -2188,9 +2221,13 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
 function global:Show-VncPicker($btn) {
     if ($global:vncPicker -and $global:vncPicker.win.IsVisible) { $global:vncPicker.win.Activate() | Out-Null; return }
     Remove-VncTempLeftovers
-    $ui = @{ btn = $btn; state = (Get-VncState $global:cfg); cachePath = (Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-cache.json'); scan = $null; hosts = @(); fresh = $false; scanning = $false; timer = $null; busy = $null }
+    $ui = @{ btn = $btn; state = (Get-VncState $global:cfg); cachePath = (Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-cache.json'); scan = $null; hosts = @(); fresh = $false; scanning = $false; timer = $null; busy = $null; sessionSeen = @{}; ageText = ''; stale = $false }
     $cache = Read-VncCache $ui.cachePath; $ui.hosts = @($cache.hosts)
-    $w = [Windows.Markup.XamlReader]::Parse($global:VncPickerXaml); $w.FontFamily = $global:UiFont
+    $ui.ageText = Get-VncAgeText $cache.time ([datetime]::UtcNow); $ui.stale = (Test-VncCacheStale $cache ([datetime]::UtcNow)) -and $cache.time -gt [datetime]::MinValue
+    try { $w = [Windows.Markup.XamlReader]::Parse($global:VncPickerXaml) }
+    catch { Write-LauncherLog ('VNC picker window could not load: ' + $_.Exception.Message)
+            [System.Windows.MessageBox]::Show("The register picker couldn't open.`n`n" + $_.Exception.Message + "`n`nDetails are in launcher-error.log.", 'View Register', 'OK', 'Error') | Out-Null; return }
+    $w.FontFamily = $global:UiFont
     $ui.win = $w
     $lv = $w.FindName('List'); $status = $w.FindName('Status'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
     $bView = $w.FindName('View'); $bInt = $w.FindName('Interact'); $bScan = $w.FindName('Rescan'); $bAdd = $w.FindName('Add'); $bMore = $w.FindName('More')
@@ -2206,7 +2243,8 @@ function global:Show-VncPicker($btn) {
     $ui.refresh = [Action]{
         $sel = $lv.SelectedItem; $lv.Items.Clear()
         foreach ($r in (Merge-VncRows $ui.state.favorites $ui.hosts)) {
-            $v = Get-VncRowView $r ([bool]$ui.fresh) ([bool]$ui.scanning)
+            $r | Add-Member -NotePropertyName session -NotePropertyValue ([bool]$ui.sessionSeen[('{0}:{1}' -f $r.host, $r.port)]) -Force
+            $v = Get-VncRowView $r ([bool]$ui.fresh) ([bool]$ui.scanning) $ui.ageText ([bool]$ui.stale)
             [void]$lv.Items.Add($v); if ($sel -and $sel.row.host -eq $r.host -and $sel.row.port -eq $r.port) { $lv.SelectedItem = $v } }
         if (-not $lv.SelectedItem -and $lv.Items.Count) { $lv.SelectedIndex = 0 }
         $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has
@@ -2215,11 +2253,15 @@ function global:Show-VncPicker($btn) {
     $ui.timer = New-Object System.Windows.Threading.DispatcherTimer; $ui.timer.Interval = [TimeSpan]::FromMilliseconds(200)
     $ui.timer.Add_Tick({ Step-VncScan $ui }.GetNewClosure())
     $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only register password...") }.GetNewClosure()
-    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if ($s) { [void](Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw) } }.GetNewClosure()
+    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }
+        if ($vo -and (Test-VncSecret) -and -not (Test-VncUsePassword $s.row $true)) { $ui.setStatus.Invoke('The saved view-only password is only sent to registers found in this scan. The viewer will ask for it; press F5 first to use the saved one.') }
+        [void](Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw) }.GetNewClosure()
     $ui.saveFavs = [Action]{ Save-VncFavorites $global:cfg $ui.state.favorites $ui.state.invalid; Save-Config; $ui.refresh.Invoke() }.GetNewClosure()
     $ui.rename = [Action]{ $s = $lv.SelectedItem; if (-not $s) { return }
-        $n = [Microsoft.VisualBasic.Interaction]::InputBox('Name for this register (e.g. Register 1):', 'Rename', [string]$s.row.name)
-        if ($n -eq '' -and [string]$s.row.name -ne '') { return }   # Cancel returns ''
+        $old = [string]$s.row.name
+        $n = [Microsoft.VisualBasic.Interaction]::InputBox('Name for this register (e.g. Register 1). Leave it empty to clear the name.', 'Rename', $old)
+        if ($n -eq '') {   # Cancel and an empty OK both return '': ask before clearing
+            if (-not $old -or [System.Windows.MessageBox]::Show(("Clear the name ""{0}""?" -f (Get-VncDisplayName $old 40)), 'Rename', 'YesNo', 'Question', 'No') -ne 'Yes') { return } }
         [void](Set-VncFavorite $ui.state.favorites $s.row.host $s.row.port $n $null); $ui.saveFavs.Invoke() }.GetNewClosure()
     $ui.togglePin = [Action]{ $s = $lv.SelectedItem; if (-not $s) { return }
         [void](Set-VncFavorite $ui.state.favorites $s.row.host $s.row.port $null (-not [bool]$s.row.pinned)); $ui.saveFavs.Invoke() }.GetNewClosure()
@@ -2229,7 +2271,7 @@ function global:Show-VncPicker($btn) {
         $f = $null; foreach ($x in $ui.state.favorites) { if ($x.host -eq $s.row.host -and $x.port -eq $s.row.port) { $f = $x } }
         if ($f) { $ui.state.favorites.Remove($f) }; $ui.saveFavs.Invoke() }.GetNewClosure()
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure()); $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
-    $bScan.Add_Click({ Start-VncScan $ui }.GetNewClosure())
+    $bScan.Add_Click({ Start-VncScan $ui -Rescan }.GetNewClosure())
     $bMore.Add_Click({ $m = New-VncRowMenu $ui $false; $m.PlacementTarget = $bMore; $m.Placement = 'Top'; $m.IsOpen = $true }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has }.GetNewClosure())
     $lv.Add_MouseDoubleClick({ if ($lv.SelectedItem) { $ui.go.Invoke($true) } }.GetNewClosure())
@@ -2247,7 +2289,7 @@ function global:Show-VncPicker($btn) {
         elseif ($k -eq 'F2') { $_.Handled = $true; $ui.rename.Invoke() }
         elseif ($k -eq 'Delete' -and $inList) { $_.Handled = $true; $ui.remove.Invoke() }
         elseif ($k -eq 'Space' -and $inList) { $_.Handled = $true; $ui.togglePin.Invoke() }
-        elseif ($k -eq 'F5') { $_.Handled = $true; Start-VncScan $ui }
+        elseif ($k -eq 'F5') { $_.Handled = $true; Start-VncScan $ui -Rescan }
         elseif ($k -eq 'Escape') { $_.Handled = $true; $w.Close() } }.GetNewClosure())   # Esc: cancels a scan and closes (Closed handler)
     $bAdd.Add_Click({
         $t = [Microsoft.VisualBasic.Interaction]::InputBox('Address of the register (IP or name, optionally :port):', 'Add a register', '')
@@ -2264,10 +2306,13 @@ function global:Show-VncPicker($btn) {
     if ($bad) { $ui.setStatus.Invoke($bad) }   # L5: visible warning
     $w.Show(); [void]$lv.Focus()
     # Favourites-first (H1): with saved registers, only a new network range scans on open; otherwise a scan older than a day. Never at startup.
-    $ranges = @(); try { foreach ($n in @(Get-VncLocalSubnets)) { $ranges += (Get-VncRangeText $n.ip $n.prefix $ui.state.prefix) } } catch {}
-    $hasNew = @(Get-VncNewRanges $ranges $ui.state.confirmed).Count -gt 0
-    if (Test-VncAutoScan ($ui.state.favorites.Count -gt 0) $cache ([datetime]::UtcNow) $hasNew) { Start-VncScan $ui }
+    $ranges = @(); try { foreach ($n in @(Get-VncLocalSubnets)) { $ranges += (Get-VncRangeKey (Get-VncRangeText $n.ip $n.prefix $ui.state.prefix) $n.gw $n.dns) } } catch {}
+    $hasNew = @(Get-VncNewRanges $ranges (@($ui.state.confirmed) + @($ui.state.declined))).Count -gt 0
+    $okRanges = @(Get-VncNewRanges $ranges $ui.state.declined).Count -gt 0
+    if ($okRanges -and (Test-VncAutoScan ($ui.state.favorites.Count -gt 0) $cache ([datetime]::UtcNow) $hasNew)) { Start-VncScan $ui }
     elseif ($lv.Items.Count -eq 0 -and $ranges.Count -eq 0) { $ui.showEmpty.Invoke('nonet') }
+    elseif ($ui.state.favorites.Count -gt 0 -and -not $bad) {   # nit: favourites suppressed the scan, so say how old the list is
+        $ui.setStatus.Invoke($(if ($ui.ageText) { 'Showing saved registers. Last scan {0}{1}. Press F5 to rescan.' -f $ui.ageText, $(if ($ui.stale) { ' (out of date)' } else { '' }) } else { 'Showing saved registers. Not scanned yet. Press F5 to look for others.' })) }
 }
 
 # ================= MAIN (runs only after every function above is defined) =================

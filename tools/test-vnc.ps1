@@ -10,7 +10,8 @@ $fns = 'Set-Prop', 'Get-ButtonType', 'Test-VncIPv4', 'Test-VncHost', 'Get-VncPor
        'Get-VncPrefix', 'Get-VncScanTargets', 'Get-SafeText', 'Get-RfbBanner', 'Get-VncViewerArgs', 'ConvertTo-VncObfuscated', 'New-VncConfigText', 'Get-VncState',
        'Save-VncFavorites', 'Set-VncFavorite', 'Read-VncCache', 'Save-VncCache', 'Test-VncCacheStale', 'Merge-VncRows', 'Test-VncPickerButton',
        'Test-VncAdapter', 'Get-VncRangeText', 'Get-VncNewRanges', 'Test-VncAutoScan', 'Test-VncBannerText', 'Get-VncDisplayName', 'Get-VncInvalidText',
-       'Get-VncRowView', 'Test-VncUsePassword', 'Get-VncWorkerFault', 'Get-VncTempAction', 'Remove-VncTempDir'
+       'Get-VncRowView', 'Test-VncUsePassword', 'Get-VncWorkerFault', 'Get-VncTempAction', 'Remove-VncTempDir',
+       'Get-VncSubnetGateway', 'Get-VncRangeKey', 'Get-VncRangeState', 'Get-VncAgeText'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
@@ -144,7 +145,8 @@ $v = Get-VncRowView $rows[1] $false $false; Check "cached row says 'Last scan'; 
 Check 'Kern 6/L5: long name in the row has an ellipsis' ((Get-VncRowView $rows[2] $true $false).nameText.EndsWith([string][char]0x2026))
 
 # --- L4: password file only to an RFB host ---
-Check 'L4: saved password used for a host that greeted RFB' (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $true)
+Check 'L4: saved password used for a host that greeted RFB in this session' (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $true }) $true)
+Check 'V2-I1: cached RFB banner alone is not enough (not seen this session)' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $false }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $true))
 Check 'L4: no password file for a host with no or a non-RFB greeting' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = '' }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'SSH-2.0-Open' }) $true))
 Check 'no saved password: never a file' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $false))
 
@@ -267,5 +269,32 @@ Check 'password box is a PasswordBox, read as SecurePassword' ((& $fn 'Show-VncP
 Check 'ScreenConnect elevation and force-restart confirm unchanged' ($src -match "Start-Process powershell\.exe -Verb RunAs -WindowStyle Hidden -PassThru" -and $src -match 'CC-M4/LJ-L3: force restart ALWAYS asks')
 Check 'no PS7-only syntax in the VNC code' ($vncSrc -notmatch '\?\?|\?\.|\s\?\s[^:]+\s:\s|ForEach-Object -Parallel|&&|\|\||::new\(')
 Check 'nit: this test file is plain ASCII with no BOM' ($(($b = [IO.File]::ReadAllBytes($PSCommandPath)); -not ($b | Where-Object { $_ -gt 127 })))
+
+# --- round 2 (ClaudeCode R2, Lockjaw V2-I1) ---
+Check 'R2-L1: gateway inside the subnet is found' ((Get-VncSubnetGateway '192.168.1.37' 24 @('10.0.0.1', '192.168.1.1')) -eq '192.168.1.1' -and (Get-VncSubnetGateway '192.168.1.37' 24 @('192.168.2.1')) -eq '')
+$kShop = Get-VncRangeKey '192.168.1.0/24' '192.168.1.1' 'Shop.LAN'; $kHome = Get-VncRangeKey '192.168.1.0/24' '192.168.1.254' 'home'
+Check 'R2-L1: key = range + gateway + DNS suffix (lower-case)' ($kShop -eq '192.168.1.0/24|gw=192.168.1.1|dns=shop.lan')
+Check 'R2-L1: same range on another network is a different key' ($kShop -ne $kHome -and (Get-VncRangeKey '192.168.1.0/24' '192.168.1.1' 'other') -ne $kShop)
+Check 'R2-L1: odd DNS suffix is neutralised' ((Get-VncRangeKey '10.0.0.0/24' '10.0.0.1' "x|gw=1`n") -eq '10.0.0.0/24|gw=10.0.0.1|dns=?')
+Check 'R2-L2: range state ok / declined / new' ((Get-VncRangeState $kShop @($kShop) @()) -eq 'ok' -and (Get-VncRangeState $kHome @($kShop) @($kHome)) -eq 'declined' -and (Get-VncRangeState 'x' @($kShop) @($kHome)) -eq 'new')
+$plan = & $fn 'Get-VncScanPlan'
+Check 'R2-L2: declines remembered in vnc.declinedRanges, skipped unless Rescan asks' ($plan -match "Set-Prop \`$global:cfg\.vnc 'declinedRanges'" -and $plan -match "\`$st -eq 'declined' -and -not \`$Ask" -and $plan -match 'Get-VncRangeKey')
+Check 'R2-L2: Rescan and F5 pass -Rescan; open does not' ($pk -match 'Start-VncScan \$ui -Rescan \}\.GetNewClosure' -and $pk -match "'F5'\) \{ \`$_\.Handled = \`$true; Start-VncScan \`$ui -Rescan" -and $pk -match '\{ Start-VncScan \$ui \}\s*\r?\n')
+foreach ($d in 'NordLynx Tunnel', 'Cloudflare WARP Interface Tunnel', 'Surfshark WireGuard', 'Mullvad Tunnel', 'ProtonVPN TUN', 'Windscribe VPN', 'Tailscale Tunnel', 'ZeroTier One Virtual Port', 'Sophos SSL VPN Adapter', 'SonicWall NetExtender') {
+    Check "R2-L3: '$d' never scanned" (-not (Test-VncAdapter 'Ethernet' $d 'Ethernet 3' '192.168.1.37' 24 @('192.168.1.1'))) }
+Check 'nit: GigabitEthernet type allowed' (Test-VncAdapter 'GigabitEthernet' 'Realtek PCIe GbE' 'Ethernet' '192.168.1.37' 24 @('192.168.1.1'))
+$xaml2 = [regex]::Match($src, "(?s)\`$global:VncPickerXaml = @'.*?'@").Value
+Check 'R2-L4: no Tag binding inside triggers, no blur effect in the picker' ($xaml2 -notmatch '\{Binding Tag' -and $xaml2 -notmatch 'DropShadowEffect')
+Check 'R2-L4: glow layer = TemplateBinding Tag brush, shown on hover/press, hidden when disabled' ($xaml2 -match 'x:Name="glow"[^>]*Background="\{TemplateBinding Tag\}"' -and $xaml2 -match 'TargetName="glow" Property="Opacity" Value="0.35"' -and $xaml2 -match 'TargetName="glow" Property="Opacity" Value="0.15"' -and $xaml2 -match '<SolidColorBrush Color="#22C55E"/>' -and $xaml2 -match '<SolidColorBrush Color="#38BDF8"/>')
+Check 'nit: Rename can clear a name (asks first)' ($pk -match 'Leave it empty to clear the name' -and $pk -match 'Clear the name')
+$stop2 = & $fn 'Stop-VncScan'
+Check 'nit: Stop is async (BeginStop, dispose later), no blocking Stop()' ($stop2 -match 'BeginStop' -and $stop2 -notmatch '\.Stop\(\);' -and $stop2 -notmatch '\$x\.Stop\(\)' -and (& $fn 'Clear-VncDeadWorkers') -match 'Dispose')
+Check 'nit: XAML load in try with a clear message' ($pk -match "(?s)try \{ \`$w = \[Windows\.Markup\.XamlReader\]::Parse.*The register picker couldn't open")
+Check 'nit: no unused $total in Step-VncScan' ((& $fn 'Step-VncScan') -notmatch '\$total')
+Check 'nit: age text' ((Get-VncAgeText ([datetime]::MinValue) $now) -eq '' -and (Get-VncAgeText $now.AddMinutes(-5) $now) -eq '5 min ago' -and (Get-VncAgeText $now.AddHours(-3) $now) -eq '3 h ago' -and (Get-VncAgeText $now.AddDays(-1.2) $now) -eq '1 day ago' -and (Get-VncAgeText $now.AddDays(-3) $now) -eq '3 days ago')
+$rv = Get-VncRowView ([pscustomobject]@{ host = '192.168.1.21'; port = 5900; name = 'Register 1'; banner = 'RFB 003.889'; pinned = $true; fav = $true; seen = $true }) $false $false '3 days ago' $true
+Check 'nit: stale cached row shows its age and is greyed' ($rv.seen -eq 'Last scan, 3 days ago' -and $rv.addrFg -eq '#A0A0A0' -and $rv.nameFg -eq '#A0A0A0')
+Check 'nit: favourites suppressing the scan show the cache age' ($pk -match 'Showing saved registers\. Last scan \{0\}\{1\}' -and $pk -match 'out of date')
+Check 'V2-I1: rows carry session-seen; scan hits fill it' ($pk -match 'sessionSeen\[' -and (& $fn 'Step-VncScan') -match '\$ui\.sessionSeen\[')
 
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
