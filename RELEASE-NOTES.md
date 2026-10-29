@@ -1,8 +1,16 @@
 # Button Launcher release notes
 
-## v1.3.0 (vnc-picker): find registers automatically
+## v1.3.0: find registers automatically, new 3D look
 
-Not released yet. Separate from v1.2.0; waiting on ClaudeCode, Lockjaw, Kern and Squint and a real Windows test.
+Not released yet. Includes everything in v1.2.0. Waiting on the ClaudeCode, Lockjaw, Kern and Squint reviews and a test on a real Windows PC.
+
+### New look (Fluent 3D)
+- **Glassy panel and 3D buttons.** The panel is dark glass with a thin light edge. Buttons have a soft top shine, a gentle color fade and colorful 3D icons. The Red Dog button keeps the real Red Dog logo.
+- **Glow on hover.** A button lifts and glows in its own color when you point at it, and presses in when you click. It's all cheap drawing, so the launcher still uses next to no CPU when idle.
+- **Restarts look the same as before:** dark, with the red outline, at the bottom. Restart Computer still asks first.
+- Your own button colors still work; they get the same 3D treatment.
+
+### Find registers
 
 - **View Register finds the registers.** Clicking it opens a list of PCs on this network that answer as UltraVNC servers. The last list shows straight away; Rescan (F5) looks again. It only looks at this PC's own private network (normally the 254 addresses next to it), gently, and only when the list opens and is over a day old, or when you press Rescan.
 - **View only or Interact.** Enter or double-click is View only. Both open the UltraVNC Viewer scaled to fit your screen.

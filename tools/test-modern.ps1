@@ -5,10 +5,10 @@ $fail = 0
 function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"; $script:fail++ } }
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
-foreach ($n in 'Get-ButtonType', 'Set-Prop', 'Get-Color', 'Mix-Color', 'Get-TileColors', 'Test-DangerButton', 'Get-DisplayLabel', 'Update-OldDefaultOrder') {
+foreach ($n in 'Get-ButtonType', 'Set-Prop', 'Get-Color', 'Mix-Color', 'Get-TileColors', 'Test-DangerButton', 'Get-DisplayLabel', 'Update-OldDefaultOrder', 'ConvertTo-Hex', 'Get-D2Fill') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
-foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(ModernFill|Acronyms|Theme)\s*=') { Invoke-Expression $l.Extent.Text } }
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(ModernFill|Acronyms|Theme|D2Fill)\s*=') { Invoke-Expression $l.Extent.Text } }
 function L($label, $extra) { $o = [pscustomobject]@{ label = $label; type = 'website'; action = '' }; if ($extra) { foreach ($k in $extra.Keys) { $o | Add-Member $k $extra[$k] -Force } }; $o }
 $cases = @(
     @((L "RED DOG`nBACK`nOFFICE"), 'Red Dog Back Office', $null),
@@ -48,7 +48,15 @@ Check 'square-panel fallback' ($src -match '\[bool\]\$global:cfg\.squarePanels' 
 Check 'restart confirm default No kept' ($src -match "\[System\.Windows\.MessageBox\]::Show\(\`$cText, \`$cTitle, 'YesNo', 'Warning', 'No'\)")
 Check 'ScreenConnect admin prompt kept' ($src -match "function global:Restart-ScreenConnect" -and $src -match "RunAs")
 Check 'MB-M1: Enter/Space ignore key repeat' ($src -match "\(\`$_\.Key -eq 'Enter' -or \`$_\.Key -eq 'Space'\) -and -not \`$_\.IsRepeat")
-Check 'MB-N1: shadow fades to 0 then the effect is removed' ($src -match 'OpacityProperty\) 0 120 -Ease -OnDone \$dropFx' -and $src -match '\$sb\.Add_Completed\(\$OnDone\)')
+# D2 (v1.3.0): the per-tile shadow is gone (MB-N1 is moot); the panel has no effect either
+$tileSrc = ([regex]::Match($src, '(?s)function global:New-Tile.*?\r?\nfunction global:Pick-Color')).Value
+$chipSrc = ([regex]::Match($src, '(?s)function global:New-Chip.*?\r?\nfunction global:Move-Chip')).Value
+Check 'D2: no DropShadowEffect, BlurEffect or Effect on tiles/chips' ($tileSrc -and $chipSrc -and ($tileSrc + $chipSrc) -notmatch 'DropShadowEffect|BlurEffect|\.Effect\s*=')
+Check 'D2: tile states are pre-built layers; only Opacity and transforms animate' ($tileSrc -match '\$hov = ' -and $tileSrc -match '\$prs = ' -and $tileSrc -match '\$glow = ' -and $tileSrc -notmatch 'ColorProperty')
+Check 'D2: hover lift -2, icon 1.06, pressed 0.97, glow 0.70 (restarts 0.35)' ($tileSrc -match '\$lift \$yProp -2 ' -and $tileSrc -match '\$iscale \$sxProp 1\.06' -and $tileSrc -match '\$press \$sxProp 0\.97' -and $tileSrc -match 'glowMax = if \(\$danger\) \{ 0\.35 \} else \{ 0\.70 \}')
+Check 'D2: tile radius 12, hero 14, sheen 10 px' ($tileSrc -match '\$rad = if \(\$cls -eq ''hero''\) \{ 14 \} else \{ 12 \}' -and $tileSrc -match 'Set-D2Surface \$tile \$rad 10 ')
+Check 'D2: restarts keep the 2 px red outline' ($tileSrc -match 'restartRed; \$tile\.BorderThickness = .2.')
+Check 'D2: restart icons are no longer red masks' ($src -notmatch 'OpacityMask = \$ib')
 # Default order + migration
 $def = Get-Content (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
 $bl = @($def.panels[1].buttons | ForEach-Object { ([string]$_.label) -replace "`n", ' ' })
@@ -165,5 +173,14 @@ Check 'R8-L1: no recursive Get-ChildItem left in Find-Detected' ($src -notmatch 
 Check 'R7-I2: -small sibling checked with Test-LocalFixedPath first' ($src -match '\(Test-LocalFixedPath \$sm\) -and \(Test-Path -LiteralPath \$sm\)')
 Check 'click path: Find-Detected -AllowNetwork may look at a share' (([void](Find-Detected ([pscustomobject]@{ detect = [pscustomobject]@{ paths = @('\\srv\share\jt.exe') } }) -AllowNetwork)) -eq $null -and @($global:touched) -contains '\\srv\share\jt.exe')
 Check 'Resolve-ButtonPath (click) passes -AllowNetwork' ($src -match 'Find-Detected \$btn -AllowNetwork')
+# D2 fill table: every Option B default fill has Kern's seven D2 stops; custom colours get a derived set
+$okD2 = $true
+foreach ($k in 'Red Dog|#0B6E99', 'View Register|#0E7A4B', 'Internet|#7B4FD6', 'Email|#FACC15', 'Guides|#5F6368', 'PLCE|#C40000', 'Revenue|#F0E68C', 'Jartrek|#8A6100') {
+    $hex = $k.Split('|')[1]; if (-not $global:D2Fill.ContainsKey($hex) -or @($global:D2Fill[$hex]).Count -ne 7 -or ((Get-D2Fill $hex $false) -join ',') -ne ($global:D2Fill[$hex] -join ',')) { $okD2 = $false } }
+Check 'D2: Kern''s eight default fills each have a 7-stop D2 row' ($okD2 -and @($global:D2Fill['restart']).Count -eq 7)
+Check 'D2: Email rest is #FAD028 -> #D7AF12' (((Get-D2Fill '#facc15' $false)[0..1] -join ',') -eq '#FAD028,#D7AF12')
+Check 'D2: restarts use the dark fill and red glow' (((Get-D2Fill '#0B6E99' $true)[0, 6] -join ',') -eq '#2E2E2E,#E5484D')
+if ('System.Windows.Media.Color' -as [type]) { $cd = Get-D2Fill '#336699' $false
+Check 'D2: custom colour derives 7 hex stops, rest top = its own colour' (@($cd).Count -eq 7 -and $cd[0] -eq '#336699' -and @($cd | Where-Object { $_ -notmatch '^#[0-9A-F]{6}$' }).Count -eq 0) } else { 'SKIP  D2 derived colour (needs WPF: real Windows)' }
 Remove-Item Function:\global:Test-Path, Function:\global:Get-ChildItem, Function:\global:Join-Path
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

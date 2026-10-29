@@ -67,7 +67,7 @@ Check 'lnk: target on a mapped drive -> fallback' (-not (Test-SafeIconSource 'C:
 $script:lnkRead = 0; [void](Test-SafeIconSource '\\srv\share\local.lnk' $dt $lnkCount); [void](Test-SafeIconSource 'Z:\local.lnk' $dt $lnkCount)
 Check 'lnk on a share or mapped drive is never read' ($script:lnkRead -eq 0)
 Check 'reader error -> fallback' (-not (Test-SafeIconSource 'C:\d\x.lnk' $dt { throw 'COM failed' }))
-foreach ($c in @(@('program', 'images/register.png'), @('file', 'images/guide.png'), @('script', 'images/screenconnect.png'), @('website', 'images/globe.png'))) {
+foreach ($c in @(@('program', 'images/register.png'), @('file', 'images/chip-document.png'), @('script', 'images/chip-files.png'), @('website', 'images/globe.png'))) {
     Check ("fallback icon for {0}: {1}" -f $c[0], $c[1]) ((Get-ChipFallbackPic $c[0]) -eq $c[1] -and (Test-Path (Join-Path $root $c[1]))) }
 # OP-L3: Get-ChipIcon run for real with mocks: cache key = path|mtime, no file access for non-local targets
 $gci = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-ChipIcon' }, $true)
@@ -109,7 +109,7 @@ Check 'click-through: middle Background $null when locked' ($src -match "\`$mid\
 Check 'single window uses per-pixel alpha' ($src -match '\$w\.AllowsTransparency = \$true; \$w\.Background = \$null')
 Check 'single window not topmost unless it already was' ($src -match '\$w\.Topmost = \[bool\]\$pcs\[0\]\.alwaysOnTop')
 Check 're-dock on display/work-area/DPI change' ($src -match 'if \(\$global:single\) \{ Layout-Single \}' -and $src -match '0x007E, 0x001A, 0x02E0')
-Check 'chips: 65% fill, 16% white outline' ($src -match "Brush '#A6141414'" -and $src -match "Brush '#29FFFFFF'")
+Check 'chips: 65% fill, D2 gradient rim, radius 10, 8 px sheen at 14%' ($src -match 'Brush ''#A6141414''; \$chipSheen = Set-D2Surface \$chip 10 8 ''#24FFFFFF''')
 Check 'chips: 12 px one-line label with ellipsis' ($src -match "New-Label \(Get-ChipLabel \`$btn\) '#FFFFFF' 12; \`$tb\.TextWrapping = 'NoWrap'; \`$tb\.TextTrimming = 'CharacterEllipsis'")
 Check '+N more is a 28 px button opening a flyout' ($src -match '\$more\.Height = 28' -and $src -match 'Primitives\.Popup')
 Check 'chips: icon from ExtractAssociatedIcon, Set A fallback' ($src -match 'ExtractAssociatedIcon\(\$src\)' -and $src -match "'website' \{ 'images/globe\.png' \}")

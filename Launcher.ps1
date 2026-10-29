@@ -304,6 +304,49 @@ function global:Get-TileColors($btn) {
     if (-not $fg) { $c = Get-Color $bg; $fg = if ((0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B) -gt 150) { '#111111' } else { '#FFFFFF' } }
     return @{ bg = $bg; fg = $fg }
 }
+# ---------- Direction 2 "Fluent 3D" (v1.3.0, approved by Charles). Kern's spec: frozen gradient brushes per state, a
+# pre-built glow layer, no per-tile effects and no blur. Only Opacity and transforms animate, so idle CPU is unchanged.
+# Key = the Option B fill; value = rest top/bottom, hover top/bottom, pressed top/bottom, glow.
+$global:D2Fill = @{
+    '#0B6E99' = @('#0B6E99', '#085171', '#15749D', '#095A7D', '#0A638A', '#074B68', '#549AB8')
+    '#0E7A4B' = @('#0E7A4B', '#0A5A38', '#187F52', '#0B643E', '#0D6E44', '#0A5333', '#56A281')
+    '#7B4FD6' = @('#7B4FD6', '#5B3A9E', '#8056D8', '#6541AF', '#6F47C1', '#543692', '#A384E2')
+    '#FACC15' = @('#FAD028', '#D7AF12', '#FBD336', '#EBC014', '#EBC014', '#C39F10', '#FCDB5B')
+    '#5F6368' = @('#5F6368', '#46494D', '#65696E', '#4E5155', '#56595E', '#414347', '#8F9295')
+    '#C40000' = @('#C40000', '#910000', '#C60A0A', '#A10000', '#B00000', '#850000', '#D64C4C')
+    '#F0E68C' = @('#F1E895', '#CEC678', '#F2EA9C', '#E2D884', '#E2D884', '#BBB36D', '#F4EEAE')
+    '#8A6100' = @('#8A6100', '#664800', '#8F670A', '#715000', '#7C5700', '#5E4200', '#AD904C')
+    'restart' = @('#2E2E2E', '#1E1E1E', '#333333', '#242424', '#242424', '#1A1A1A', '#E5484D') }
+function global:ConvertTo-Hex($x) { '#{0:X2}{1:X2}{2:X2}' -f $x.R, $x.G, $x.B }
+function global:Get-D2Fill([string]$bg, [bool]$danger) {   # any other colour the user picked gets the same recipe, derived
+    if ($danger) { return $global:D2Fill['restart'] }
+    $k = $bg.Trim().ToUpperInvariant()
+    if ($global:D2Fill.ContainsKey($k)) { return $global:D2Fill[$k] }
+    $c = Get-Color $k; $w = Get-Color '#FFFFFF'; $b = Get-Color '#000000'
+    return @((ConvertTo-Hex $c), (ConvertTo-Hex (Mix-Color $c $b 0.26)), (ConvertTo-Hex (Mix-Color $c $w 0.04)), (ConvertTo-Hex (Mix-Color $c $b 0.18)),
+             (ConvertTo-Hex (Mix-Color $c $b 0.10)), (ConvertTo-Hex (Mix-Color $c $b 0.33)), (ConvertTo-Hex (Mix-Color $c $w 0.30)))
+}
+function global:New-VGrad([string]$top, [string]$bottom) {   # frozen top-to-bottom gradient
+    $g = New-Object System.Windows.Media.LinearGradientBrush ((Get-Color $top), (Get-Color $bottom), 90.0); $g.Freeze(); return $g
+}
+function global:New-GlowBrush([string]$hex, [double]$alpha) {   # soft radial glow, pre-built once per tile (no blur effect)
+    $c = Get-Color $hex; $a = [byte][Math]::Round(255 * $alpha)
+    $g = New-Object System.Windows.Media.RadialGradientBrush
+    [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb($a, $c.R, $c.G, $c.B)), 0.55))
+    [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb(0, $c.R, $c.G, $c.B)), 1.0))
+    $g.Freeze(); return $g
+}
+$global:D2IconShadow = $null   # built on first use (WPF must be loaded)
+function global:Set-D2Surface($b, [double]$radius, [int]$sheenPx, [string]$sheenTop) {   # gradient rim; returns the top sheen layer
+    $b.BorderBrush = New-VGrad '#47FFFFFF' '#0FFFFFFF'; $b.BorderThickness = '1'; $b.CornerRadius = [string]$radius
+    $sh = New-Object System.Windows.Controls.Border; $sh.IsHitTestVisible = $false; $sh.Height = $sheenPx; $sh.VerticalAlignment = 'Top'
+    $r = [Math]::Max(0, $radius - 1); $sh.CornerRadius = ('{0},{0},0,0' -f $r); $sh.Background = New-VGrad $sheenTop '#00FFFFFF'
+    return $sh
+}
+function global:Set-D2Panel($edge, [string]$corners) {   # panel: dark glass gradient at 90%, 12% rim, 18% top highlight
+    $edge.Background = New-VGrad '#E626262C' '#E616161A'; $edge.BorderBrush = New-VGrad '#2EFFFFFF' '#1FFFFFFF'; $edge.BorderThickness = '1'
+    $edge.CornerRadius = $corners
+}
 function global:Test-DangerButton($btn) {
     if ([string]$btn.group -eq 'danger') { return $true }
     return ((Get-ButtonType $btn) -eq 'builtin' -and [string]$btn.action -in 'restart-screenconnect', 'restart-computer')
@@ -488,17 +531,18 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
         Add-Content -LiteralPath $global:logPath -Value ("{0}  picture not found for '{1}': {2}" -f (Get-Date -Format s), (([string]$btn.label) -replace "`n", ' '), (Resolve-Img ([string]$btn.image))) -ErrorAction SilentlyContinue }
     $icon = $null
     if ($src) {
-        if ($danger) {   # Rev 2: red #E5484D icon, drawn through the white Set A picture as a mask
-            $icon = New-Object System.Windows.Shapes.Rectangle; $icon.Width = $ipx; $icon.Height = $ipx; $icon.Fill = Brush $global:Theme.restartRed
-            $ib = New-Object System.Windows.Media.ImageBrush $src; $ib.Stretch = 'Uniform'; $icon.OpacityMask = $ib
-        } else {
-            $img = New-Object System.Windows.Controls.Image; $img.Source = $src; $img.Stretch = 'Uniform'; $img.Width = $ipx; $img.Height = $ipx
-            [System.Windows.Media.RenderOptions]::SetBitmapScalingMode($img, 'HighQuality')
-            if ($isRedDog) {   # full-colour Red Dog on a white 8 px plate (its red is under 3:1 on the cyan fill alone)
-                $plate = New-Object System.Windows.Controls.Border; $plate.Background = [System.Windows.Media.Brushes]::White
-                $plate.CornerRadius = '8'; $plate.Padding = '4'; $plate.Child = $img; $icon = $plate
-            } else { $icon = $img }
-        }
+        # D2: restart icons keep their own emoji colours; the red 2 px outline carries the danger cue
+        $img = New-Object System.Windows.Controls.Image; $img.Source = $src; $img.Stretch = 'Uniform'; $img.Width = $ipx; $img.Height = $ipx
+        [System.Windows.Media.RenderOptions]::SetBitmapScalingMode($img, 'HighQuality')
+        if ($isRedDog) {   # full-colour Red Dog on a white 8 px plate (its red is under 3:1 on the cyan fill alone)
+            $plate = New-Object System.Windows.Controls.Border; $plate.Background = [System.Windows.Media.Brushes]::White
+            $plate.CornerRadius = '8'; $plate.Padding = '4'; $plate.Child = $img; $icon = $plate
+        } else {   # pre-baked soft contact shadow under the emoji (a static gradient, not an effect)
+            if (-not $global:D2IconShadow) { $global:D2IconShadow = New-GlowBrush '#000000' 0.30 }
+            $ig = New-Object System.Windows.Controls.Grid; $ig.Width = $ipx; $ig.Height = $ipx
+            $sh = New-Object System.Windows.Shapes.Ellipse; $sh.Width = $ipx * 0.72; $sh.Height = [Math]::Max(4, $ipx * 0.16)
+            $sh.VerticalAlignment = 'Bottom'; $sh.Margin = ('0,0,0,{0}' -f (-[Math]::Round($ipx * 0.06))); $sh.Fill = $global:D2IconShadow
+            [void]$ig.Children.Add($sh); [void]$ig.Children.Add($img); $icon = $ig }
     }
     $sp = New-Object System.Windows.Controls.StackPanel
     if ($above) {
@@ -512,10 +556,10 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
         $text.MaxWidth = if ($cls -eq 'half') { 109 - $iconW } else { 248 - $iconW }   # 290 panel - 12 padding - 6 gap - 24 tile padding
     }
     [void]$sp.Children.Add($text)
-    return @{ el = $sp; missingPic = $missingPic }
+    return @{ el = $sp; missingPic = $missingPic; icon = $icon }
 }
 
-# One tile: rounded 8 px fill, 1 px top highlight, hover lift + shadow, press, launch flash, 2 px focus ring,
+# One tile (D2 Fluent 3D): 12 px gradient fill, gradient rim, top sheen, pre-built glow, hover lift + glow, press 0.97, launch flash, 2 px focus ring,
 # dashed outline while editing, amber dot when not set up.
 function global:New-Tile($p, $btn) {
     $h = if ($btn.height) { [double]$btn.height } else { 80 }
@@ -525,26 +569,41 @@ function global:New-Tile($p, $btn) {
     $col = Get-TileColors $btn
     $fillHex = if ($danger) { $global:Theme.restartFill } else { $col.bg }
     $fgHex = if ($danger) { '#FFFFFF' } else { $col.fg }
-    $base = Get-Color $fillHex
-    $hoverC = Mix-Color $base (Get-Color '#FFFFFF') 0.06; $pressC = Mix-Color $base (Get-Color '#000000') 0.08
-    $fill = New-Object System.Windows.Media.SolidColorBrush $base
+    # D2: three frozen gradient layers (rest, hover, pressed) stacked; only their Opacity animates, never a brush or an effect
+    $f = Get-D2Fill $fillHex $danger
+    $rad = if ($cls -eq 'hero') { 14 } else { 12 }
+    $oProp = [System.Windows.UIElement]::OpacityProperty
 
     $wrap = New-Object System.Windows.Controls.Grid; $wrap.Margin = '3'                  # 3 + 3 = Kern's 6 px gap
-    $tile = New-Object System.Windows.Controls.Border; $tile.CornerRadius = '8'; $tile.Background = $fill; $tile.Height = $h
+    $glowMax = if ($danger) { 0.35 } else { 0.70 }
+    $glow = New-Object System.Windows.Controls.Border; $glow.IsHitTestVisible = $false; $glow.Margin = '-3'; $glow.Opacity = 0
+    $glow.CornerRadius = [string]($rad + 3); $glow.Background = New-GlowBrush $f[6] 0.85; $glow.Height = $h + 6
+    $tile = New-Object System.Windows.Controls.Border; $tile.Background = New-VGrad $f[0] $f[1]; $tile.Height = $h
+    $sheen = Set-D2Surface $tile $rad 10 '#4DFFFFFF'; $sheen.Opacity = 0.73   # 30% brush: 22% at rest, 30% hover, 12% pressed
     if ($danger) { $tile.BorderBrush = Brush $global:Theme.restartRed; $tile.BorderThickness = '2' }
-    $lift = New-Object System.Windows.Media.TranslateTransform 0, 0; $tile.RenderTransform = $lift
+    $lift = New-Object System.Windows.Media.TranslateTransform 0, 0
+    $press = New-Object System.Windows.Media.ScaleTransform 1, 1
+    $tg = New-Object System.Windows.Media.TransformGroup; $tg.Children.Add($press); $tg.Children.Add($lift)
+    $tile.RenderTransform = $tg; $tile.RenderTransformOrigin = '0.5,0.5'
+    $glowLift = New-Object System.Windows.Media.TranslateTransform 0, 0; $glow.RenderTransform = $glowLift
     $tile.Cursor = [System.Windows.Input.Cursors]::Hand; $tile.Focusable = $true; $tile.FocusVisualStyle = $null
     $tile.ToolTip = $btn.target
     $g = New-Object System.Windows.Controls.Grid
+    $ir = [string]([Math]::Max(0, $rad - 1))
+    $hov = New-Object System.Windows.Controls.Border; $hov.IsHitTestVisible = $false; $hov.Opacity = 0; $hov.CornerRadius = $ir; $hov.Background = New-VGrad $f[2] $f[3]
+    $prs = New-Object System.Windows.Controls.Border; $prs.IsHitTestVisible = $false; $prs.Opacity = 0; $prs.CornerRadius = $ir; $prs.Background = New-VGrad $f[4] $f[5]
+    $shade = New-Object System.Windows.Controls.Border; $shade.IsHitTestVisible = $false; $shade.BorderThickness = '0,0,0,1'
+    $shade.BorderBrush = Brush '#40000000'; $shade.CornerRadius = ('0,0,{0},{0}' -f $ir)
+    [void]$g.Children.Add($hov); [void]$g.Children.Add($prs); [void]$g.Children.Add($sheen); [void]$g.Children.Add($shade)
     $c = New-Content $btn $h $cls $danger $fgHex
     $c.el.Margin = '12,8'; [void]$g.Children.Add($c.el)
-    $hl = New-Object System.Windows.Controls.Border; $hl.IsHitTestVisible = $false; $hl.BorderThickness = '0,1,0,0'
-    $hl.BorderBrush = Brush '#14FFFFFF'; $hl.CornerRadius = '8,8,0,0'; [void]$g.Children.Add($hl)
+    $iscale = New-Object System.Windows.Media.ScaleTransform 1, 1
+    if ($c.icon) { $c.icon.RenderTransform = $iscale; $c.icon.RenderTransformOrigin = '0.5,0.5' }
     $flash = New-Object System.Windows.Controls.Border; $flash.IsHitTestVisible = $false; $flash.Opacity = 0
-    $flash.Background = [System.Windows.Media.Brushes]::White; $flash.CornerRadius = '7'; [void]$g.Children.Add($flash)
+    $flash.Background = [System.Windows.Media.Brushes]::White; $flash.CornerRadius = $ir; [void]$g.Children.Add($flash)
     if (-not [bool]$global:cfg.locked) {   # edit mode: 2 px dashed white outline at 60% inside the tile
         $eo = New-Object System.Windows.Shapes.Rectangle; $eo.IsHitTestVisible = $false; $eo.Stroke = Brush '#99FFFFFF'; $eo.StrokeThickness = 2
-        $eo.StrokeDashArray = New-Object System.Windows.Media.DoubleCollection (,[double[]](4, 3)); $eo.RadiusX = 6; $eo.RadiusY = 6; $eo.Margin = '2'
+        $eo.StrokeDashArray = New-Object System.Windows.Media.DoubleCollection (,[double[]](4, 3)); $eo.RadiusX = $rad - 2; $eo.RadiusY = $rad - 2; $eo.Margin = '2'
         [void]$g.Children.Add($eo) }
     if ($c.missingPic) { [void]$g.Children.Add((New-MissingDot ("Picture not found: " + [string]$btn.image))) }
     else { $ss = Get-SetupState $btn
@@ -552,21 +611,30 @@ function global:New-Tile($p, $btn) {
         elseif ($ss -eq 'unchecked') { $tile.ToolTip = [string]$btn.target + "`n(network location: not checked until you click)" } }
     $g.Background = [System.Windows.Media.Brushes]::Transparent
     $tile.Child = $g
-    $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-4'; $ring.CornerRadius = '12'
+    $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-4'; $ring.CornerRadius = [string]($rad + 4)
     $ring.BorderThickness = '2'; $ring.BorderBrush = [System.Windows.Media.Brushes]::White; $ring.Visibility = 'Hidden'
-    [void]$wrap.Children.Add($tile); [void]$wrap.Children.Add($ring)
+    [void]$wrap.Children.Add($glow); [void]$wrap.Children.Add($tile); [void]$wrap.Children.Add($ring)
 
-    $shadow = New-Object System.Windows.Media.Effects.DropShadowEffect
-    $shadow.BlurRadius = 10; $shadow.ShadowDepth = 4; $shadow.Direction = 270; $shadow.Color = [System.Windows.Media.Colors]::Black; $shadow.Opacity = 0
     $st = @{ down = $false }
-    $colorProp = [System.Windows.Media.SolidColorBrush]::ColorProperty; $yProp = [System.Windows.Media.TranslateTransform]::YProperty
-    $toHover = { $tile.Effect = $shadow
-        Start-Anim $lift $yProp -1 120 -Ease; Start-Anim $shadow ([System.Windows.Media.Effects.DropShadowEffect]::OpacityProperty) 0.35 120 -Ease
-        Start-Anim $fill $colorProp $hoverC 120 -Ease }.GetNewClosure()
-    # MB-N1: the shadow fades out, then the effect is removed (only if the pointer didn't come back meanwhile).
-    $dropFx = { if (-not $tile.IsMouseOver -and $shadow.Opacity -le 0.001) { $tile.Effect = $null } }.GetNewClosure()
-    $toRest = { Start-Anim $lift $yProp 0 120 -Ease; Start-Anim $fill $colorProp $base 120 -Ease
-        Start-Anim $shadow ([System.Windows.Media.Effects.DropShadowEffect]::OpacityProperty) 0 120 -Ease -OnDone $dropFx }.GetNewClosure()
+    $yProp = [System.Windows.Media.TranslateTransform]::YProperty
+    $sxProp = [System.Windows.Media.ScaleTransform]::ScaleXProperty; $syProp = [System.Windows.Media.ScaleTransform]::ScaleYProperty
+    $toHover = {
+        Start-Anim $lift $yProp -2 120 -Ease; Start-Anim $glowLift $yProp -2 120 -Ease
+        Start-Anim $press $sxProp 1 120 -Ease; Start-Anim $press $syProp 1 120 -Ease
+        Start-Anim $glow $oProp $glowMax 120 -Ease; Start-Anim $hov $oProp 1 120 -Ease; Start-Anim $prs $oProp 0 120 -Ease
+        Start-Anim $sheen $oProp 1 120 -Ease
+        Start-Anim $iscale $sxProp 1.06 120 -Ease; Start-Anim $iscale $syProp 1.06 120 -Ease }.GetNewClosure()
+    $toRest = {
+        Start-Anim $lift $yProp 0 120 -Ease; Start-Anim $glowLift $yProp 0 120 -Ease
+        Start-Anim $press $sxProp 1 120 -Ease; Start-Anim $press $syProp 1 120 -Ease
+        Start-Anim $glow $oProp 0 120 -Ease; Start-Anim $hov $oProp 0 120 -Ease; Start-Anim $prs $oProp 0 120 -Ease
+        Start-Anim $sheen $oProp 0.73 120 -Ease
+        Start-Anim $iscale $sxProp 1 120 -Ease; Start-Anim $iscale $syProp 1 120 -Ease }.GetNewClosure()
+    $toPress = {
+        Start-Anim $lift $yProp 0 60; Start-Anim $glowLift $yProp 0 60
+        Start-Anim $press $sxProp 0.97 60; Start-Anim $press $syProp 0.97 60
+        Start-Anim $glow $oProp ($glowMax * 0.43) 60; Start-Anim $prs $oProp 1 60; Start-Anim $sheen $oProp 0.4 60
+        Start-Anim $iscale $sxProp 1 60; Start-Anim $iscale $syProp 1 60 }.GetNewClosure()
     $run = {
         $ok = Invoke-Button $btn                   # launch first; the flash never delays it
         if ($ok -eq $true) { Start-Flash $flash } }.GetNewClosure()
@@ -574,7 +642,7 @@ function global:New-Tile($p, $btn) {
     $tile.Add_MouseLeave({ if (-not $st.down) { & $toRest } }.GetNewClosure())
     $tile.Add_MouseLeftButtonDown({
         $st.down = $true; [void]$tile.CaptureMouse(); $_.Handled = $true
-        $tile.Effect = $null; Start-Anim $lift $yProp 0 60; Start-Anim $fill $colorProp $pressC 60
+        & $toPress
         Play-Click
     }.GetNewClosure())
     $tile.Add_MouseLeftButtonUp({
@@ -586,7 +654,7 @@ function global:New-Tile($p, $btn) {
     $tile.Add_LostMouseCapture({ if ($st.down) { $st.down = $false; & $toRest } }.GetNewClosure())
     $tile.Add_IsKeyboardFocusedChanged({ $ring.Visibility = if ($tile.IsKeyboardFocused) { 'Visible' } else { 'Hidden' } }.GetNewClosure())
     # MB-M1: one launch per key press. Held keys auto-repeat KeyDown, so ignore repeats.
-    $tile.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; Start-Anim $fill $colorProp $pressC 60; & $run; Start-Anim $fill $colorProp $base 120 }
+    $tile.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; & $toPress; & $run; if ($tile.IsMouseOver) { & $toHover } else { & $toRest } }
                         elseif ($_.Key -eq 'Enter' -or $_.Key -eq 'Space') { $_.Handled = $true } }.GetNewClosure())
     $tile.Add_MouseRightButtonDown({ [void]$tile.Focus() }.GetNewClosure())
     $tile.ContextMenu = Button-Menu $p $btn
@@ -1054,8 +1122,9 @@ function global:Open-Panel($pc) {
     $square = [bool]$global:cfg.squarePanels
     if (-not $square) { $w.AllowsTransparency = $true; $w.Background = [System.Windows.Media.Brushes]::Transparent }
     else { $w.Background = Brush $bgc }
-    $edge = New-Object System.Windows.Controls.Border; $edge.Background = Brush $bgc; $edge.Padding = '3'
-    $edge.CornerRadius = if ($square) { '0' } else { '14' }
+    $edge = New-Object System.Windows.Controls.Border; $edge.Padding = '3'
+    if ($bgc -eq $global:Theme.panel) { Set-D2Panel $edge $(if ($square) { '0' } else { '16' }) }   # D2 glass panel; a custom panel colour stays flat
+    else { $edge.Background = Brush $bgc; $edge.CornerRadius = if ($square) { '0' } else { '16' } }
     $dock = New-Object System.Windows.Controls.DockPanel; $dock.Width = $global:BaseWidth - 6
     # Edit mode: 28 px amber "Editing" bar (also the drag handle). Locked: hidden, so the panel is clean.
     $grip = New-Object System.Windows.Controls.Border; $grip.Height = 28; $grip.Background = Brush $global:Theme.amber; $grip.Cursor = 'SizeAll'
@@ -1238,7 +1307,7 @@ function global:New-DefaultChip { [pscustomobject]@{ label = 'New icon'; type = 
 # OP-L1: only touch local fixed-drive paths when drawing. Opening a UNC path, a \\?\UNC or \\.\ device path, or a mapped
 # network drive (or a .lnk that points or takes its icon from one) makes Windows send NTLM credentials to that server.
 function global:Get-ChipFallbackPic([string]$kind) {
-    switch ($kind) { 'website' { 'images/globe.png' } 'file' { 'images/guide.png' } 'script' { 'images/screenconnect.png' } default { 'images/register.png' } }
+    switch ($kind) { 'website' { 'images/globe.png' } 'file' { 'images/chip-document.png' } 'script' { 'images/chip-files.png' } default { 'images/register.png' } }
 }
 function global:Get-ChipIcon($btn) {   # the target's own icon (local fixed drives only, cached), else a Set A icon for its type
     $kind = Get-ButtonType $btn
@@ -1269,12 +1338,12 @@ function global:Get-ChipIcon($btn) {   # the target's own icon (local fixed driv
     return Get-PicSource ([pscustomobject]@{ image = (Get-ChipFallbackPic $kind) }) 32
 }
 function global:New-Chip($btn, [int]$index) {
-    $chip = New-Object System.Windows.Controls.Border; $chip.Height = 64; $chip.Margin = '3'; $chip.CornerRadius = '8'
-    $chip.Background = Brush '#A6141414'; $chip.BorderBrush = Brush '#29FFFFFF'; $chip.BorderThickness = '1'   # Kern: 65% fill, 16% outline
+    $chip = New-Object System.Windows.Controls.Border; $chip.Height = 64; $chip.Margin = '3'
+    $chip.Background = Brush '#A6141414'; $chipSheen = Set-D2Surface $chip 10 8 '#24FFFFFF'   # D2: 65% fill, gradient rim, 8 px sheen at 14%
     $chip.Cursor = [System.Windows.Input.Cursors]::Hand; $chip.Focusable = $true; $chip.FocusVisualStyle = $null; $chip.AllowDrop = $true
     $full = (([string]$btn.label) -replace '\\n', ' ').Trim(); if (-not $full) { $full = [string]$btn.target }
     $chip.ToolTip = $full + $(if ($btn.target -and $full -ne [string]$btn.target) { "`n" + [string]$btn.target } else { '' })
-    $g = New-Object System.Windows.Controls.Grid
+    $g = New-Object System.Windows.Controls.Grid; [void]$g.Children.Add($chipSheen)
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.VerticalAlignment = 'Center'; $sp.Margin = '8'
     $src = Get-ChipIcon $btn
     if ($src) { $img = New-Object System.Windows.Controls.Image; $img.Source = $src; $img.Width = 32; $img.Height = 32; $img.Margin = '0,0,0,6'
@@ -1282,7 +1351,7 @@ function global:New-Chip($btn, [int]$index) {
     $tb = New-Label (Get-ChipLabel $btn) '#FFFFFF' 12; $tb.TextWrapping = 'NoWrap'; $tb.TextTrimming = 'CharacterEllipsis'
     $tb.HorizontalAlignment = 'Center'; $tb.TextAlignment = 'Center'; [void]$sp.Children.Add($tb)
     [void]$g.Children.Add($sp)
-    $flash = New-Object System.Windows.Controls.Border; $flash.IsHitTestVisible = $false; $flash.Opacity = 0; $flash.CornerRadius = '7'
+    $flash = New-Object System.Windows.Controls.Border; $flash.IsHitTestVisible = $false; $flash.Opacity = 0; $flash.CornerRadius = '9'
     $flash.Background = [System.Windows.Media.Brushes]::White; [void]$g.Children.Add($flash)
     if (-not [bool]$global:cfg.locked) {
         $eo = New-Object System.Windows.Shapes.Rectangle; $eo.IsHitTestVisible = $false; $eo.Stroke = Brush '#99FFFFFF'; $eo.StrokeThickness = 2
@@ -1391,12 +1460,12 @@ function global:Build-Middle {
     $col = New-Object System.Windows.Controls.StackPanel; $col.VerticalAlignment = 'Center'; $col.Margin = '3,16'   # >= 16 px to the groups
     if ($split.shown -gt 0) { [void]$col.Children.Add((New-ChipGrid @($items[0..($split.shown - 1)]) $global:middle.cols 0)) }
     if ($split.more -gt 0) {
-        $more = New-Object System.Windows.Controls.Border; $more.Height = 28; $more.Margin = '3'; $more.CornerRadius = '8'
-        $more.Background = Brush '#A6141414'; $more.BorderBrush = Brush '#29FFFFFF'; $more.BorderThickness = '1'; $more.Cursor = [System.Windows.Input.Cursors]::Hand
+        $more = New-Object System.Windows.Controls.Border; $more.Height = 28; $more.Margin = '3'
+        $more.Background = Brush '#A6141414'; [void](Set-D2Surface $more 10 8 '#24FFFFFF'); $more.Cursor = [System.Windows.Input.Cursors]::Hand
         $mt = New-Label ("+{0} more {1}" -f $split.more, [char]0x25BE) '#FFFFFF' 12; $mt.HorizontalAlignment = 'Center'; $more.Child = $mt
         $pop = New-Object System.Windows.Controls.Primitives.Popup; $pop.StaysOpen = $false; $pop.PlacementTarget = $more; $pop.Placement = 'Left'
         $pop.AllowsTransparency = $true
-        $pb = New-Object System.Windows.Controls.Border; $pb.Background = Brush $global:Theme.panel; $pb.CornerRadius = '12'; $pb.Padding = '3'; $pb.Width = 290
+        $pb = New-Object System.Windows.Controls.Border; Set-D2Panel $pb '12'; $pb.Padding = '3'; $pb.Width = 290
         $pb.Child = New-ChipGrid @($items[$split.shown..($items.Count - 1)]) $global:middle.cols $split.shown
         $pop.Child = $pb
         $more.Add_MouseLeftButtonUp({ $pop.IsOpen = -not $pop.IsOpen }.GetNewClosure())
@@ -1425,8 +1494,8 @@ function global:Open-Single {
         $pc = $pcs[$gi]
         $p = @{ cfg = $pc; items = (New-Object System.Collections.ArrayList); deleted = $false; hwnd = [IntPtr]::Zero; single = $true }
         foreach ($b in $pc.buttons) { [void]$p.items.Add($b) }
-        $edge = New-Object System.Windows.Controls.Border; $edge.Background = Brush $global:Theme.panel; $edge.Padding = '3'
-        $edge.CornerRadius = $(if ($gi -eq 0) { '0,0,0,14' } else { '14,0,0,0' })
+        $edge = New-Object System.Windows.Controls.Border; $edge.Padding = '3'
+        Set-D2Panel $edge $(if ($gi -eq 0) { '0,0,0,16' } else { '16,0,0,0' })
         $dock = New-Object System.Windows.Controls.DockPanel
         $grip = New-Object System.Windows.Controls.Border
         if ($gi -eq 0) {   # Editing bar (top group only). Squint: lead with "Lock when done".

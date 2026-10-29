@@ -141,7 +141,7 @@
           "target": "",
           "askTitle": "Pick the Register User Guide (PDF)",
           "askFilter": "PDF files|*.pdf|All files|*.*",
-          "image": "images/guide.png",
+          "image": "images/guide-register.png",
           "imageMode": "above",
           "args": "",
           "runAsAdmin": false
