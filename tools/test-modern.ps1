@@ -84,10 +84,15 @@ $dt = { param($r) switch ($r.Substring(0, 1).ToUpperInvariant()) { 'C' { 'Fixed'
 $global:attrs = @{ 'C:\Junction' = 0x410; 'C:\OneDrive\cloud.exe' = 0x400000; 'C:\OneDrive\open.exe' = 0x40000; 'C:\Arch\off.exe' = 0x1001; 'C:\Apps' = 0x10; 'C:\Tools\Sub\link.exe' = 0x420 }
 $global:PathProbe = @{ DriveType = $dt
     DosDevice = { param($d) switch ($d.ToUpperInvariant()) { 'S:' { '\??\UNC\srv\share' } 'T:' { '\??\C:\Tools' } 'M:' { '\Device\Mup\;Z:\srv\x' } default { '\Device\HarddiskVolume3' } } }
-    Attr = { param($p) $global:attrs[$p] } }
+    Attr = { param($p) [void]$global:attrReads.Add($p); if ($global:attrs.ContainsKey($p)) { $global:attrs[$p] } elseif ($p -match 'absent') { $null } else { 0x10 } } }
+$global:attrReads = New-Object System.Collections.ArrayList
 foreach ($c in @(@('S:\app.exe', $false), @('T:\app.exe', $true), @('T:\Sub\link.exe', $false), @('M:\app.exe', $false), @('C:\Apps\here.exe', $true), @('C:\Junction\app.exe', $false),
                  @('C:\Junction', $false), @('C:\OneDrive\cloud.exe', $false), @('C:\OneDrive\open.exe', $false), @('C:\Arch\off.exe', $false), @('D:\plain\x.exe', $true))) {
     Check ("R6-L2/OP-N2: local fixed path '{0}' -> {1}" -f $c[0], $c[1]) ((Test-LocalFixedPath $c[0]) -eq $c[1]) }
+$global:attrReads.Clear(); $jr = Test-LocalFixedPath 'C:\Junction\deep\x.exe'
+Check 'R7-L1: walk is root-down and stops at the first link (nothing past it read)' (-not $jr -and (@($global:attrReads) -join '|') -eq 'C:\Junction')
+$global:attrReads.Clear(); [void](Test-LocalFixedPath 'C:\Apps\absent\more\x.exe')
+Check 'R7-L1: stops at the first missing folder' ((@($global:attrReads) -join '|') -eq 'C:\Apps|C:\Apps\absent')
 Check 'R6-L2: subst onto a share is unchecked, not missing' ((Get-SetupState ([pscustomobject]@{ type = 'program'; target = 'S:\app.exe' }) $dt { @{} }) -eq 'unchecked')
 # OP-N3: icons come from the checked target, never the .lnk's own icon location
 $rlI = { param($l) @{ target = 'C:\Apps\real.exe'; icon = 'C:\Apps\other.ico,0' } }
@@ -115,5 +120,35 @@ Check 'detect paths: non-local only -> unchecked, never listed' ((Get-SetupState
 $global:touched.Clear()
 Check 'Test-ButtonSetUpQuick: UNC is not missing (no dot) and not touched' ((Test-ButtonSetUpQuick (P '\\srv\share\app.exe')) -and $global:touched.Count -eq 0)
 Check 'tile: only missing gets the dot; unchecked gets a tooltip' ($src -match "if \(\`$ss -eq 'missing'\) \{ \[void\]\`$g\.Children\.Add\(\(New-MissingDot" -and $src -match 'not checked until you click')
-Remove-Item Function:\global:Test-Path, Function:\global:Get-ChildItem
+# TS-L2 (a): tile pictures on a share -> default art, the share is never touched
+foreach ($n in 'Get-DefaultPic', 'Resolve-Img', 'Get-PicSource', 'Test-ButtonReady', 'Find-LocalMatch', 'Find-Detected') {
+    $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
+    Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
+function global:Join-Path { param([string]$Path, [string]$ChildPath) $Path.TrimEnd('\') + '\' + $ChildPath }
+function global:Resolve-Img($path) { if ($path -match '^(\\\\|//|[A-Za-z]:)') { $path } else { Join-Path $global:here $path } }   # Windows IsPathRooted
+$global:here = 'C:\BL'; $global:touched.Clear()
+[void](Get-PicSource ([pscustomobject]@{ type = 'program'; target = 'x'; image = '\\host\x.png' }) 32)
+[void](Get-PicSource ([pscustomobject]@{ type = 'website'; target = 'x'; image = 'Z:\pics\x.png' }) 96)
+Check 'TS-L2a: non-local picture never touched; default art for its type checked instead' (-not (@($global:touched) | Where-Object { $_ -match '^(\\\\|[Zz]:)' }) -and (@($global:touched) | Where-Object { $_ -like '*register*.png' }) -and (@($global:touched) | Where-Object { $_ -like '*globe.png' }))
+# TS-L2 (b): first-run readiness and detect are local-only
+$global:touched.Clear()
+Check 'TS-L2b: Test-ButtonReady: UNC target = not listed, not touched' ((Test-ButtonReady (P '\\srv\share\app.exe')) -and $global:touched.Count -eq 0)
+Check 'TS-L2b: Test-ButtonReady: mapped-drive target = not listed, not touched' ((Test-ButtonReady (P 'Z:\app.exe')) -and $global:touched.Count -eq 0)
+Check 'TS-L2b: Test-ButtonReady: local missing still listed' (-not (Test-ButtonReady (P 'C:\Apps\gone.exe')))
+Check 'TS-L2b: Test-ButtonReady: local present ready' (Test-ButtonReady (P 'C:\Apps\here.exe'))
+# Find-Detected / Find-LocalMatch with a fake tree: C:\Prog\Jartrek1 (real dir), C:\Prog\JartrekLink (junction off-PC)
+$global:tree = @{ 'C:\' = @(@{ n = 'Prog'; d = $true; a = 0x10 }); 'C:\Prog' = @(@{ n = 'JartrekLink'; d = $true; a = 0x410 }, @{ n = 'Jartrek1'; d = $true; a = 0x10 })
+                  'C:\Prog\Jartrek1' = @(@{ n = 'jt.exe'; d = $false; a = 0x20 }, @{ n = 'ln.exe'; d = $false; a = 0x420 }); 'C:\Prog\JartrekLink' = @(@{ n = 'jt.exe'; d = $false; a = 0x20 }) }
+function global:Get-ChildItem { param([string]$LiteralPath, [string]$Path, [switch]$Force, [switch]$File, [switch]$Recurse, [string]$Filter)
+    $k = if ($LiteralPath) { $LiteralPath } else { $Path }; [void]$global:touched.Add($k)
+    foreach ($e in @($global:tree[$k.TrimEnd('\') + $(if ($k.Length -le 3) { '\' } else { '' })])) { if ($e) { [pscustomobject]@{ Name = $e.n; PSIsContainer = $e.d; Attributes = [IO.FileAttributes]$e.a; FullName = ($k.TrimEnd('\') + '\' + $e.n) } } } }
+$global:touched.Clear()
+$hit = Find-Detected ([pscustomobject]@{ detect = [pscustomobject]@{ paths = @('\\srv\share\jt.exe', 'Z:\x\jt.exe', 'C:\Prog\Jartrek*\jt.exe') } })
+Check 'TS-L2b: Find-Detected skips non-local detect paths (not touched)' (-not (@($global:touched) | Where-Object { $_ -match '^(\\\\|[Zz]:)' }))
+Check 'I-R6c: wildcard match that is a junction is never entered' ($hit -eq 'C:\Prog\Jartrek1\jt.exe' -and @($global:touched) -notcontains 'C:\Prog\JartrekLink')
+Check 'I-R6c: file link matches are ignored' ($null -eq (Find-LocalMatch 'C:\Prog\Jartrek1\ln*.exe'))
+$global:touched.Clear()
+Check 'click path: Find-Detected -AllowNetwork may look at a share' (([void](Find-Detected ([pscustomobject]@{ detect = [pscustomobject]@{ paths = @('\\srv\share\jt.exe') } }) -AllowNetwork)) -eq $null -and @($global:touched) -contains '\\srv\share\jt.exe')
+Check 'Resolve-ButtonPath (click) passes -AllowNetwork' ($src -match 'Find-Detected \$btn -AllowNetwork')
+Remove-Item Function:\global:Test-Path, Function:\global:Get-ChildItem, Function:\global:Join-Path
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

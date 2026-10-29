@@ -121,19 +121,32 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Silen
 $parent = Split-Path -Parent $dest
 New-Item -ItemType Directory -Force $parent | Out-Null
 $stage = Join-Path $parent ($AppName + '.new-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
-$failLog = Join-Path $env:TEMP ($AppName + '-install.log')
+# I-R6a/R7-N2: random log name in %TEMP%, created with CreateNew (never an existing file or a planted link)
+$failLog = Join-Path $env:TEMP ($AppName + '-install-' + [guid]::NewGuid().ToString('N').Substring(0, 12) + '.log')
+$script:failLogMade = $false
+function Write-FailLog($msg) {
+    try {
+        if (-not $script:failLogMade) { ([IO.File]::Open($failLog, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)).Dispose(); $script:failLogMade = $true }
+        Add-Content -LiteralPath $failLog -Value ("{0}  {1}" -f (Get-Date -Format s), $msg) } catch {} }
+function Move-Dir($a, $b) { [IO.Directory]::Move($a, $b) }
 function Copy-Tree($from, $to) {   # copies the old install into the stage; links (junctions/symlinks) are not followed or copied
     New-Item -ItemType Directory -Force $to | Out-Null
     foreach ($i in @(Get-ChildItem -LiteralPath $from -Force -ErrorAction SilentlyContinue)) {
         $o = Join-Path $to $i.Name
-        if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { Add-Content -LiteralPath $failLog -Value ("{0}  not carried over (link): {1}" -f (Get-Date -Format s), $i.FullName) -ErrorAction SilentlyContinue; continue }
+        if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { Write-FailLog ("not carried over (link): " + $i.FullName); continue }
         if ($i.PSIsContainer) { Copy-Tree $i.FullName $o } else { [IO.File]::Copy($i.FullName, $o, $true) } } }
 function Remove-Tree($p) {         # bottom-up; a link is removed as a link, never followed
     if (-not (Test-Path -LiteralPath $p)) { return }
     $it = Get-Item -LiteralPath $p -Force
     if (-not ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $it.PSIsContainer) { foreach ($c in @(Get-ChildItem -LiteralPath $p -Force)) { Remove-Tree $c.FullName } }
-    if ($it.PSIsContainer) { [IO.Directory]::Delete($p, $false) } else { $it.Attributes = 'Normal'; [IO.File]::Delete($p) } }
-if (Test-Path -LiteralPath $dest) { Copy-Tree $dest $stage } else { New-Item -ItemType Directory -Force $stage | Out-Null }
+    if ($it.PSIsContainer) { [IO.Directory]::Delete($p, $false) } else { if (-not ($it.Attributes -band [IO.FileAttributes]::ReparsePoint)) { $it.Attributes = 'Normal' }; [IO.File]::Delete($p) } }   # I-R6b: a file link is deleted as-is
+try { if (Test-Path -LiteralPath $dest) { Copy-Tree $dest $stage } else { New-Item -ItemType Directory -Force $stage | Out-Null } }
+catch {   # R7-L2: copying the current install failed: clean up, nothing changed
+    $why = $_.Exception.Message
+    try { Remove-Tree $stage } catch {}
+    Write-FailLog ("install stopped: could not copy the current install ($why); nothing was changed")
+    [System.Windows.MessageBox]::Show("$AppName could not be updated: copying the current install failed ($why).`n`nYour current install was not changed. Details: $failLog", "$AppName Setup", 'OK', 'Error') | Out-Null
+    exit 1 }
 $zip = Join-Path $env:TEMP ("bl-payload-" + [guid]::NewGuid() + ".zip")   # LJ-I4/CC-L7: unpredictable name
 [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String('__B64__'))
 $z = [IO.Compression.ZipFile]::OpenRead($zip)
@@ -196,7 +209,7 @@ $z.Dispose(); Remove-Item -LiteralPath $zip
 # R5-L2: stop before any shortcut or registry write if the core files didn't land
 $missingCore = @('Launcher.ps1', 'ButtonLauncher.exe', 'buttons.default.json' | Where-Object { -not $fromPayload[$_.ToLowerInvariant()] -or -not (Test-Path -LiteralPath (Join-Path $stage $_)) })
 if ($missingCore.Count) {
-    Add-Content -LiteralPath $failLog -Value ("{0}  install stopped: missing after extraction: {1}; existing install left as it was" -f (Get-Date -Format s), ($missingCore -join ', ')) -ErrorAction SilentlyContinue
+    Write-FailLog ("install stopped: missing after extraction: {0}; existing install left as it was" -f ($missingCore -join ', '))
     try { Remove-Tree $stage } catch {}
     [System.Windows.MessageBox]::Show("$AppName could not be installed: these files are missing after unpacking:`n" + ($missingCore -join "`n") + "`n`nNothing was added to the Start menu or the registry. Your current install was not changed. Details: $failLog`nTry the installer again.", "$AppName Setup", 'OK', 'Error') | Out-Null
     exit 1
@@ -204,14 +217,20 @@ if ($missingCore.Count) {
 # R6-L1: swap: current -> .old, stage -> current, then remove .old. Any failure puts the old folder back.
 $old = $null
 try {
-    if (Test-Path -LiteralPath $dest) { $old = $dest + '.old-' + [guid]::NewGuid().ToString('N').Substring(0, 8); [IO.Directory]::Move($dest, $old) }
-    [IO.Directory]::Move($stage, $dest)
+    if (Test-Path -LiteralPath $dest) { $old = $dest + '.old-' + [guid]::NewGuid().ToString('N').Substring(0, 8); Move-Dir $dest $old }
+    Move-Dir $stage $dest
 } catch {
     $why = $_.Exception.Message
-    if ($old -and -not (Test-Path -LiteralPath $dest)) { try { [IO.Directory]::Move($old, $dest) } catch {} }
-    try { Remove-Tree $stage } catch {}
-    Add-Content -LiteralPath $failLog -Value ("{0}  install stopped: could not swap in the new files ({1}); existing install restored" -f (Get-Date -Format s), $why) -ErrorAction SilentlyContinue
-    [System.Windows.MessageBox]::Show("$AppName could not be updated (a file may be in use). Your current install was not changed. Details: $failLog", "$AppName Setup", 'OK', 'Error') | Out-Null
+    $restored = $true
+    if ($old -and -not (Test-Path -LiteralPath $dest)) { try { Move-Dir $old $dest } catch { $restored = $false } }
+    if ($restored) {
+        try { Remove-Tree $stage } catch {}
+        Write-FailLog ("install stopped: could not swap in the new files ($why); existing install restored")
+        [System.Windows.MessageBox]::Show("$AppName could not be updated (a file may be in use). Your current install was not changed. Details: $failLog", "$AppName Setup", 'OK', 'Error') | Out-Null
+    } else {   # R7-L2: both renames failed: keep both folders and say exactly where they are
+        Write-FailLog ("install stopped: swap and rollback both failed ($why). Old install: $old  New files: $stage  Expected location: $dest")
+        [System.Windows.MessageBox]::Show("$AppName could not be updated, and the old install could not be put back automatically.`n`nNothing was deleted:`nOld install: $old`nNew files: $stage`n`nRename the old folder back to:`n$dest`nor run this installer again. Details: $failLog", "$AppName Setup", 'OK', 'Error') | Out-Null
+    }
     exit 1
 }
 if ($old) { try { Remove-Tree $old } catch { Add-Content -LiteralPath (Join-Path $dest 'install.log') -Value ("{0}  could not remove {1}: {2}" -f (Get-Date -Format s), $old, $_.Exception.Message) -ErrorAction SilentlyContinue } }
