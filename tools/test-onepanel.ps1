@@ -95,4 +95,6 @@ Stop-TrayAndHotkey; Stop-TrayAndHotkey
 # OP-N1
 Check 'OP-N1: tray and its app.ico Icon each disposed once, even when cleanup runs twice' ($global:dispN -eq 2 -and $null -eq $global:tray -and $null -eq $global:trayIcon)
 Check 'OP-N1: app.ico Icon kept in $global:trayIcon' ($src -match '\$global:trayIcon = New-Object System\.Drawing\.Icon \$ico; \$ni\.Icon = \$global:trayIcon')
+# OP-M1: tray + hotkey cleaned up even when startup fails after Start-TrayAndHotkey; cleanup safe to run twice
+Check 'OP-M1: main try has finally { Stop-TrayAndHotkey }' ($src -match "(?s)Write-LauncherError 'starting up' \`$_\s+exit 1\s+\}\s+finally \{ Stop-TrayAndHotkey \}")
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

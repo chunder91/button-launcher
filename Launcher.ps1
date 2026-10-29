@@ -1441,3 +1441,4 @@ catch {
     Write-LauncherError 'starting up' $_
     exit 1
 }
+finally { Stop-TrayAndHotkey }   # OP-M1: a startup error after Start-TrayAndHotkey must not leave the hotkey or tray icon behind
