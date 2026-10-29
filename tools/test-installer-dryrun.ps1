@@ -81,6 +81,16 @@ Check 'RELEASE.md lists verify-exe, dry-run, check-launcher (R3-L2)' ((Get-Conte
 Check 'builder prints the RELEASE.md reminder (R3-L2)' ($ast.Extent.Text -match 'RELEASE\.md checklist')
 Check 'builder checks the exe SHA-256' ($ast.Extent.Text -match 'does not match its recorded SHA-256')
 Check 'R4-L2: uninstall delete has no recursive Directory.Delete' ($tmpl['$uninstTemplate'] -notmatch 'Delete\(\$d, \$true\)' -and $tmpl['$uninstTemplate'] -match 'for \(\$i = \$order\.Count - 1')
+# R6-N1: every SVG master in the repo's history is a known shipped hash
+$svgMiss = @(); foreach ($c in (& git -C $root rev-list --all -- images/svg)) { foreach ($ln in (& git -C $root ls-tree -r $c images/svg)) {
+    $bid = ($ln -split '\s+')[2]; $tmpf = [IO.Path]::GetTempFileName()
+    $pi = New-Object System.Diagnostics.ProcessStartInfo -Property @{ FileName = 'git'; Arguments = "-C `"$root`" cat-file blob $bid"; RedirectStandardOutput = $true; UseShellExecute = $false }
+    $pr = [System.Diagnostics.Process]::Start($pi); $ms = New-Object IO.MemoryStream; $pr.StandardOutput.BaseStream.CopyTo($ms); $pr.WaitForExit()
+    $h = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($ms.ToArray())).Replace('-', '').ToLowerInvariant()
+    if (-not $tmpl['$install'].Contains("'$h'")) { $svgMiss += $h } ; Remove-Item $tmpf } }
+Check 'R6-N1: all older SVG master hashes known to the installer' ($svgMiss.Count -eq 0)
+Check 'R6-L1: swap failure restores the old folder' ($tmpl['$install'] -match [regex]::Escape('if ($old -and -not (Test-Path -LiteralPath $dest)) { try { [IO.Directory]::Move($old, $dest) } catch {} }'))
+Check 'R6-L1: stage/.old removal never follows links' ($tmpl['$install'] -match 'function Remove-Tree' -and $tmpl['$install'] -notmatch '-Recurse -Force' -and $tmpl['$install'] -notmatch 'Delete\(\$p, \$true\)')
 Check 'builder never ships buttons.json' ($ast.Extent.Text -notmatch "'Launcher.ps1','buttons.json'" -and $ast.Extent.Text -match "Join-Path \`$stage 'buttons.default.json'")
 
 # Simulated install -> reinstall -> uninstall in a temp dir. Registry, shortcuts, message boxes, processes are mocked.
@@ -157,11 +167,22 @@ foreach ($title in 'Launcher', 'Shop Panel') {
         $bad = New-TestInstaller @{ 'reddog.png' = 'png' } @() $om
         & $bad
         $sd = Join-Path (Join-Path $sbx 'Programs') $safe
-        $lg = Join-Path $sd 'install.log'; $lt = if (Test-Path -LiteralPath $lg) { Get-Content -LiteralPath $lg -Raw } else { '' }
+        $lg = Join-Path $env:TEMP "$safe-install.log"; $lt = if (Test-Path -LiteralPath $lg) { Get-Content -LiteralPath $lg -Raw } else { '' }
         $lnks = @(Get-ChildItem -Recurse -Filter *.lnk -LiteralPath $env:BL_MOCK_FOLDERS -ErrorAction SilentlyContinue)
         Check ($p + "R5-L2: missing $om -> no shortcuts, no registry, no launch, logged") ($lnks.Count -eq 0 -and $global:Reg.Count -eq 0 -and $global:Started.Count -eq 0 -and $lt -match "missing after extraction: .*$([regex]::Escape($om))")
         $global:Reg = $saveReg; $global:Started.Clear(); foreach ($s in $saveSt) { [void]$global:Started.Add($s) }
         $env:LOCALAPPDATA = $saveL; $env:BL_MOCK_FOLDERS = $saveF }
+    # R6-L1: a failed check on an upgrade leaves the existing install byte-for-byte as it was, with nothing left beside it
+    function Snap($d) { (Get-ChildItem -LiteralPath $d -Recurse -Force -File | Sort-Object FullName | ForEach-Object { $_.FullName.Substring($d.Length) + '=' + (Get-FileHash -LiteralPath $_.FullName).Hash }) -join ';' }
+    Write-Raw (Join-Path $dest 'buttons.json') '{"mine":1}'; Write-Raw (Join-Path $dest 'images/user-added.png') 'mine'
+    $before = Snap $dest; $saveReg = $global:Reg.Clone(); $runSnap = $global:Reg[$runK].Clone()
+    & (New-TestInstaller @{ 'reddog.png' = 'png' } @() 'ButtonLauncher.exe')
+    $sib = @(Get-ChildItem -LiteralPath (Split-Path $dest) -Force | Where-Object { $_.Name -like "$safe.new-*" -or $_.Name -like "$safe.old-*" })
+    Check ($p + 'R6-L1: failed check -> existing install untouched, no stage/.old left') ((Snap $dest) -eq $before -and $sib.Count -eq 0)
+    & (New-TestInstaller @{ 'reddog.png' = 'png'; 'globe.png' = 'g1' } @())
+    $sib = @(Get-ChildItem -LiteralPath (Split-Path $dest) -Force | Where-Object { $_.Name -like "$safe.new-*" -or $_.Name -like "$safe.old-*" })
+    Check ($p + 'R6-L1: swap -> buttons.json and user picture carried over, no stage/.old left') ((Get-Content (Join-Path $dest 'buttons.json') -Raw) -eq '{"mine":1}' -and (Test-Path (Join-Path $dest 'images/user-added.png')) -and $sib.Count -eq 0 -and (Test-Path (Join-Path $dest 'ButtonLauncher.exe')))
+    Remove-Item -LiteralPath (Join-Path $dest 'images/user-added.png'); Write-Raw (Join-Path $dest 'buttons.json') '{"default":true}'
     # R-M2 + Pictures/R3-N1: an upgrade keeps buttons.json, pictures the user added, and a user-replaced reddog.png,
     # but refreshes shipped pictures the user never touched.
     Set-Content (Join-Path $dest 'buttons.json') '{"mine":1}'

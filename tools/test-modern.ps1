@@ -76,10 +76,27 @@ Update-OldDefaultOrder; $mb = $global:cfg.panels[1].buttons
 Check 'MB-L3: moved tiles keep their sizes' ($mb[4].height -eq 99 -and $mb[4].fontSize -eq 15 -and $mb[4].width -eq 'half' -and $mb[5].width -eq 'full' -and $mb[5].height -eq 70 -and $mb[6].fontSize -eq 14 -and $mb[6].height -eq 85)
 Remove-Item -LiteralPath $tmp -Recurse -Force
 # LJ: setup check at draw time touches only local fixed-drive paths (drive types mocked: C fixed, Z mapped network)
-foreach ($n in 'Expand', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-SetupState', 'Test-ButtonSetUpQuick') {
+foreach ($n in 'Expand', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Resolve-IconTarget', 'Get-SetupState', 'Test-ButtonSetUpQuick') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
-$dt = { param($r) switch ($r.Substring(0, 1).ToUpperInvariant()) { 'C' { 'Fixed' } 'Z' { 'Network' } default { 'NoRootDirectory' } } }
+$dt = { param($r) switch ($r.Substring(0, 1).ToUpperInvariant()) { 'C' { 'Fixed' } 'D' { 'Fixed' } 'S' { 'Fixed' } 'T' { 'Fixed' } 'M' { 'Fixed' } 'Z' { 'Network' } default { 'NoRootDirectory' } } }
+# R6-L2/OP-N2 probes: S = subst onto a share, T = subst onto C:\Tools, M = \Device\Mup; attributes by path
+$global:attrs = @{ 'C:\Junction' = 0x410; 'C:\OneDrive\cloud.exe' = 0x400000; 'C:\OneDrive\open.exe' = 0x40000; 'C:\Arch\off.exe' = 0x1001; 'C:\Apps' = 0x10; 'C:\Tools\Sub\link.exe' = 0x420 }
+$global:PathProbe = @{ DriveType = $dt
+    DosDevice = { param($d) switch ($d.ToUpperInvariant()) { 'S:' { '\??\UNC\srv\share' } 'T:' { '\??\C:\Tools' } 'M:' { '\Device\Mup\;Z:\srv\x' } default { '\Device\HarddiskVolume3' } } }
+    Attr = { param($p) $global:attrs[$p] } }
+foreach ($c in @(@('S:\app.exe', $false), @('T:\app.exe', $true), @('T:\Sub\link.exe', $false), @('M:\app.exe', $false), @('C:\Apps\here.exe', $true), @('C:\Junction\app.exe', $false),
+                 @('C:\Junction', $false), @('C:\OneDrive\cloud.exe', $false), @('C:\OneDrive\open.exe', $false), @('C:\Arch\off.exe', $false), @('D:\plain\x.exe', $true))) {
+    Check ("R6-L2/OP-N2: local fixed path '{0}' -> {1}" -f $c[0], $c[1]) ((Test-LocalFixedPath $c[0]) -eq $c[1]) }
+Check 'R6-L2: subst onto a share is unchecked, not missing' ((Get-SetupState ([pscustomobject]@{ type = 'program'; target = 'S:\app.exe' }) $dt { @{} }) -eq 'unchecked')
+# OP-N3: icons come from the checked target, never the .lnk's own icon location
+$rlI = { param($l) @{ target = 'C:\Apps\real.exe'; icon = 'C:\Apps\other.ico,0' } }
+Check 'OP-N3: .lnk icon taken from its checked target' ((Resolve-IconTarget 'C:\Links\a.lnk' $dt $rlI) -eq 'C:\Apps\real.exe')
+Check 'OP-N3: .lnk to a share -> no icon read' ($null -eq (Resolve-IconTarget 'C:\Links\a.lnk' $dt { param($l) @{ target = '\\srv\s\a.exe' } }))
+Check 'OP-N3: plain local target is its own icon source' ((Resolve-IconTarget 'C:\Apps\here.exe' $dt $rlI) -eq 'C:\Apps\here.exe')
+Check 'OP-N3: UNC target -> no icon read' ($null -eq (Resolve-IconTarget '\\srv\s\a.exe' $dt $rlI))
+$gii = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-IconImage' }, $true).Extent.Text
+Check 'R6-L2: big tiles gate own-icon extraction through Resolve-IconTarget before Test-Path' ($gii -match '(?s)Resolve-IconTarget \$p.*?Test-Path -LiteralPath \$p' -and $gii -notmatch 'Test-Path \$p\)')
 $global:touched = New-Object System.Collections.ArrayList
 $global:present = @('C:\Apps\here.exe', 'C:\Links\net.lnk', 'C:\Links\loc.lnk')
 function global:Test-Path { param([string]$LiteralPath) [void]$global:touched.Add($LiteralPath); $global:present -contains $LiteralPath }

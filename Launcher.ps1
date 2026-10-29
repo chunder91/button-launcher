@@ -15,6 +15,10 @@ Add-Type -Namespace BL -Name Native -MemberDefinition @'
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 [StructLayout(LayoutKind.Sequential)] public struct APPBARDATA { public uint cbSize; public IntPtr hWnd; public uint msg; public uint edge; public RECT rc; public IntPtr lParam; }
 '@
+# R6-L2: subst drive targets, for the local-only path check
+Add-Type -Namespace BL -Name Dos -MemberDefinition @'
+[DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] public static extern uint QueryDosDevice(string name, System.Text.StringBuilder target, int max);
+'@
 $global:dpiCtxOk = $false
 try { $global:dpiCtxOk = [BL.Native]::SetProcessDpiAwarenessContext([IntPtr](-4)) } catch {}   # -4 = PER_MONITOR_AWARE_V2
 try { [AppContext]::SetSwitch('Switch.System.Windows.DoNotScaleForDpiChanges', $false) } catch {}
@@ -217,7 +221,8 @@ function global:Invoke-Button($btn) {
 function global:Get-IconImage($path) {
     try {
         $p = Expand $path
-        if ($p -like 'TODO*' -or -not (Test-Path $p)) { $p = Join-Path $env:SystemRoot 'explorer.exe' }
+        if ($p -like 'TODO*') { $p = $null } else { $p = Resolve-IconTarget $p }    # R6-L2/OP-N3: draw-time icons only from local fixed-drive files
+        if (-not $p -or -not (Test-Path -LiteralPath $p)) { $p = Join-Path $env:SystemRoot 'explorer.exe' }
         $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($p)
         return [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
     } catch { return $null }
@@ -339,14 +344,45 @@ function global:Start-Flash($flash) {   # launch flash: white 45%, 60 ms in, 240
 # Missing-program dot (cheap: no shortcut search while drawing; Set up this PC does the full search).
 # LJ: draw-time checks touch only local fixed-drive paths (no SMB/NTLM traffic just from drawing a panel).
 function global:Get-DriveTypeName([string]$root) { ([IO.DriveInfo]::new($root)).DriveType.ToString() }
-function global:Test-LocalFixedPath([string]$path, [scriptblock]$DriveType) {
-    if (-not $DriveType) { $DriveType = { param($r) Get-DriveTypeName $r } }
+function global:Get-DosDeviceTarget([string]$drive) {   # 'C:' -> '\Device\HarddiskVolume3'; a subst drive -> '\??\D:\dir' or '\??\UNC\srv\share'
+    $sb = New-Object System.Text.StringBuilder 1024
+    if ([BL.Dos]::QueryDosDevice($drive, $sb, 1024) -eq 0) { return $null }
+    return $sb.ToString() }
+function global:Get-PathAttr([string]$p) { try { [int][IO.File]::GetAttributes($p) } catch { $null } }   # $null = not there
+# Draw-time probes; tests swap these for mocks.
+$global:PathProbe = @{ DriveType = { param($r) Get-DriveTypeName $r }; DosDevice = { param($d) Get-DosDeviceTarget $d }; Attr = { param($p) Get-PathAttr $p } }
+# True only for a path on this PC's own fixed disk: no UNC (\\, //, \\?\, \\?\UNC, \\.\), no mapped network drive, no subst drive
+# onto a share (R6-L2), and no reparse point (symlink/junction, OP-N2) or cloud/offline placeholder (R6-L2) in the path or any parent.
+function global:Test-LocalFixedPath([string]$path, [scriptblock]$DriveType, [int]$depth = 0) {
+    if (-not $DriveType) { $DriveType = $global:PathProbe.DriveType }
     $x = ([string]$path).Trim().Trim('"')
-    if (-not $x) { return $false }
+    if (-not $x -or $depth -gt 4) { return $false }
     if ($x.StartsWith('\\') -or $x.StartsWith('//') -or $x.StartsWith('\/') -or $x.StartsWith('/\')) { return $false }   # UNC, \\?\, \\?\UNC, \\.\
     if ($x -notmatch '^[A-Za-z]:[\\/]') { return $false }                                     # relative or odd paths: no
     try { $t = [string](& $DriveType ($x.Substring(0, 2) + '\')) } catch { return $false }
-    return ($t -eq 'Fixed')
+    if ($t -ne 'Fixed') { return $false }
+    $dd = $null; try { $dd = [string](& $global:PathProbe.DosDevice $x.Substring(0, 2)) } catch {}
+    if ($dd -match '^\\\?\?\\(.*)$') {                                                          # subst: check what it points at
+        $inner = $matches[1]; if ($inner -match '^(?i)UNC\\') { return $false }
+        return (Test-LocalFixedPath ($inner.TrimEnd('\') + '\' + $x.Substring(3)) $DriveType ($depth + 1)) }
+    if ($dd -match '^(?i)\\Device\\(Mup|LanmanRedirector|WebDavRedirector)') { return $false }
+    $bad = 0x400 -bor 0x1000 -bor 0x40000 -bor 0x400000                                      # ReparsePoint, Offline, RECALL_ON_OPEN, RECALL_ON_DATA_ACCESS
+    $cur = $x.Replace('/', '\').TrimEnd('\')
+    while ($cur.Length -gt 2) {
+        $a = & $global:PathProbe.Attr $cur
+        if ($a -ne $null -and ([int]$a -band $bad)) { return $false }
+        $i = $cur.LastIndexOf('\'); if ($i -lt 2) { break }; $cur = $cur.Substring(0, $i) }
+    return $true
+}
+# OP-N3: the file whose icon is drawn: the checked target itself, or for a .lnk its checked target (never the .lnk's own
+# icon location). $null when nothing local is safe to read.
+function global:Resolve-IconTarget([string]$t, [scriptblock]$DriveType, [scriptblock]$ReadLnk) {
+    if (-not (Test-SafeIconSource $t $DriveType $ReadLnk)) { return $null }
+    if ($t -notmatch '(?i)\.lnk$') { return $t }
+    if (-not $ReadLnk) { $ReadLnk = { param($l) @{ target = (New-Object -ComObject WScript.Shell).CreateShortcut($l).TargetPath } } }
+    try { $lt = Expand ([string](& $ReadLnk $t).target) } catch { return $null }
+    if ($lt -and (Test-LocalFixedPath $lt $DriveType)) { return $lt }
+    return $null
 }
 function global:Test-SafeIconSource([string]$t, [scriptblock]$DriveType, [scriptblock]$ReadLnk) {
     if (-not (Test-LocalFixedPath $t $DriveType)) { return $false }
