@@ -199,4 +199,9 @@ Check 'R11-M1: BL.Waits is its own try''d Add-Type after WPF loads; failure logs
 Check 'R11-M1: DPI awareness is set before WPF assemblies load' ($src.IndexOf('SetProcessDpiAwarenessContext([IntPtr](-4))') -lt $src.IndexOf('Add-Type -AssemblyName PresentationFramework'))
 $sth = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Stop-TrayAndHotkey' }, $true).Extent.Text
 Check 'R11-N1: shutdown unsubscribes PowerModeChanged' ($sth -match '\[BL\.Waits\]::UnwatchResume\(\)' -and $src -match 'SystemEvents\.PowerModeChanged -= resume')
+# Laptop: one-panel bottom group cut off -> the window fills the work area
+$ls = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Layout-Single' }, $true).Extent.Text
+Check 'Layout-Single sets the window height (DIPs) in both branches' (([regex]::Matches($ls, '\$s\.win\.Height = \$hDip')).Count -eq 2 -and $ls -match "\`$s\.win\.SizeToContent = 'Manual'")
+$swp = [regex]::Match($ls, 'SetWindowPos\(\$s\.hwnd[^\n]*').Value
+Check 'Layout-Single SetWindowPos passes width/height and no SWP_NOSIZE' ($swp -match '\$wPx, \[int\]\$wa\.H, 0x0014\)' -and $swp -notmatch '0x0015|0x0001\b|, 0, 0, ')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

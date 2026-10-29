@@ -1457,21 +1457,22 @@ function global:Layout-Single {
     $hDip = $wa.H / $dpi
     $s.scale.ScaleX = $sc; $s.scale.ScaleY = $sc
     $s.root.Height = $hDip / $sc
+    $s.win.SizeToContent = 'Manual'; $s.win.Width = $global:BaseWidth * $sc; $s.win.Height = $hDip   # laptop fix: the window itself fills the work area (DIPs; root is scaled by $sc), so the bottom group isn't cut off
     foreach ($g in $global:panels) { Apply-MinFont $g }; Apply-MinFont $s
     $s.win.UpdateLayout()
     $groupsH = 0; foreach ($g in $global:panels) { $groupsH += $g.edge.ActualHeight }
     if ($groupsH -gt $s.root.Height) {   # groups alone don't fit: shrink to fit (tiles keep their 44 px minimum in layout units)
-        $sc = $sc * $s.root.Height / $groupsH; $s.scale.ScaleX = $sc; $s.scale.ScaleY = $sc; $s.root.Height = $hDip / $sc
+        $sc = $sc * $s.root.Height / $groupsH; $s.scale.ScaleX = $sc; $s.scale.ScaleY = $sc; $s.root.Height = $hDip / $sc; $s.win.Width = $global:BaseWidth * $sc; $s.win.Height = $hDip
         foreach ($g in $global:panels) { Apply-MinFont $g }; $s.win.UpdateLayout(); $groupsH = 0; foreach ($g in $global:panels) { $groupsH += $g.edge.ActualHeight } }
     $avail = [Math]::Max(0, $s.root.Height - $groupsH - 32)
     $need = Get-OverflowSplit $global:middle.items.Count $avail $global:middle.cols
     $s.availH = $avail
     if ($need.shown -ne $s.lastShown) { Build-Middle; $s.win.UpdateLayout() }
-    $wPx = [int][Math]::Round($s.win.ActualWidth * $dpi)
+    $wPx = [int][Math]::Round($s.win.Width * $dpi)   # the size we just set (ActualWidth can lag a layout pass)
     $left = ([string]$pc.anchor) -like '*left*'
     $x = if ($left) { $wa.L } else { $wa.R - $wPx }
     foreach ($g in $global:panels) { $g.edge.CornerRadius = $(if ($g -eq $global:panels[0]) { if ($left) { '0,0,14,0' } else { '0,0,0,14' } } else { if ($left) { '0,14,0,0' } else { '14,0,0,0' } }) }
-    [void][BL.Native]::SetWindowPos($s.hwnd, [IntPtr]::Zero, [int]$x, [int]$wa.T, 0, 0, 0x0015)
+    [void][BL.Native]::SetWindowPos($s.hwnd, [IntPtr]::Zero, [int]$x, [int]$wa.T, $wPx, [int]$wa.H, 0x0014)   # NOZORDER|NOACTIVATE: exact work-area size in physical px
 }
 
 # ---------- tray icon + Ctrl+Alt+L (both layouts) ----------
