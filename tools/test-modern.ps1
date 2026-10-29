@@ -182,5 +182,14 @@ Check 'D2: Email rest is #FAD028 -> #D7AF12' (((Get-D2Fill '#facc15' $false)[0..
 Check 'D2: restarts use the dark fill and red glow' (((Get-D2Fill '#0B6E99' $true)[0, 6] -join ',') -eq '#2E2E2E,#E5484D')
 if ('System.Windows.Media.Color' -as [type]) { $cd = Get-D2Fill '#336699' $false
 Check 'D2: custom colour derives 7 hex stops, rest top = its own colour' (@($cd).Count -eq 7 -and $cd[0] -eq '#336699' -and @($cd | Where-Object { $_ -notmatch '^#[0-9A-F]{6}$' }).Count -eq 0) } else { 'SKIP  D2 derived colour (needs WPF: real Windows)' }
+
+# ---- v1.3.0 round 3 (Kern) ----
+Check 'Kern M1: glow Margin -6, radius rad+6, radial 85% at 0.70 -> 0, RadiusX 0.62 / RadiusY 0.75' ($tileSrc -match "\`$glow\.Margin = '-6'" -and $tileSrc -match 'CornerRadius = \[string\]\(\$rad \+ 6\)' -and $tileSrc -match 'New-GlowBrush \$f\[6\] 0\.85 0\.70 0\.62 0\.75' -and $tileSrc -match 'ClipToBounds = \$false')
+Check 'Kern M2: no arrows asset, so the plug gets the 28 px white 85% plate' ($src -match "\`$pl\.Width = 28; \`$pl\.Height = 28; \`$pl\.Fill = Brush '#D9FFFFFF'" -and -not (Test-Path (Join-Path $root 'images/restart.png')))
+Check 'Kern 3 / N2: inner corners 16 everywhere, none left at 14' ($src -match "'0,0,16,0'" -and $src -match "'16,0,0,0'" -and $src -notmatch "'0,0,14,0'|'14,0,0,0'|'0,0,0,14'|'0,14,0,0'")
+Check 'Kern 4: Version 11 subtitle 12 px Regular, line 14, 85%' ($src -match 'New-Label \$lab\.sub \$fg 12; \$sl\.FontWeight = \[System\.Windows\.FontWeights\]::Normal; \$sl\.LineHeight = 14; \$sl\.Opacity = 0\.85')
+Check 'Kern 5: Segoe UI Variable only when installed, else Segoe UI' ($src -match "if \(\`$f\.Source -eq 'Segoe UI Variable'\)" -and $src -match "return 'Segoe UI'\s*\r?\n\}" -and $src -match 'FontFamily \(Get-UiFontName\)')
+Check 'Shadow: no DropShadowEffect on the panel; 1 px #66000000 hairline, padding shrinks so the window never grows' ($src -notmatch 'DropShadowEffect' -and $src -match "BorderBrush = Brush '#66000000'" -and $src -match 'Thickness \(3 - \$t\.Left\), \(3 - \$t\.Top\), \(3 - \$t\.Right\), \(3 - \$t\.Bottom\)')
+Check 'Shadow: hairline only on the non-docked sides in one-panel; off with squarePanels' ($src -match "if \(\`$left\) \{ '0,0,1,1' \} else \{ '1,0,0,1' \}" -and $src -match "if \(\`$square\) \{ \`$w\.Content = \`$edge; \`$hair = \`$null \}")
 Remove-Item Function:\global:Test-Path, Function:\global:Get-ChildItem, Function:\global:Join-Path
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

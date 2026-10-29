@@ -122,7 +122,7 @@ Check 'tray: NotifyIcon with images\app.ico, Show/Lock/Settings/Exit' ($src -mat
 Check 'tray: left click brings it forward' ($src -match 'MouseButtons\]::Left\) \{ Show-AllPanels \}')
 Check 'hotkey: Ctrl+Alt+L on a message-only window' ($src -match 'RegisterHotKey\(\$global:hotkeySrc\.Handle, 0xB10, 0x4003, 0x4C\)' -and $src -match 'ParentWindow = \[IntPtr\]\(-3\)')
 Check 'hotkey taken: logged, tray kept' ($src -match 'Ctrl\+Alt\+L is already used')
-Check 'exit: unregister hotkey and dispose tray' ($src -match 'UnregisterHotKey' -and $src -match '\$global:tray\.Dispose\(\)' -and $src -match 'Add_Exit\(\{ Stop-TrayAndHotkey \}\)')
+Check 'exit: unregister hotkey and dispose tray' ($src -match 'UnregisterHotKey' -and $src -match '\$global:tray\.Dispose\(\)' -and $src -match 'Add_Exit\(\{ Stop-TrayAndHotkey; ')
 Check 'tray + hotkey in both layouts' ($src -match '(?s)else \{ foreach \(\$pc in @\(\$global:cfg\.panels\)\) \{ \[void\]\(Open-Panel \$pc\) \} \}.*Start-TrayAndHotkey')
 Check 'second launch raises the single window' ($src -match '(?s)function global:Show-AllPanels \{\s+if \(\$global:single\)')
 Check 'Setup > Layout menu' ($src -match "\`$lay\.Header = 'Layout'" -and $src -match "'One panel, docked to the edge'")
@@ -163,7 +163,7 @@ Check 'idle: relayout timer goes through Invoke-Relayout' ($src -match '\$global
 Check 'idle: show signal is a thread-pool wait, not a 400 ms poll' ($src -match 'RegisterWaitForSingleObject' -and $src -notmatch 'FromMilliseconds\(400\)\s*\r?\n\s*\$showTimer' -and $src -notmatch "showTimer\.Interval = \[TimeSpan\]::FromMilliseconds\(400\)")
 Check 'idle: no forever-repeating animations' ($src -notmatch 'RepeatBehavior')
 $ticks = [regex]::Matches($src, 'DispatcherTimer').Count
-Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback, VNC scan drain, VNC temp-file delete)' ($ticks -eq 6)
+Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback, VNC scan drain, VNC temp-file delete, VNC worker cleanup after close)' ($ticks -eq 7)
 # First run: no file picker without a click
 $afp = [regex]::Matches($src, '(?m)^.*Ask-ForPath \$.*$') | ForEach-Object { $_.Value.Trim() }
 Check 'first run: Ask-ForPath only from Pick..., Edit Browse, or a launch click' (@($afp | Where-Object { $_ -notmatch '^\$f = Ask-ForPath \$b' -and $_ -notmatch '^\$found = Ask-ForPath \$btn \$kind' -and $_ -notmatch "^\`$p = Ask-ForPath \(\[pscustomobject\]" }).Count -eq 0)

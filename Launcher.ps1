@@ -37,7 +37,13 @@ $global:cfg          = $null
 $global:panels       = New-Object System.Collections.ArrayList   # each: @{ cfg; items; win; stack; ... }
 $global:BaseWidth    = 290                                        # design width; heights/fonts in buttons.json use these units
 $global:SizePct      = @{ Small = 11; Medium = 14; Large = 18 }   # panel width as % of work-area width
-$global:UiFont       = New-Object System.Windows.Media.FontFamily 'Segoe UI Variable Text Semibold, Segoe UI Semibold, Segoe UI'
+# Kern: Segoe UI Variable (Windows 11) when installed, else plain Segoe UI; every label also sets FontWeight SemiBold,
+# so the fallback is Segoe UI Semibold with identical metrics, never a silent per-glyph substitute.
+function global:Get-UiFontName {
+    try { foreach ($f in [System.Windows.Media.Fonts]::SystemFontFamilies) { if ($f.Source -eq 'Segoe UI Variable') { return 'Segoe UI Variable Text Semibold, Segoe UI Semibold, Segoe UI' } } } catch {}
+    return 'Segoe UI'
+}
+$global:UiFont       = New-Object System.Windows.Media.FontFamily (Get-UiFontName)
 $global:Theme        = @{ panel = '#141414'; restartFill = '#2A2A2A'; restartRed = '#E5484D'; amber = '#F59E0B'; editText = '#111111' }
 # Option B / Kern palette: old default fill -> @(new fill, label colour). All labels pass WCAG AA (4.5:1).
 $global:ModernFill   = @{ '#3EC3EE' = @('#0B6E99', '#FFFFFF'); '#0E8A55' = @('#0E7A4B', '#FFFFFF'); '#B48CF5' = @('#7B4FD6', '#FFFFFF')
@@ -329,10 +335,10 @@ function global:Get-D2Fill([string]$bg, [bool]$danger) {   # any other colour th
 function global:New-VGrad([string]$top, [string]$bottom) {   # frozen top-to-bottom gradient
     $g = New-Object System.Windows.Media.LinearGradientBrush ((Get-Color $top), (Get-Color $bottom), 90.0); $g.Freeze(); return $g
 }
-function global:New-GlowBrush([string]$hex, [double]$alpha) {   # soft radial glow, pre-built once per tile (no blur effect)
+function global:New-GlowBrush([string]$hex, [double]$alpha, [double]$inner = 0.55, [double]$rx = 0.5, [double]$ry = 0.5) {   # soft radial glow, pre-built once (no blur effect)
     $c = Get-Color $hex; $a = [byte][Math]::Round(255 * $alpha)
-    $g = New-Object System.Windows.Media.RadialGradientBrush
-    [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb($a, $c.R, $c.G, $c.B)), 0.55))
+    $g = New-Object System.Windows.Media.RadialGradientBrush; $g.RadiusX = $rx; $g.RadiusY = $ry
+    [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb($a, $c.R, $c.G, $c.B)), $inner))
     [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb(0, $c.R, $c.G, $c.B)), 1.0))
     $g.Freeze(); return $g
 }
@@ -342,6 +348,14 @@ function global:Set-D2Surface($b, [double]$radius, [int]$sheenPx, [string]$sheen
     $sh = New-Object System.Windows.Controls.Border; $sh.IsHitTestVisible = $false; $sh.Height = $sheenPx; $sh.VerticalAlignment = 'Top'
     $r = [Math]::Max(0, $radius - 1); $sh.CornerRadius = ('{0},{0},0,0' -f $r); $sh.Background = New-VGrad $sheenTop '#00FFFFFF'
     return $sh
+}
+function global:Set-D2Hairline($hair, $edge, [string]$sides) {   # Kern: 1 px #66000000 just outside the rim on the non-docked sides.
+    # The edge padding shrinks by the same 1 px on those sides, so the window never grows.
+    $t = [System.Windows.Thickness](New-Object System.Windows.ThicknessConverter).ConvertFromString($sides)
+    $hair.BorderBrush = Brush '#66000000'; $hair.BorderThickness = $t
+    $edge.Padding = New-Object System.Windows.Thickness (3 - $t.Left), (3 - $t.Top), (3 - $t.Right), (3 - $t.Bottom)
+    $r = $edge.CornerRadius
+    $hair.CornerRadius = New-Object System.Windows.CornerRadius ($(if ($r.TopLeft) { $r.TopLeft + 1 } else { 0 })), ($(if ($r.TopRight) { $r.TopRight + 1 } else { 0 })), ($(if ($r.BottomRight) { $r.BottomRight + 1 } else { 0 })), ($(if ($r.BottomLeft) { $r.BottomLeft + 1 } else { 0 }))
 }
 function global:Set-D2Panel($edge, [string]$corners) {   # panel: dark glass gradient at 90%, 12% rim, 18% top highlight
     $edge.Background = New-VGrad '#E626262C' '#E616161A'; $edge.BorderBrush = New-VGrad '#2EFFFFFF' '#1FFFFFFF'; $edge.BorderThickness = '1'
@@ -522,7 +536,7 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
     $lab = Get-DisplayLabel $btn
     $text = New-Object System.Windows.Controls.StackPanel; $text.VerticalAlignment = 'Center'
     $main = New-Label $lab.main $fg $fs; [void]$text.Children.Add($main)
-    if ($lab.sub) { $sl = New-Label $lab.sub $fg 11; $sl.Opacity = 0.85; [void]$text.Children.Add($sl) }
+    if ($lab.sub) { $sl = New-Label $lab.sub $fg 12; $sl.FontWeight = [System.Windows.FontWeights]::Normal; $sl.LineHeight = 14; $sl.Opacity = 0.85; [void]$text.Children.Add($sl) }   # Kern: 12 px Regular
     $isRedDog = ([string]$btn.image) -match '(?i)reddog'
     if ($isRedDog -and $cls -eq 'hero') { $ipx = 64 }
     $src = Get-PicSource $btn $ipx
@@ -542,6 +556,11 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
             $ig = New-Object System.Windows.Controls.Grid; $ig.Width = $ipx; $ig.Height = $ipx
             $sh = New-Object System.Windows.Shapes.Ellipse; $sh.Width = $ipx * 0.72; $sh.Height = [Math]::Max(4, $ipx * 0.16)
             $sh.VerticalAlignment = 'Bottom'; $sh.Margin = ('0,0,0,{0}' -f (-[Math]::Round($ipx * 0.06))); $sh.Fill = $global:D2IconShadow
+            if ($danger -and ([string]$btn.image) -match '(?i)(^|[\\/])power\.png$') {   # Kern Major 2 fallback: the plug is 1.42:1 on the dark tile, so it sits
+                # on a 28 px white 85% plate (>= 3:1). The spec's "Counterclockwise arrows button" isn't in Smudge's set yet.
+                $ig.Width = 28; $ig.Height = 28; $sh.Visibility = 'Collapsed'
+                $pl = New-Object System.Windows.Shapes.Ellipse; $pl.Width = 28; $pl.Height = 28; $pl.Fill = Brush '#D9FFFFFF'; [void]$ig.Children.Add($pl)
+                $img.Width = 20; $img.Height = 20 }
             [void]$ig.Children.Add($sh); [void]$ig.Children.Add($img); $icon = $ig }
     }
     $sp = New-Object System.Windows.Controls.StackPanel
@@ -576,8 +595,10 @@ function global:New-Tile($p, $btn) {
 
     $wrap = New-Object System.Windows.Controls.Grid; $wrap.Margin = '3'                  # 3 + 3 = Kern's 6 px gap
     $glowMax = if ($danger) { 0.35 } else { 0.70 }
-    $glow = New-Object System.Windows.Controls.Border; $glow.IsHitTestVisible = $false; $glow.Margin = '-3'; $glow.Opacity = 0
-    $glow.CornerRadius = [string]($rad + 3); $glow.Background = New-GlowBrush $f[6] 0.85; $glow.Height = $h + 6
+    # Kern v1.3.0 Major 1: 6 px halo (inside the panel's 3+3 padding and the 6 px gaps); radial 85% at 0.70 -> 0 at 1.0
+    $glow = New-Object System.Windows.Controls.Border; $glow.IsHitTestVisible = $false; $glow.Margin = '-6'; $glow.Opacity = 0
+    $glow.CornerRadius = [string]($rad + 6); $glow.Background = New-GlowBrush $f[6] 0.85 0.70 0.62 0.75; $glow.Height = $h + 12
+    $wrap.ClipToBounds = $false
     $tile = New-Object System.Windows.Controls.Border; $tile.Background = New-VGrad $f[0] $f[1]; $tile.Height = $h
     $sheen = Set-D2Surface $tile $rad 10 '#4DFFFFFF'; $sheen.Opacity = 0.73   # 30% brush: 22% at rest, 30% hover, 12% pressed
     if ($danger) { $tile.BorderBrush = Brush $global:Theme.restartRed; $tile.BorderThickness = '2' }
@@ -1138,8 +1159,10 @@ function global:Open-Panel($pc) {
     $stack = New-Object System.Windows.Controls.StackPanel; [void]$dock.Children.Add($stack)
     $scale = New-Object System.Windows.Media.ScaleTransform 1, 1
     $edge.LayoutTransform = $scale      # scales buttons, text and pictures together (vector, stays crisp)
-    $edge.Child = $dock; $w.Content = $edge
-    $p.win = $w; $p.stack = $stack; $p.grip = $grip; $p.edge = $edge; $p.scale = $scale
+    $edge.Child = $dock
+    if ($square) { $w.Content = $edge; $hair = $null }
+    else { $hair = New-Object System.Windows.Controls.Border; $hair.Child = $edge; Set-D2Hairline $hair $edge '1,1,1,1'; $w.Content = $hair }   # floating: no docked side
+    $p.win = $w; $p.stack = $stack; $p.grip = $grip; $p.edge = $edge; $p.scale = $scale; $p.hair = $hair
     $w.Add_MouseLeftButtonDown({
         if ([bool]$global:cfg.locked) { return }
         if ($_.OriginalSource -eq $edge -or $grip.IsMouseOver) { try { $w.DragMove() } catch {}; Snap-Anchor $p } }.GetNewClosure())
@@ -1505,8 +1528,9 @@ function global:Open-Single {
             [System.Windows.Controls.DockPanel]::SetDock($grip, 'Top'); [void]$dock.Children.Add($grip) }
         $stack = New-Object System.Windows.Controls.StackPanel; [void]$dock.Children.Add($stack)
         $edge.Child = $dock
-        [System.Windows.Controls.Grid]::SetRow($edge, $(if ($gi -eq 0) { 0 } else { 2 })); [void]$root.Children.Add($edge)
-        $p.win = $w; $p.stack = $stack; $p.grip = $grip; $p.edge = $edge; $p.scale = $scale; $p.menuHost = $edge
+        $hair = New-Object System.Windows.Controls.Border; $hair.Child = $edge   # hairline sides set when docked (Set-SingleBounds)
+        [System.Windows.Controls.Grid]::SetRow($hair, $(if ($gi -eq 0) { 0 } else { 2 })); [void]$root.Children.Add($hair)
+        $p.win = $w; $p.stack = $stack; $p.grip = $grip; $p.edge = $edge; $p.scale = $scale; $p.menuHost = $edge; $p.hair = $hair
         [void]$global:panels.Add($p); $groups += $p
     }
     $mid = New-Object System.Windows.Controls.Grid; [System.Windows.Controls.Grid]::SetRow($mid, 1); [void]$root.Children.Add($mid)
@@ -1556,7 +1580,10 @@ function global:Layout-Single {
     $wPx = [int][Math]::Round($s.win.Width * $dpi)   # the size we just set (ActualWidth can lag a layout pass)
     $left = ([string]$pc.anchor) -like '*left*'
     $x = if ($left) { $wa.L } else { $wa.R - $wPx }
-    foreach ($g in $global:panels) { $g.edge.CornerRadius = $(if ($g -eq $global:panels[0]) { if ($left) { '0,0,14,0' } else { '0,0,0,14' } } else { if ($left) { '0,14,0,0' } else { '14,0,0,0' } }) }
+    foreach ($g in $global:panels) {   # Kern: 16 on the inner corners, 0 on the docked edge; hairline only on the sides away from the screen edge
+        $top = ($g -eq $global:panels[0])
+        $g.edge.CornerRadius = $(if ($top) { if ($left) { '0,0,16,0' } else { '0,0,0,16' } } else { if ($left) { '0,16,0,0' } else { '16,0,0,0' } })
+        if ($g.hair) { Set-D2Hairline $g.hair $g.edge $(if ($top) { if ($left) { '0,0,1,1' } else { '1,0,0,1' } } else { if ($left) { '0,1,1,0' } else { '1,1,0,0' } }) } }
     [void][BL.Native]::SetWindowPos($s.hwnd, [IntPtr]::Zero, [int]$x, [int]$wa.T, $wPx, [int]$wa.H, 0x0014)   # NOZORDER|NOACTIVATE: exact work-area size in physical px
 }
 
@@ -1706,7 +1733,8 @@ function global:Get-VncLocalSubnets {   # @{ ip; prefix; label } for adapters th
             if (-not (Test-VncAdapter ([string]$nic.NetworkInterfaceType) ([string]$nic.Description) ([string]$nic.Name) $a $pl $gws)) { continue }
             $lbl = if ([string]$nic.NetworkInterfaceType -eq 'Wireless80211') { 'Wi-Fi' } else { 'Ethernet' }
             $gw = Get-VncSubnetGateway $a $pl $gws
-            $res += @{ ip = $a; prefix = $pl; label = $lbl; gw = $gw; dns = [string]$props.DnsSuffix } } }
+            $ix = $null; try { $ix = $props.GetIPv4Properties().Index } catch {}
+            $res += @{ ip = $a; prefix = $pl; label = $lbl; gw = $gw; dns = [string]$props.DnsSuffix; gwId = (Get-VncGatewayId $gw $ix) } } }
     return $res
 }
 function global:Get-VncSubnetGateway([string]$ip, [int]$prefix, $gateways) {   # first IPv4 gateway inside the adapter's subnet, else ''
@@ -1714,9 +1742,27 @@ function global:Get-VncSubnetGateway([string]$ip, [int]$prefix, $gateways) {   #
     foreach ($g in @($gateways)) { $gs = [string]$g; if ((Test-VncIPv4 $gs) -and $gs -ne '0.0.0.0' -and [Math]::Floor((ConvertTo-VncUInt $gs) / $size) -eq $net) { return $gs } }
     return ''
 }
-function global:Get-VncRangeKey([string]$range, [string]$gw, [string]$dns) {   # R2-L1: same numbers on another network (home vs shop) ask again
+function global:Get-VncRangeKey([string]$range, [string]$gw, [string]$dns, [string]$gwId) {   # R2-L1/R3-L1: same numbers on another network (home vs shop) ask again
     $d = ([string]$dns).Trim().ToLowerInvariant(); if ($d -notmatch '^[a-z0-9.-]{0,253}$') { $d = '?' }
-    return ('{0}|gw={1}|dns={2}' -f $range, $gw, $d)
+    $i = ([string]$gwId).Trim().ToLowerInvariant(); if ($i -notmatch '^(mac=[0-9a-f-]{17}|net=[a-z0-9 ._-]{1,64})?$') { $i = '?' }
+    return ('{0}|gw={1}|id={2}|dns={3}' -f $range, $gw, $i, $d)
+}
+function global:Test-VncRangeKeyCurrent([string]$key) { $key -match '\|id=[^|]*\|dns=' }   # R3-L1 migration: keys saved before v1.3.0 round 3 count as unconfirmed
+function global:ConvertTo-VncGatewayId($mac, $profileName) {   # 'mac=aa-bb-cc-dd-ee-ff' from the ARP entry, else 'net=<profile name>', else ''
+    $m = ([string]$mac).Trim().ToLowerInvariant() -replace ':', '-'
+    if ($m -match '^[0-9a-f]{2}(-[0-9a-f]{2}){5}$' -and $m -ne '00-00-00-00-00-00' -and $m -ne 'ff-ff-ff-ff-ff-ff') { return 'mac=' + $m }
+    $n = (([string]$profileName).Trim().ToLowerInvariant() -replace '[^a-z0-9 ._-]', '_'); if ($n.Length -gt 64) { $n = $n.Substring(0, 64) }
+    if ($n) { return 'net=' + $n }
+    return ''
+}
+$global:VncGwIdCache = @{}
+function global:Get-VncGatewayId([string]$gw, $ifIndex) {   # the router's MAC (Get-NetNeighbor = the ARP table), else the Windows network profile name. Cached per session.
+    if (-not $gw) { return '' }
+    $ck = '{0}|{1}' -f $gw, $ifIndex; if ($global:VncGwIdCache.ContainsKey($ck)) { return $global:VncGwIdCache[$ck] }
+    $mac = ''; $prof = ''
+    try { foreach ($nb in @(Get-NetNeighbor -IPAddress $gw -AddressFamily IPv4 -ErrorAction Stop)) { if (-not $mac -and [string]$nb.State -ne 'Unreachable') { $mac = [string]$nb.LinkLayerAddress } } } catch {}
+    if (-not (ConvertTo-VncGatewayId $mac '')) { try { if ($ifIndex) { foreach ($cp in @(Get-NetConnectionProfile -InterfaceIndex $ifIndex -ErrorAction Stop)) { if (-not $prof) { $prof = [string]$cp.Name } } } } catch {} }
+    $id = ConvertTo-VncGatewayId $mac $prof; $global:VncGwIdCache[$ck] = $id; return $id
 }
 function global:Get-VncNewRanges($ranges, $confirmed) { $c = @($confirmed); $out = @(); foreach ($r in @($ranges)) { if ($r -and $c -notcontains $r) { $out += $r } }; return $out }   # ranges never confirmed yet
 function global:Get-VncRangeState([string]$key, $confirmed, $declined) { if (@($confirmed) -contains $key) { 'ok' } elseif (@($declined) -contains $key) { 'declined' } else { 'new' } }   # R2-L2
@@ -1782,7 +1828,7 @@ function global:Get-VncState($cfg) {
         if (-not (Test-VncHost ([string]$f.host)) -or ($f.port -ne $null -and -not (Get-VncPort $f.port))) { [void]$bad.Add($f); continue }   # L5: kept as-is, not shown
         $p = Get-VncPort $f.port; if (-not $p) { $p = $port }
         [void]$favs.Add([pscustomobject]@{ host = [string]$f.host; port = $p; name = [string]$f.name; pinned = [bool]$f.pinned }) }
-    return @{ port = $port; prefix = (Get-VncPrefix $v.prefix); favorites = $favs; invalid = $bad; confirmed = @(@($v.confirmedRanges) | Where-Object { $_ } | ForEach-Object { [string]$_ }); declined = @(@($v.declinedRanges) | Where-Object { $_ } | ForEach-Object { [string]$_ }) }
+    return @{ port = $port; prefix = (Get-VncPrefix $v.prefix); favorites = $favs; invalid = $bad; confirmed = @(@($v.confirmedRanges) | Where-Object { Test-VncRangeKeyCurrent ([string]$_) } | ForEach-Object { [string]$_ }); declined = @(@($v.declinedRanges) | Where-Object { Test-VncRangeKeyCurrent ([string]$_) } | ForEach-Object { [string]$_ }) }   # R3-L1: old keys dropped = unconfirmed
 }
 function global:Save-VncFavorites($cfg, $favs, $invalid) {   # invalid entries are written back untouched (L5)
     if (-not $cfg.vnc) { [void](Get-VncState $cfg) }
@@ -1839,7 +1885,7 @@ function global:Merge-VncRows($favs, $hosts) {   # pinned first (by name), then 
 }
 function global:Get-VncRowView($r, [bool]$fresh, [bool]$scanning, [string]$age = '', [bool]$stale = $false) {   # display fields for one row (Squint 1, 3)
     $named = [bool]$r.name
-    $seen = if ($r.seen) { if ($fresh) { 'Now' } elseif ($age) { 'Last scan, ' + $age } else { 'Last scan' } } elseif ($scanning) { 'Looking...' } else { 'Not found last scan' }
+    $seen = if ($r.seen) { if ($fresh) { 'Now' } else { 'Earlier' } } elseif ($scanning) { 'Looking...' } else { 'Not found last scan' }
     $dim = ((-not $r.seen) -and -not $scanning) -or ($r.seen -and $stale -and -not $fresh)
     $addr = if ($r.port -eq 5900) { $r.host } else { '{0}:{1}' -f $r.host, $r.port }
     $tip = $addr; if ($r.banner) { $tip += '   ' + (Get-SafeText $r.banner 12) }
@@ -1942,24 +1988,75 @@ function global:New-VncTempConfig([string]$h, [int]$port, [string]$hex) {   # %T
         return $f
     } finally { if (-not $ok) { [void](Remove-VncTempDir $dir) } }
 }
-function global:Show-VncPasswordDialog($owner) {   # set, replace or clear the shared view-only password; returns $true when one is saved
-    $d = New-Object System.Windows.Window; $d.Title = 'View-only password'; $d.SizeToContent = 'WidthAndHeight'; $d.ResizeMode = 'NoResize'
+# ---------- D2 dialogs (Kern v1.3.0 Minor 6): panel gradient, 16 px padding, 32 px fields (radius 6, 6% fill, 12% rim, 2 px green focus line) ----------
+$global:D2DialogRes = $null
+function global:Get-D2DialogResources {   # the picker's button styles (Chip, Green, Blue), parsed once
+    if (-not $global:D2DialogRes) { try { $global:D2DialogRes = ([Windows.Markup.XamlReader]::Parse($global:VncPickerXaml)).Resources } catch { Write-LauncherLog ('D2 dialog styles: ' + $_.Exception.Message) } }
+    return $global:D2DialogRes
+}
+function global:New-D2Dialog([string]$title, $owner, [int]$width) {
+    $d = New-Object System.Windows.Window; $d.Title = $title; $d.SizeToContent = 'WidthAndHeight'; $d.ResizeMode = 'NoResize'; $d.ShowInTaskbar = $false
     $d.WindowStartupLocation = if ($owner) { 'CenterOwner' } else { 'CenterScreen' }; if ($owner) { $d.Owner = $owner }
-    $d.Background = Brush '#1E1E1E'; $d.FontFamily = $global:UiFont
-    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = '18'; $sp.Width = 380
-    $t = New-Object System.Windows.Controls.TextBlock; $t.TextWrapping = 'Wrap'; $t.Foreground = Brush '#FFFFFF'; $t.FontSize = 14
+    $d.Background = New-VGrad '#26262C' '#16161A'; $d.FontFamily = $global:UiFont; $d.Foreground = Brush '#FFFFFF'
+    $res = Get-D2DialogResources; if ($res) { foreach ($k in @($res.Keys)) { $d.Resources[$k] = $res[$k] } }   # copy the entries (a dictionary can't have two owners)
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = '16'; $sp.Width = $width; $d.Content = $sp
+    return @{ win = $d; body = $sp }
+}
+function global:New-D2Label([string]$text, [string]$fg = '#FFFFFF', [int]$size = 14) {
+    $t = New-Object System.Windows.Controls.TextBlock; $t.Text = $text; $t.TextWrapping = 'Wrap'; $t.Foreground = Brush $fg; $t.FontSize = $size; $t.Margin = '0,0,0,8'; return $t
+}
+function global:New-D2Field($input) {   # wraps a TextBox or PasswordBox in the D2 field look
+    $b = New-Object System.Windows.Controls.Border; $b.Height = 32; $b.CornerRadius = '6'; $b.Background = Brush '#0FFFFFFF'
+    $b.BorderBrush = Brush '#1FFFFFFF'; $b.BorderThickness = '1'; $b.Margin = '0,0,0,16'
+    $input.Background = [System.Windows.Media.Brushes]::Transparent; $input.BorderThickness = '0'; $input.Foreground = Brush '#FFFFFF'
+    $input.CaretBrush = Brush '#FFFFFF'; $input.FontSize = 14; $input.VerticalContentAlignment = 'Center'; $input.Padding = '6,0'
+    $line = New-Object System.Windows.Controls.Border; $line.Height = 2; $line.VerticalAlignment = 'Bottom'; $line.Background = Brush '#22C55E'; $line.Visibility = 'Hidden'
+    $line.CornerRadius = '0,0,6,6'; $line.IsHitTestVisible = $false
+    $g = New-Object System.Windows.Controls.Grid; [void]$g.Children.Add($input); [void]$g.Children.Add($line); $b.Child = $g
+    $input.Add_GotKeyboardFocus({ $line.Visibility = 'Visible' }.GetNewClosure()); $input.Add_LostKeyboardFocus({ $line.Visibility = 'Hidden' }.GetNewClosure())
+    return $b
+}
+function global:New-D2Button([string]$text, [string]$style, $dlg) {
+    $b = New-Object System.Windows.Controls.Button; $b.Content = $text; $b.Margin = '8,0,0,0'; $b.MinWidth = 84
+    $s = $null; try { $s = $dlg.win.TryFindResource($style) } catch {}
+    if ($s) { $b.Style = $s } else { $b.Height = 32; $b.Padding = '14,0' }
+    return $b
+}
+function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, Address and Name (optional). Cancel adds nothing. Returns @{ addr; name } or $null.
+    $dlg = New-D2Dialog 'Add a register' $owner 380
+    [void]$dlg.body.Children.Add((New-D2Label 'Address (IP or name, optionally :port)'))
+    $tA = New-Object System.Windows.Controls.TextBox; $tA.MaxLength = 260; [void]$dlg.body.Children.Add((New-D2Field $tA))
+    [void]$dlg.body.Children.Add((New-D2Label 'Name (optional, e.g. Register 1). Leave empty to name it later with F2.'))
+    $tN = New-Object System.Windows.Controls.TextBox; $tN.MaxLength = 64; [void]$dlg.body.Children.Add((New-D2Field $tN))
+    $err = New-D2Label '' '#F59E0B' 12; $err.Visibility = 'Collapsed'; [void]$dlg.body.Children.Add($err)
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'
+    $res = @{ out = $null }
+    $bOk = New-D2Button 'Add' 'Green' $dlg; $bOk.IsDefault = $true
+    $bNo = New-D2Button 'Cancel' 'Chip' $dlg; $bNo.IsCancel = $true
+    $bOk.Add_Click({
+        if (-not $tA.Text.Trim()) { $err.Text = "Type the register's address first."; $err.Visibility = 'Visible'; [void]$tA.Focus(); return }
+        $res.out = @{ addr = $tA.Text.Trim(); name = $tN.Text.Trim() }; $dlg.win.Close() }.GetNewClosure())
+    $bNo.Add_Click({ $res.out = $null; $dlg.win.Close() }.GetNewClosure())
+    [void]$row.Children.Add($bOk); [void]$row.Children.Add($bNo); [void]$dlg.body.Children.Add($row)
+    $dlg.win.Add_ContentRendered({ [void]$tA.Focus() }.GetNewClosure())
+    [void]$dlg.win.ShowDialog()
+    return $res.out
+}
+function global:Show-VncPasswordDialog($owner) {   # set, replace or clear the shared view-only password; returns $true when one is saved
+    $dlg = New-D2Dialog 'View-only password' $owner 380; $d = $dlg.win; $sp = $dlg.body   # Kern 6: D2 dialog
+    $t = New-D2Label ''
     $t.Text = "If your registers have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). If View only can't connect later, change it in Setup > View-only register password..."
     [void]$sp.Children.Add($t)
     $st = New-Object System.Windows.Controls.TextBlock; $st.Margin = '0,8,0,0'; $st.Foreground = Brush '#A0A0A0'; $st.FontSize = 12; $st.TextWrapping = 'Wrap'
     $st.Text = if (Test-VncSecret) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only connects straight through.' }
     [void]$sp.Children.Add($st)
-    $pb = New-Object System.Windows.Controls.PasswordBox; $pb.Margin = '0,10,0,0'; $pb.FontSize = 15; $pb.Padding = '6,4'; $pb.MaxLength = 64
-    [void]$sp.Children.Add($pb)
-    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = '0,14,0,0'
+    $pb = New-Object System.Windows.Controls.PasswordBox; $pb.MaxLength = 64
+    $pf = New-D2Field $pb; $pf.Margin = '0,8,0,16'; [void]$sp.Children.Add($pf)
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'
     $res = @{ saved = $false }
-    $bSave = New-Object System.Windows.Controls.Button; $bSave.Content = 'Save'; $bSave.Padding = '14,4'; $bSave.IsDefault = $true
-    $bNone = New-Object System.Windows.Controls.Button; $bNone.Content = 'No password'; $bNone.Padding = '14,4'; $bNone.Margin = '8,0,0,0'
-    $bCancel = New-Object System.Windows.Controls.Button; $bCancel.Content = 'Cancel'; $bCancel.Padding = '14,4'; $bCancel.Margin = '8,0,0,0'; $bCancel.IsCancel = $true
+    $bSave = New-D2Button 'Save' 'Green' $dlg; $bSave.IsDefault = $true
+    $bNone = New-D2Button 'No password' 'Chip' $dlg
+    $bCancel = New-D2Button 'Cancel' 'Chip' $dlg; $bCancel.IsCancel = $true
     $bSave.Add_Click({
         if ($pb.SecurePassword.Length -gt 0) {
             if (-not (Save-VncSecret $pb.SecurePassword)) {   # V13-I1: a character above 0xFF
@@ -1970,7 +2067,7 @@ function global:Show-VncPasswordDialog($owner) {   # set, replace or clear the s
     $bCancel.Add_Click({ $pb.Clear(); $d.Close() }.GetNewClosure())
     foreach ($b in $bSave, $bNone, $bCancel) { [void]$row.Children.Add($b) }
     [void]$sp.Children.Add($row)
-    $d.Content = $sp; $d.Add_ContentRendered({ [void]$pb.Focus() }.GetNewClosure())
+    $d.Add_ContentRendered({ [void]$pb.Focus() }.GetNewClosure())
     if ($global:cfg) { [void](Get-VncState $global:cfg); Set-Prop $global:cfg.vnc 'viewOnlyAsked' $true; Save-Config }
     [void]$d.ShowDialog()
     return $res.saved
@@ -2055,12 +2152,13 @@ function global:Get-VncScanPlan($ui, [bool]$Ask) {   # targets for confirmed net
     $plan = @{ targets = @(); ranges = @(); labels = @(); none = $false; declined = $false }
     $nets = @(Get-VncLocalSubnets); if ($nets.Count -eq 0) { $plan.none = $true; return $plan }
     foreach ($n in $nets) {
-        $rg = Get-VncRangeText $n.ip $n.prefix $ui.state.prefix; $key = Get-VncRangeKey $rg $n.gw $n.dns
+        $rg = Get-VncRangeText $n.ip $n.prefix $ui.state.prefix; $key = Get-VncRangeKey $rg $n.gw $n.dns $n.gwId
         if ($plan.ranges -contains $key) { continue }
         $st = Get-VncRangeState $key $ui.state.confirmed $ui.state.declined
         if ($st -eq 'declined' -and -not $Ask) { $plan.declined = $true; continue }
         if ($st -ne 'ok') {
-            $a = [System.Windows.MessageBox]::Show(("Scan {0} ({1}) for registers?`n`nThis briefly checks port {2} on each address on this network. You'll only be asked again if the network changes." -f $rg, $n.label, $ui.state.port), 'View Register', 'YesNo', 'Question', 'No')
+            # Squint: plain words; range and port only in the small print. Default Yes when Rescan asked on purpose, No on automatic opens.
+            $a = [System.Windows.MessageBox]::Show(("Look for registers on this network ({1})?`n`nThis quickly checks the shop network for registers you can view. You'll only be asked again if the network changes.`n`n(Range {0}, port {2})" -f $rg, $n.label, $ui.state.port), 'View Register', 'YesNo', 'Question', $(if ($Ask) { 'Yes' } else { 'No' }))
             if ($a -ne 'Yes') {
                 $plan.declined = $true
                 if ($st -eq 'new') { $ui.state.declined = @($ui.state.declined) + $key; Set-Prop $global:cfg.vnc 'declinedRanges' @($ui.state.declined); Save-Config }
@@ -2087,7 +2185,7 @@ function global:Start-VncScan($ui, [switch]$Rescan) {
     } catch {
         foreach ($x in $ps, $rs) { if ($x) { try { $x.Dispose() } catch {} } }
         $ui.setStatus.Invoke('Scan failed: ' + $_.Exception.Message); Write-LauncherLog ('VNC scan could not start: ' + $_.Exception.Message); return }
-    $ui.fresh = $true; $ui.scanning = $true; $ui.busy.Invoke($true)
+    $ui.fresh = $true; $ui.scanning = $true; $ui.scanned = $true; $ui.busy.Invoke($true)
     $ui.setStatus.Invoke(('Looking for registers on {0} (0 of {1})...' -f $ui.scan.range, $plan.targets.Count))
     $ui.timer.Start()
 }
@@ -2191,11 +2289,26 @@ $global:VncPickerXaml = @'
       </Style.Triggers>
     </Style>
     <Style TargetType="ContextMenu">
+      <Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/>
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ContextMenu">
         <Border Background="#26262C" BorderBrush="#1FFFFFFF" BorderThickness="1" CornerRadius="8" Padding="4"><ItemsPresenter/></Border>
       </ControlTemplate></Setter.Value></Setter>
     </Style>
-    <Style TargetType="MenuItem"><Setter Property="Height" Value="36"/><Setter Property="FontSize" Value="14"/><Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="Background" Value="Transparent"/></Style>
+    <Style TargetType="MenuItem">
+      <Setter Property="Height" Value="36"/><Setter Property="FontSize" Value="14"/><Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="MenuItem">
+        <Border x:Name="hl" CornerRadius="6" Background="Transparent" Padding="12,0" MinWidth="220">
+          <Grid VerticalAlignment="Center"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+            <TextBlock x:Name="gt" Grid.Column="1" Margin="24,0,0,0" Text="{TemplateBinding InputGestureText}" Foreground="#B4B4B4" VerticalAlignment="Center"/>
+          </Grid>
+        </Border>
+        <ControlTemplate.Triggers>
+          <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="hl" Property="Background" Value="#37373C"/></Trigger>
+          <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="#8A8A8A"/><Setter TargetName="gt" Property="Foreground" Value="#8A8A8A"/></Trigger>
+        </ControlTemplate.Triggers>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
     <Style TargetType="ListBoxItem">
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
         <Grid Margin="4,0" Height="32">
@@ -2216,7 +2329,7 @@ $global:VncPickerXaml = @'
   <Grid Margin="20,14,20,16">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="2"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
     <TextBlock Grid.Row="0" Text="Pick a register. View only to watch, Interact to take control." FontSize="13" Foreground="#A0A0A0" Margin="0,0,0,12"/>
-    <Border Grid.Row="1" CornerRadius="10" Background="#2E000000" BorderBrush="#1AFFFFFF" BorderThickness="1">
+    <Border Grid.Row="1" CornerRadius="10" Background="#2E000000" BorderBrush="#1FFFFFFF" BorderThickness="1">
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition Height="*"/></Grid.RowDefinitions>
         <Grid Margin="4,0" TextElement.FontSize="12" TextElement.FontWeight="SemiBold" TextElement.Foreground="#A0A0A0">
@@ -2285,12 +2398,13 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
     $d.Add_Click({ $ui.remove.Invoke() }.GetNewClosure()); [void]$m.Items.Add($d)
     try { $m.Style = $ui.win.FindResource([System.Windows.Controls.ContextMenu]); $ms = $ui.win.FindResource([System.Windows.Controls.MenuItem])   # a code-built menu doesn't inherit the window's implicit styles
           foreach ($it in $m.Items) { if ($it -is [System.Windows.Controls.MenuItem]) { $it.Style = $ms } } } catch {}
+    $m.Foreground = Brush '#FFFFFF'; $m.FontFamily = $global:UiFont; $m.FontSize = 14   # Kern Blocker: a popup doesn't inherit the window's text colour or font
     return $m
 }
 function global:Show-VncPicker($btn) {
     if ($global:vncPicker -and $global:vncPicker.win.IsVisible) { $global:vncPicker.win.Activate() | Out-Null; return }
     Remove-VncTempLeftovers
-    $ui = @{ btn = $btn; state = (Get-VncState $global:cfg); cachePath = (Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-cache.json'); scan = $null; hosts = @(); fresh = $false; scanning = $false; timer = $null; busy = $null; sessionSeen = @{}; ageText = ''; stale = $false }
+    $ui = @{ btn = $btn; state = (Get-VncState $global:cfg); cachePath = (Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-cache.json'); scan = $null; hosts = @(); fresh = $false; scanning = $false; timer = $null; busy = $null; sessionSeen = @{}; ageText = ''; stale = $false; scanned = $false }
     $cache = Read-VncCache $ui.cachePath; $ui.hosts = @($cache.hosts)
     $ui.ageText = Get-VncAgeText $cache.time ([datetime]::UtcNow); $ui.stale = (Test-VncCacheStale $cache ([datetime]::UtcNow)) -and $cache.time -gt [datetime]::MinValue
     try { $w = [Windows.Markup.XamlReader]::Parse($global:VncPickerXaml) }
@@ -2307,6 +2421,7 @@ function global:Show-VncPicker($btn) {
     $ui.busy = [Action[bool]]{ param($on) $busyBar.IsIndeterminate = $on; $busyBar.Visibility = $(if ($on) { 'Visible' } else { 'Hidden' }); $bScan.IsEnabled = -not $on }.GetNewClosure()
     $ui.showEmpty = [Action[string]]{ param($kind)
         if ($kind -eq 'nonet') { $eT.Text = "This PC isn't on the shop network."; $eB.Text = "Connect to the shop Wi-Fi or cable, then press Rescan (F5). Or use Add... to type a register's address." }
+        elseif ($kind -eq 'notscanned') { $eT.Text = 'Not scanned yet.'; $eB.Text = 'Press Rescan (F5) to look for registers on this network, or use Add... to type an address.' }   # Squint Major
         else { $eT.Text = 'No registers found.'; $eB.Text = 'Check the register is turned on and on the shop network, then press Rescan (F5). Or use Add... to type its address.' }
         if ($lv.Items.Count -eq 0) { $empty.Visibility = 'Visible'; [void]$bAdd.Focus() } }.GetNewClosure()
     $ui.refresh = [Action]{
@@ -2317,7 +2432,8 @@ function global:Show-VncPicker($btn) {
             [void]$lv.Items.Add($v); if ($sel -and $sel.row.host -eq $r.host -and $sel.row.port -eq $r.port) { $lv.SelectedItem = $v } }
         if (-not $lv.SelectedItem -and $lv.Items.Count) { $lv.SelectedIndex = 0 }
         $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has
-        if ($lv.Items.Count -gt 0) { $empty.Visibility = 'Collapsed' } elseif (-not $ui.scanning) { $ui.showEmpty.Invoke('none') }
+        if ($lv.Items.Count -gt 0) { $empty.Visibility = 'Collapsed' }
+        elseif (-not $ui.scanning) { $ui.showEmpty.Invoke($(if ($ui.scanned -or @($ui.hosts).Count -gt 0) { 'none' } else { 'notscanned' })) }   # never 'No registers found' before any scan
     }.GetNewClosure()
     $ui.timer = New-Object System.Windows.Threading.DispatcherTimer; $ui.timer.Interval = [TimeSpan]::FromMilliseconds(200)
     $ui.timer.Add_Tick({ Step-VncScan $ui }.GetNewClosure())
@@ -2341,7 +2457,8 @@ function global:Show-VncPicker($btn) {
         if ($f) { $ui.state.favorites.Remove($f) }; $ui.saveFavs.Invoke() }.GetNewClosure()
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure()); $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
     $bScan.Add_Click({ Start-VncScan $ui -Rescan }.GetNewClosure())
-    $bMore.Add_Click({ $m = New-VncRowMenu $ui $false; $m.PlacementTarget = $bMore; $m.Placement = 'Top'; $m.IsOpen = $true }.GetNewClosure())
+    $bMore.Add_Click({ $m = New-VncRowMenu $ui $false; $m.PlacementTarget = $bMore; $m.Placement = 'Top'; $m.VerticalOffset = -4   # Kern: above the row, right edges aligned, 4 px gap
+        $m.Add_Opened({ $m.HorizontalOffset = $bMore.ActualWidth - $m.ActualWidth }.GetNewClosure()); $m.IsOpen = $true }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has }.GetNewClosure())
     $lv.Add_MouseDoubleClick({ if ($lv.SelectedItem) { $ui.go.Invoke($true) } }.GetNewClosure())
     $lv.Add_PreviewMouseLeftButtonUp({   # star column toggles pin
@@ -2361,25 +2478,29 @@ function global:Show-VncPicker($btn) {
         elseif ($k -eq 'F5') { $_.Handled = $true; Start-VncScan $ui -Rescan }
         elseif ($k -eq 'Escape') { $_.Handled = $true; $w.Close() } }.GetNewClosure())   # Esc: cancels a scan and closes (Closed handler)
     $bAdd.Add_Click({
-        $t = [Microsoft.VisualBasic.Interaction]::InputBox('Address of the register (IP or name, optionally :port):', 'Add a register', '')
-        if (-not $t) { return }
-        $ep = ConvertTo-VncEndpoint $t $ui.state.port
+        $in = Show-VncAddDialog $ui.win
+        if (-not $in) { return }   # Squint 4: Cancel adds nothing
+        $ep = ConvertTo-VncEndpoint $in.addr $ui.state.port
         if (-not $ep) { [System.Windows.MessageBox]::Show("That isn't a valid address. Use an IP like 192.168.1.20 or a name like REG1, optionally with :port.", 'Add a register') | Out-Null; return }
-        $n = [Microsoft.VisualBasic.Interaction]::InputBox('Name (e.g. Register 1):', 'Add a register', '')
+        $n = $in.name
         [void](Set-VncFavorite $ui.state.favorites $ep.host $ep.port $n $null); $ui.saveFavs.Invoke() }.GetNewClosure())
-    $w.Add_Closed({ Stop-VncScan $ui; $global:vncPicker = $null }.GetNewClosure())
+    # N1: -All cleanup after close. Workers were told to stop (BeginStop); give them 3 s so Dispose never blocks the UI thread.
+    $w.Add_Closed({ Stop-VncScan $ui; $global:vncPicker = $null
+        $ct = New-Object System.Windows.Threading.DispatcherTimer; $ct.Interval = [TimeSpan]::FromSeconds(3)
+        $ct.Add_Tick({ $ct.Stop(); if (-not $global:vncPicker) { Clear-VncDeadWorkers -All } }.GetNewClosure()); $ct.Start() }.GetNewClosure())
     $global:vncPicker = $ui
     $ui.refresh.Invoke()
     $bad = Get-VncInvalidText $ui.state.invalid
-    if ($cache.time -gt [datetime]::MinValue) { $ui.setStatus.Invoke(('Last scan {0}. Press F5 to rescan.' -f $(if ($cache.time.ToLocalTime().Date -eq (Get-Date).Date) { $cache.time.ToLocalTime().ToString('t') } else { $cache.time.ToLocalTime().ToString('g') }))) }
+    if ($cache.time -gt [datetime]::MinValue) { $ui.setStatus.Invoke(('Last scan {0}{1}. Press F5 to rescan.' -f $(if ($cache.time.ToLocalTime().Date -eq (Get-Date).Date) { $cache.time.ToLocalTime().ToString('t') } else { $cache.time.ToLocalTime().ToString('g') }), $(if ($ui.stale) { ' (out of date)' } else { '' }))) }
     if ($bad) { $ui.setStatus.Invoke($bad) }   # L5: visible warning
     $w.Show(); [void]$lv.Focus()
     # Favourites-first (H1): with saved registers, only a new network range scans on open; otherwise a scan older than a day. Never at startup.
-    $ranges = @(); try { foreach ($n in @(Get-VncLocalSubnets)) { $ranges += (Get-VncRangeKey (Get-VncRangeText $n.ip $n.prefix $ui.state.prefix) $n.gw $n.dns) } } catch {}
+    $ranges = @(); try { foreach ($n in @(Get-VncLocalSubnets)) { $ranges += (Get-VncRangeKey (Get-VncRangeText $n.ip $n.prefix $ui.state.prefix) $n.gw $n.dns $n.gwId) } } catch {}
     $hasNew = @(Get-VncNewRanges $ranges (@($ui.state.confirmed) + @($ui.state.declined))).Count -gt 0
     $okRanges = @(Get-VncNewRanges $ranges $ui.state.declined).Count -gt 0
     if ($okRanges -and (Test-VncAutoScan ($ui.state.favorites.Count -gt 0) $cache ([datetime]::UtcNow) $hasNew)) { Start-VncScan $ui }
     elseif ($lv.Items.Count -eq 0 -and $ranges.Count -eq 0) { $ui.showEmpty.Invoke('nonet') }
+    elseif ($ranges.Count -gt 0 -and -not $okRanges -and -not $bad) { $ui.setStatus.Invoke('Not scanned. Press Rescan (F5) to scan anyway, or use Add... to type an address.') }   # Squint Major: declined network
     elseif ($ui.state.favorites.Count -gt 0 -and -not $bad) {   # nit: favourites suppressed the scan, so say how old the list is
         $ui.setStatus.Invoke($(if ($ui.ageText) { 'Showing saved registers. Last scan {0}{1}. Press F5 to rescan.' -f $ui.ageText, $(if ($ui.stale) { ' (out of date)' } else { '' }) } else { 'Showing saved registers. Not scanned yet. Press F5 to look for others.' })) }
 }
@@ -2437,7 +2558,7 @@ try {
     Apply-Lock                                          # builds every panel (menus know every panel) + tool-window style + placement
     if ($global:panels.Count -eq 0) { throw 'No panels could be opened.' }
     Start-TrayAndHotkey                                 # Squint Major 1: tray icon + Ctrl+Alt+L bring the launcher forward (both layouts)
-    $global:app.Add_Exit({ Stop-TrayAndHotkey })
+    $global:app.Add_Exit({ Stop-TrayAndHotkey; try { Clear-VncDeadWorkers -All } catch {} })   # N1
     # Idle CPU: wait for the "show" signal on a thread-pool wait instead of polling every 400 ms; it posts to the UI thread.
     # R11-M1: its own Add-Type (WPF is loaded by now; BL.Native stays exactly as before). On failure: log, 1 s poll.
     $showWatch = $false

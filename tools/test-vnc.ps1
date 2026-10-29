@@ -11,7 +11,7 @@ $fns = 'Set-Prop', 'Get-ButtonType', 'Test-VncIPv4', 'Test-VncHost', 'Get-VncPor
        'Save-VncFavorites', 'Set-VncFavorite', 'Read-VncCache', 'Save-VncCache', 'Test-VncCacheStale', 'Merge-VncRows', 'Test-VncPickerButton',
        'Test-VncAdapter', 'Get-VncRangeText', 'Get-VncNewRanges', 'Test-VncAutoScan', 'Test-VncBannerText', 'Get-VncDisplayName', 'Get-VncInvalidText',
        'Get-VncRowView', 'Test-VncUsePassword', 'Get-VncWorkerFault', 'Get-VncTempAction', 'Remove-VncTempDir',
-       'Get-VncSubnetGateway', 'Get-VncRangeKey', 'Get-VncRangeState', 'Get-VncAgeText'
+       'Get-VncSubnetGateway', 'Get-VncRangeKey', 'Get-VncRangeState', 'Get-VncAgeText', 'Test-VncRangeKeyCurrent', 'ConvertTo-VncGatewayId'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
@@ -141,7 +141,7 @@ Check "Squint 1: unnamed row reads 'Unnamed (F2 to name)' in grey" ($v.nameText 
 $v = Get-VncRowView $rows[0] $true $false
 Check 'Squint 3: not-found row greyed, Seen = Not found last scan; pinned = E735' ($v.seen -eq 'Not found last scan' -and $v.addrFg -eq '#A0A0A0' -and $v.star -eq [string][char]0xE735 -and $v.starOn -and $v.starName -eq 'Pinned')
 $v = Get-VncRowView $rows[0] $true $true; Check "while scanning an unseen row says 'Looking...'" ($v.seen -eq 'Looking...' -and $v.addrFg -eq '#FFFFFF')
-$v = Get-VncRowView $rows[1] $false $false; Check "cached row says 'Last scan'; port shown when not 5900" ($v.seen -eq 'Last scan' -and $v.addr -eq '192.168.1.9:5901' -and -not $v.starOn -and $v.star -eq [string][char]0xE734)
+$v = Get-VncRowView $rows[1] $false $false; Check "cached row says 'Earlier'; port shown when not 5900" ($v.seen -eq 'Earlier' -and $v.addr -eq '192.168.1.9:5901' -and -not $v.starOn -and $v.star -eq [string][char]0xE734)
 Check 'Kern 6/L5: long name in the row has an ellipsis' ((Get-VncRowView $rows[2] $true $false).nameText.EndsWith([string][char]0x2026))
 
 # --- L4: password file only to an RFB host ---
@@ -172,7 +172,7 @@ Check 'favourites-first: favourites + old cache + no new range -> no scan on ope
 Check 'favourites-first: favourites + new range -> scan (after the confirm)' (Test-VncAutoScan $true $fresh $now $true)
 Check 'no favourites: stale cache scans, fresh does not' ((Test-VncAutoScan $false $old $now $false) -and -not (Test-VncAutoScan $false $fresh $now $false))
 $scanSrc = (& { param($n) $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true).Extent.Text } 'Get-VncScanPlan')
-Check 'H1: confirm text, default No, remembered in vnc.confirmedRanges' ($scanSrc -match "Scan \{0\} \(\{1\}\) for registers\?" -and $scanSrc -match "'YesNo', 'Question', 'No'" -and $scanSrc -match "Set-Prop \`$global:cfg\.vnc 'confirmedRanges'")
+Check 'H1/Squint 2: plain confirm text, Yes from Rescan / No on open, remembered in vnc.confirmedRanges' ($scanSrc -match "Look for registers on this network \(\{1\}\)\?" -and $scanSrc -match "This quickly checks the shop network" -and $scanSrc -match "'YesNo', 'Question', \`$\(if \(\`$Ask\) \{ 'Yes' \} else \{ 'No' \}\)" -and $scanSrc -match "Set-Prop \`$global:cfg\.vnc 'confirmedRanges'")
 
 # --- M1: worker state ---
 function FakePs($state, $msg) { [pscustomobject]@{ InvocationStateInfo = [pscustomobject]@{ State = $state; Reason = $(if ($msg) { New-Object Exception $msg } else { $null }) } } }
@@ -272,10 +272,15 @@ Check 'nit: this test file is plain ASCII with no BOM' ($(($b = [IO.File]::ReadA
 
 # --- round 2 (ClaudeCode R2, Lockjaw V2-I1) ---
 Check 'R2-L1: gateway inside the subnet is found' ((Get-VncSubnetGateway '192.168.1.37' 24 @('10.0.0.1', '192.168.1.1')) -eq '192.168.1.1' -and (Get-VncSubnetGateway '192.168.1.37' 24 @('192.168.2.1')) -eq '')
-$kShop = Get-VncRangeKey '192.168.1.0/24' '192.168.1.1' 'Shop.LAN'; $kHome = Get-VncRangeKey '192.168.1.0/24' '192.168.1.254' 'home'
-Check 'R2-L1: key = range + gateway + DNS suffix (lower-case)' ($kShop -eq '192.168.1.0/24|gw=192.168.1.1|dns=shop.lan')
+$kShop = Get-VncRangeKey '192.168.1.0/24' '192.168.1.1' 'Shop.LAN' 'mac=AA-BB-CC-00-11-22'; $kHome = Get-VncRangeKey '192.168.1.0/24' '192.168.1.254' 'home' ''
+Check 'R2-L1/R3-L1: key = range + gateway + gateway id + DNS suffix (lower-case)' ($kShop -eq '192.168.1.0/24|gw=192.168.1.1|id=mac=aa-bb-cc-00-11-22|dns=shop.lan')
+$kA = Get-VncRangeKey '192.168.1.0/24' '192.168.1.1' '' (ConvertTo-VncGatewayId 'aa:bb:cc:00:11:22' 'Home'); $kB = Get-VncRangeKey '192.168.1.0/24' '192.168.1.1' '' (ConvertTo-VncGatewayId '11-22-33-44-55-66' 'Home')
+Check 'R3-L1: same 192.168.1.1 and no DNS suffix, different router MAC -> different keys' ($kA -ne $kB -and $kA -match '\|id=mac=aa-bb-cc-00-11-22\|')
+Check 'R3-L1: no usable MAC -> network profile name; neither -> empty id' ((ConvertTo-VncGatewayId '00-00-00-00-00-00' 'Shop Net 2') -eq 'net=shop net 2' -and (ConvertTo-VncGatewayId '' 'Bad|Name') -eq 'net=bad_name' -and (ConvertTo-VncGatewayId '' '') -eq '')
+Check 'R3-L1: hostile id neutralised' ((Get-VncRangeKey '10.0.0.0/24' '10.0.0.1' '' "x|dns=1") -eq '10.0.0.0/24|gw=10.0.0.1|id=?|dns=')
+Check 'R3-L1 migration: keys saved before the gateway id count as unconfirmed' (-not (Test-VncRangeKeyCurrent '192.168.1.0/24|gw=192.168.1.1|dns=') -and (Test-VncRangeKeyCurrent $kA) -and ($src -match 'Where-Object \{ Test-VncRangeKeyCurrent'))
 Check 'R2-L1: same range on another network is a different key' ($kShop -ne $kHome -and (Get-VncRangeKey '192.168.1.0/24' '192.168.1.1' 'other') -ne $kShop)
-Check 'R2-L1: odd DNS suffix is neutralised' ((Get-VncRangeKey '10.0.0.0/24' '10.0.0.1' "x|gw=1`n") -eq '10.0.0.0/24|gw=10.0.0.1|dns=?')
+Check 'R2-L1: odd DNS suffix is neutralised' ((Get-VncRangeKey '10.0.0.0/24' '10.0.0.1' "x|gw=1`n" '') -eq '10.0.0.0/24|gw=10.0.0.1|id=|dns=?')
 Check 'R2-L2: range state ok / declined / new' ((Get-VncRangeState $kShop @($kShop) @()) -eq 'ok' -and (Get-VncRangeState $kHome @($kShop) @($kHome)) -eq 'declined' -and (Get-VncRangeState 'x' @($kShop) @($kHome)) -eq 'new')
 $plan = & $fn 'Get-VncScanPlan'
 Check 'R2-L2: declines remembered in vnc.declinedRanges, skipped unless Rescan asks' ($plan -match "Set-Prop \`$global:cfg\.vnc 'declinedRanges'" -and $plan -match "\`$st -eq 'declined' -and -not \`$Ask" -and $plan -match 'Get-VncRangeKey')
@@ -293,8 +298,21 @@ Check 'nit: XAML load in try with a clear message' ($pk -match "(?s)try \{ \`$w 
 Check 'nit: no unused $total in Step-VncScan' ((& $fn 'Step-VncScan') -notmatch '\$total')
 Check 'nit: age text' ((Get-VncAgeText ([datetime]::MinValue) $now) -eq '' -and (Get-VncAgeText $now.AddMinutes(-5) $now) -eq '5 min ago' -and (Get-VncAgeText $now.AddHours(-3) $now) -eq '3 h ago' -and (Get-VncAgeText $now.AddDays(-1.2) $now) -eq '1 day ago' -and (Get-VncAgeText $now.AddDays(-3) $now) -eq '3 days ago')
 $rv = Get-VncRowView ([pscustomobject]@{ host = '192.168.1.21'; port = 5900; name = 'Register 1'; banner = 'RFB 003.889'; pinned = $true; fav = $true; seen = $true }) $false $false '3 days ago' $true
-Check 'nit: stale cached row shows its age and is greyed' ($rv.seen -eq 'Last scan, 3 days ago' -and $rv.addrFg -eq '#A0A0A0' -and $rv.nameFg -eq '#A0A0A0')
+Check 'Squint 5: stale cached row says Earlier (age only in the status line) and is greyed' ($rv.seen -eq 'Earlier' -and $rv.addrFg -eq '#A0A0A0' -and $rv.nameFg -eq '#A0A0A0')
 Check 'nit: favourites suppressing the scan show the cache age' ($pk -match 'Showing saved registers\. Last scan \{0\}\{1\}' -and $pk -match 'out of date')
 Check 'V2-I1: rows carry session-seen; scan hits fill it' ($pk -match 'sessionSeen\[' -and (& $fn 'Step-VncScan') -match '\$ui\.sessionSeen\[')
 
+# ---- v1.3.0 round 3 (Squint / Kern / ClaudeCode) ----
+Check 'Squint Major: notscanned empty state with its copy' ($src -match "'notscanned'\) \{ \`$eT\.Text = 'Not scanned yet\.'; \`$eB\.Text = 'Press Rescan \(F5\) to look for registers on this network, or use Add\.\.\. to type an address\.'")
+Check 'Squint Major: no "No registers found" before any scan (refresh picks notscanned)' ($src -match "if \(\`$ui\.scanned -or @\(\`$ui\.hosts\)\.Count -gt 0\) \{ 'none' \} else \{ 'notscanned' \}" -and $src -match '\$ui\.scanned = \$true; \$ui\.busy')
+Check 'Squint Major: declined network sets the Not scanned status on open' ($src -match "-not \`$okRanges -and -not \`$bad\) \{ \`$ui\.setStatus\.Invoke\('Not scanned\. Press Rescan \(F5\)")
+Check 'Squint 4: Add is one dialog; Cancel adds nothing; name labelled optional' ($src -match 'Name \(optional, e\.g\. Register 1\)\. Leave empty to name it later with F2\.' -and $src -match "\`$in = Show-VncAddDialog \`$ui\.win\s+if \(-not \`$in\) \{ return \}" -and $src -notmatch "InputBox\('Name \(e\.g\. Register 1\):'")
+Check 'Kern 6: Add and password dialogs use the D2 dialog' ($src -match "New-D2Dialog 'Add a register'" -and $src -match "New-D2Dialog 'View-only password'" -and $src -match "Background = Brush '#0FFFFFFF'" -and $src -match "Background = Brush '#22C55E'")
+Check 'Picker Blocker: menu text white 14 px UI font, disabled #8A8A8A' ($xaml2 -match '<Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/>' -and $xaml2 -match 'Property="Foreground" Value="#8A8A8A"' -and $src -match "\`$m\.Foreground = Brush '#FFFFFF'; \`$m\.FontFamily = \`$global:UiFont; \`$m\.FontSize = 14")
+Check 'Picker Minor: shortcut text #B4B4B4' ($xaml2 -match 'Text="\{TemplateBinding InputGestureText\}" Foreground="#B4B4B4"')
+Check 'Picker Minor: More menu above, right-aligned, 4 px gap' ($src -match "\`$m\.Placement = 'Top'; \`$m\.VerticalOffset = -4" -and $src -match 'HorizontalOffset = \$bMore\.ActualWidth - \$m\.ActualWidth')
+Check 'Picker Minor: list border 12% white' ($xaml2 -match 'Background="#2E000000" BorderBrush="#1FFFFFFF"')
+Check 'N1: -All cleanup after picker close and on exit' ($src -match 'Clear-VncDeadWorkers -All \} \}\.GetNewClosure\(\)\); \$ct\.Start\(\)' -and $src -match 'Add_Exit\(\{ Stop-TrayAndHotkey; try \{ Clear-VncDeadWorkers -All \}')
+$xmlOk = $true; try { [void][xml]$global:VncPickerXaml } catch { $xmlOk = $false }
+Check 'picker XAML still well-formed XML' $xmlOk
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
