@@ -100,7 +100,7 @@ function global:Resolve-ButtonPath($btn, $kind) {
     $found = Find-Detected $btn
     if (-not $found) {
         $why = if (-not (Is-Todo $t)) { "Couldn't find:`n$t`n`nPlease pick it on this PC." } elseif ($btn.askTitle) { $btn.askTitle + '.' } else { 'Please pick the file for this button.' }
-        [System.Windows.MessageBox]::Show($why + "`n`nYou'll only be asked once.", 'Launcher') | Out-Null
+        [System.Windows.MessageBox]::Show($why + "`n`nIf you pick the wrong one, right-click the button > Edit this button to change it.", 'Launcher') | Out-Null
         $found = Ask-ForPath $btn $kind
     }
     if ($found) { Set-Prop $btn 'target' $found; Save-Config; return $found }
@@ -142,7 +142,8 @@ Set-Content -Path '$res' -Value `$out -Encoding UTF8
 function global:Invoke-Button($btn) {
     $kind = Get-ButtonType $btn
     if ($btn.confirm) {
-        $r = [System.Windows.MessageBox]::Show([string]$btn.confirm, 'Please confirm', 'YesNo', 'Warning', 'No')   # focus defaults to No
+        $cTitle = (([string]$btn.label) -replace "`n", ' ').Trim(); if (-not $cTitle) { $cTitle = 'Please confirm' }
+        $r = [System.Windows.MessageBox]::Show([string]$btn.confirm, $cTitle, 'YesNo', 'Warning', 'No')   # focus defaults to No
         if ($r -ne 'Yes') { return $false }
     }
     $a = Expand $btn.args
@@ -589,7 +590,8 @@ function global:Button-Menu($p, $btn) {
     }
     $mv.IsEnabled = $mv.Items.Count -gt 0; [void]$m.Items.Add($mv)
     [void](Add-MenuItem $m 'Add new button below...' { $nb = New-DefaultButton; if (Edit-Button $nb) { $p.items.Insert($p.items.IndexOf($btn) + 1, $nb); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
-    [void](Add-MenuItem $m 'Delete this button' { if ([System.Windows.MessageBox]::Show('Delete this button?', 'Launcher', 'YesNo') -eq 'Yes') { $p.items.Remove($btn); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
+    [void](Add-MenuItem $m 'Delete this button' { $dn = (([string]$btn.label) -replace "`n", ' ').Trim(); if (-not $dn) { $dn = 'this' }
+        if ([System.Windows.MessageBox]::Show("Delete the $dn button? This can't be undone.", 'Delete button', 'YesNo', 'Warning', 'No') -eq 'Yes') { $p.items.Remove($btn); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
     [void]$m.Items.Add((New-Object System.Windows.Controls.Separator))
     Panel-Menu $p $m
     return $m
