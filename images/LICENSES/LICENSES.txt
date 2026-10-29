@@ -23,7 +23,7 @@ badge-48/256.png <- police_car_light.png [Fluent Emoji 3D, MIT]
 revenue-48/256.png <- classical_building.png [Fluent Emoji 3D, MIT]
 security-48/256.png <- locked_with_key.png [Fluent Emoji 3D, MIT]
 screenconnect-48/256.png <- laptop.png [Fluent Emoji 3D, MIT]
-power-48/256.png <- electric_plug.png [Fluent Emoji 3D, MIT]
+power-48/256.png <- counterclockwise_arrows_button_3d.png [Fluent Emoji 3D "Counterclockwise arrows button", MIT, unmodified; resized only] (replaced electric_plug Oct 29: 1.42:1 on restart tile)
 chip-document-48/256.png <- page_facing_up.png [Fluent Emoji 3D, MIT]
 chip-files-48/256.png <- card_file_box.png [Fluent Emoji 3D, MIT]
 reddog-48/256.png <- art/reddog/reddog-full-*.png [Red Dog POS, unchanged]

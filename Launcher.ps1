@@ -556,11 +556,6 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
             $ig = New-Object System.Windows.Controls.Grid; $ig.Width = $ipx; $ig.Height = $ipx
             $sh = New-Object System.Windows.Shapes.Ellipse; $sh.Width = $ipx * 0.72; $sh.Height = [Math]::Max(4, $ipx * 0.16)
             $sh.VerticalAlignment = 'Bottom'; $sh.Margin = ('0,0,0,{0}' -f (-[Math]::Round($ipx * 0.06))); $sh.Fill = $global:D2IconShadow
-            if ($danger -and ([string]$btn.image) -match '(?i)(^|[\\/])power\.png$') {   # Kern Major 2 fallback: the plug is 1.42:1 on the dark tile, so it sits
-                # on a 28 px white 85% plate (>= 3:1). The spec's "Counterclockwise arrows button" isn't in Smudge's set yet.
-                $ig.Width = 28; $ig.Height = 28; $sh.Visibility = 'Collapsed'
-                $pl = New-Object System.Windows.Shapes.Ellipse; $pl.Width = 28; $pl.Height = 28; $pl.Fill = Brush '#D9FFFFFF'; [void]$ig.Children.Add($pl)
-                $img.Width = 20; $img.Height = 20 }
             [void]$ig.Children.Add($sh); [void]$ig.Children.Add($img); $icon = $ig }
     }
     $sp = New-Object System.Windows.Controls.StackPanel

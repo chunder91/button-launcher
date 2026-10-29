@@ -185,7 +185,7 @@ Check 'D2: custom colour derives 7 hex stops, rest top = its own colour' (@($cd)
 
 # ---- v1.3.0 round 3 (Kern) ----
 Check 'Kern M1: glow Margin -6, radius rad+6, radial 85% at 0.70 -> 0, RadiusX 0.62 / RadiusY 0.75' ($tileSrc -match "\`$glow\.Margin = '-6'" -and $tileSrc -match 'CornerRadius = \[string\]\(\$rad \+ 6\)' -and $tileSrc -match 'New-GlowBrush \$f\[6\] 0\.85 0\.70 0\.62 0\.75' -and $tileSrc -match 'ClipToBounds = \$false')
-Check 'Kern M2: no arrows asset, so the plug gets the 28 px white 85% plate' ($src -match "\`$pl\.Width = 28; \`$pl\.Height = 28; \`$pl\.Fill = Brush '#D9FFFFFF'" -and -not (Test-Path (Join-Path $root 'images/restart.png')))
+Check 'Kern M2: Restart Computer uses the arrows art; no plug plate remains' ($src -notmatch "#D9FFFFFF" -and $src -notmatch '\$pl\.Width = 28' -and $src -notmatch 'power\\\.png\$' -and (Get-FileHash (Join-Path $root 'images/power.png')).Hash -eq (Get-FileHash '/home/box/shared/button-launcher/art/fluent-3d/power-48.png').Hash)
 Check 'Kern 3 / N2: inner corners 16 everywhere, none left at 14' ($src -match "'0,0,16,0'" -and $src -match "'16,0,0,0'" -and $src -notmatch "'0,0,14,0'|'14,0,0,0'|'0,0,0,14'|'0,14,0,0'")
 Check 'Kern 4: Version 11 subtitle 12 px Regular, line 14, 85%' ($src -match 'New-Label \$lab\.sub \$fg 12; \$sl\.FontWeight = \[System\.Windows\.FontWeights\]::Normal; \$sl\.LineHeight = 14; \$sl\.Opacity = 0\.85')
 Check 'Kern 5: Segoe UI Variable only when installed, else Segoe UI' ($src -match "if \(\`$f\.Source -eq 'Segoe UI Variable'\)" -and $src -match "return 'Segoe UI'\s*\r?\n\}" -and $src -match 'FontFamily \(Get-UiFontName\)')
