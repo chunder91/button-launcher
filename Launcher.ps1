@@ -867,6 +867,10 @@ try {
         $got = $false
         if ($args -contains '-Reload') {   # Reload: wait for the old copy to save and exit
             try { $got = $global:mutex.WaitOne(10000) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+            if (-not $got) {   # R-L3: the old copy already shut itself down for the Reload, so never quit here too: start anyway
+                Add-Content -LiteralPath $global:logPath -Value ("{0}  Reload: the previous copy did not exit within 10 s; starting anyway." -f (Get-Date -Format s)) -ErrorAction SilentlyContinue
+                $got = $true
+            }
         }
         if (-not $got) { [void]$global:showEvent.Set(); exit 0 }   # already running: ask it to show its panels, then quit quietly
     }
