@@ -1,4 +1,4 @@
-# One-panel layout checks that run without Windows: layout setting, middle schema, empty-state hint, overflow math,
+﻿# One-panel layout checks that run without Windows: layout setting, middle schema, empty-state hint, overflow math,
 # chip label trimming, and source checks for click-through, tray, hotkey, menus and cleanup.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -6,7 +6,7 @@ $fail = 0
 function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"; $script:fail++ } }
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
-foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Get-HiddenNoticed', 'Test-HiddenPanelsNotice', 'Get-HiddenPanelsText', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-ChipFallbackPic') {
+foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Get-HiddenNoticed', 'Test-HiddenPanelsNotice', 'Get-HiddenPanelsText', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-ChipFallbackPic', 'Get-SingleSize') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 $global:PathProbe = @{ DosDevice = { param($d) '\Device\HarddiskVolume3' }; Attr = { param($p) $null } }   # R6-L2 probes: plain local volume, no special attributes
@@ -213,4 +213,22 @@ Check 'R12-L2: BL.Native still has no WindowsBase' ($nat2 -notmatch 'WindowsBase
 Check 'R12-N1: WatchHandle and WatchResume in separate trys' ($src -match '(?s)\[BL\.Waits\]::WatchHandle\([^\n]*\$showWatch = \$true\s+\} catch \{' -and $src -match "try \{ if \('BL\.Waits' -as \[type\]\) \{ \[BL\.Waits\]::WatchResume")
 $vw = Get-Content (Join-Path $root 'tools/verify-waits.sh') -Raw
 Check 'R12-L1: verify-waits builds without node reuse / shared compiler, offline when cached, never shuts build servers (R14-L1)' ($vw -match '-nodeReuse:false' -and $vw -match 'UseSharedCompilation=false' -and $vw -match 'RestoreSources' -and $vw -notmatch 'build-server shutdown')
+
+# v1.3.0 left-clip guard: window width and content width agree at 100/125/150%, and sizing uses WPF's own draw scale.
+$global:BaseWidth = 290
+foreach ($d in 1.0, 1.25, 1.5) { foreach ($ww in 1366, 1920, 2560, 3840) { $z = Get-SingleSize ($ww * $d) (1040 * $d) 14 $d
+    Check "left-clip: content $([int]$z.contentPx) px <= window $($z.wPx) px at $($d*100)% / $ww wide" ($z.contentPx -le $z.wPx + 0.5) } }
+$z1 = Get-SingleSize 1920 1032 14 1.0; $zw = Get-SingleSize 1920 1032 14 1.25
+Check 'left-clip: sized for monitor 100% but drawn at 125% would overflow (the bug)' (($z1.contentPx / 1.0 * 1.25) -gt $z1.wPx + 30)
+Check 'left-clip: sized with the WPF scale it fits' ($zw.contentPx -le $zw.wPx + 0.5 -and $zw.wPx -le 270)
+$ls = ([regex]::Match($src, '(?s)function global:Layout-Single \{.*?\n\}')).Value
+Check 'left-clip: Layout-Single sizes with Get-WpfDpi after the move' ($ls -match '(?s)0x0015\).*Get-WpfDpi \$s\.win.*\$dpi = \$wd.*Get-SingleSize')
+Check 'left-clip: DpiChanged triggers a relayout and the layout signature includes the WPF scale' ($src -match 'Add_DpiChanged\(\{ Request-Relayout \}\)' -and $src -match "Get-Dpi \`$o\), \(Get-WpfDpi \`$o\.win\)")
+$nt = ([regex]::Match($src, '(?s)function global:New-Tile.*?\n\}')).Value
+Check 'left-clip: glow has negative margin but no Width, so it adds nothing to measured width' ($nt -match "Margin = '-6'" -and $nt -notmatch 'glow\w*\.Width\s*=')
+Check 'two-panel dock fits inside the 1 px rim + 3 px padding' ($src -match '\$dock\.Width = \$global:BaseWidth - 8')
+
+Check 'Jartrek chip: key icon from label or target' ((Get-ChipFallbackPic 'program' 'Jartrek C:\x.exe') -eq 'images/jartrek-security.png' -and (Get-ChipFallbackPic 'file' 'JARTREK') -eq 'images/jartrek-security.png' -and (Test-Path (Join-Path $root 'images/jartrek-security.png')))
+Check 'Jartrek chip: type defaults unchanged' ((Get-ChipFallbackPic 'program' 'Notepad') -eq 'images/register.png' -and (Get-ChipFallbackPic 'website' 'jartrek.com') -eq 'images/globe.png')
+Check 'Jartrek key licensed' ((Get-Content (Join-Path $root 'images/LICENSES/LICENSES.txt') -Raw) -match 'jartrek-security\.png.*MIT' -and (Get-Content (Join-Path $root 'tools/sync-icons.sh') -Raw) -match 'jartrek-security:jartrek-security')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

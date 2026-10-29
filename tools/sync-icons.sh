@@ -10,7 +10,7 @@ SRC="$ART/fluent-3d"
 DEST="${1:-$(cd "$(dirname "$0")/.." && pwd)/images}"
 # images/<name>.png  <-  fluent-3d/<source>-48.png
 MAP="register:register globe:globe email:email guide:guide-backoffice guide-register:guide-register badge:badge
-revenue:revenue security:security screenconnect:screenconnect power:power chip-document:chip-document chip-files:chip-files"
+revenue:revenue security:security screenconnect:screenconnect power:power chip-document:chip-document chip-files:chip-files jartrek-security:jartrek-security"
 for m in $MAP; do
   name=${m%%:*}; src=${m#*:}
   [ "$name" = reddog ] && continue          # never replace the Red Dog logo with the emoji stand-in

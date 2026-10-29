@@ -1,4 +1,4 @@
-# Button Launcher - PowerShell 5.1 + WPF. Floating panels anchored to screen edges; all settings in buttons.json.
+﻿# Button Launcher - PowerShell 5.1 + WPF. Floating panels anchored to screen edges; all settings in buttons.json.
 # Right-click a button or empty panel space for edit options.
 
 # Per-monitor DPI awareness (PerMonitorV2) must be set before any window or WPF assembly loads.
@@ -888,6 +888,9 @@ function global:Get-WorkAreaDpi($wa, $fallbackPanel) {
         if ($mon -ne [IntPtr]::Zero -and [BL.Native]::GetDpiForMonitor($mon, 0, [ref]$x, [ref]$y) -eq 0 -and $x -gt 0) { return $x / 96.0 }   # MDT_EFFECTIVE_DPI
     } catch {}
     return (Get-Dpi $fallbackPanel) }
+# v1.3.0 left-clip fix: the scale WPF actually draws this window at. It can lag the monitor's DPI (window created at
+# -32000 on a 125% monitor, then moved to a 100% one), so content drew 1.25x wider than the window and was cut off.
+function global:Get-WpfDpi($win) { try { $ps = [System.Windows.PresentationSource]::FromVisual($win); if ($ps -and $ps.CompositionTarget) { $m = $ps.CompositionTarget.TransformToDevice.M11; if ($m -gt 0) { return [double]$m } } } catch {}; return 0.0 }
 function global:Get-Dpi($p) { try { $d = [BL.Native]::GetDpiForWindow($p.hwnd); if ($d -gt 0) { return $d / 96.0 } } catch {}; return 1.0 }
 
 function global:Layout-Panel($p) {
@@ -962,7 +965,7 @@ function global:Apply-Lock {
 # debounce, lay out only when something that affects layout changed (screens, work areas, DPI, settings).
 function global:Get-LayoutSig {
     $scr = @(foreach ($x in [System.Windows.Forms.Screen]::AllScreens) { '{0}|{1}' -f $x.Bounds, $x.WorkingArea }) -join ';'
-    $dp = @(foreach ($o in $global:panels) { '{0}:{1}:{2}' -f (Get-Dpi $o), [bool]$o.win.IsVisible, [bool]($o.hwnd -and $o.hwnd -ne [IntPtr]::Zero) }) -join ','
+    $dp = @(foreach ($o in $global:panels) { '{0}:{1}:{2}:{3}' -f (Get-Dpi $o), (Get-WpfDpi $o.win), [bool]$o.win.IsVisible, [bool]($o.hwnd -and $o.hwnd -ne [IntPtr]::Zero) }) -join ','
     $cf = $global:cfg | ConvertTo-Json -Depth 12 -Compress
     $rc = @(foreach ($h in @(@($global:panels | ForEach-Object { $_.hwnd }) + @($(if ($global:single) { $global:single.hwnd })))) {   # R10-L1: each window's own size/position
         if ($h -and $h -ne [IntPtr]::Zero) { $r = New-Object BL.Native+RECT; if ([BL.Native]::GetWindowRect($h, [ref]$r)) { '{0},{1},{2},{3}' -f $r.Left, $r.Top, $r.Right, $r.Bottom } } }) -join ';'
@@ -1141,7 +1144,7 @@ function global:Open-Panel($pc) {
     $edge = New-Object System.Windows.Controls.Border; $edge.Padding = '3'
     if ($bgc -eq $global:Theme.panel) { Set-D2Panel $edge $(if ($square) { '0' } else { '16' }) }   # D2 glass panel; a custom panel colour stays flat
     else { $edge.Background = Brush $bgc; $edge.CornerRadius = if ($square) { '0' } else { '16' } }
-    $dock = New-Object System.Windows.Controls.DockPanel; $dock.Width = $global:BaseWidth - 6
+    $dock = New-Object System.Windows.Controls.DockPanel; $dock.Width = $global:BaseWidth - 8   # D2: 1 px rim + 3 px padding each side, so the panel stays exactly BaseWidth
     # Edit mode: 28 px amber "Editing" bar (also the drag handle). Locked: hidden, so the panel is clean.
     $grip = New-Object System.Windows.Controls.Border; $grip.Height = 28; $grip.Background = Brush $global:Theme.amber; $grip.Cursor = 'SizeAll'
     $grip.CornerRadius = '8'; $grip.Margin = '3,3,3,3'; $grip.Padding = '10,0'
@@ -1324,7 +1327,8 @@ function global:New-DefaultChip { [pscustomobject]@{ label = 'New icon'; type = 
 # ---------- chips ----------
 # OP-L1: only touch local fixed-drive paths when drawing. Opening a UNC path, a \\?\UNC or \\.\ device path, or a mapped
 # network drive (or a .lnk that points or takes its icon from one) makes Windows send NTLM credentials to that server.
-function global:Get-ChipFallbackPic([string]$kind) {
+function global:Get-ChipFallbackPic([string]$kind, [string]$hint = '') {
+    if ($kind -ne 'website' -and $hint -match '(?i)jartrek') { return 'images/jartrek-security.png' }   # Jartrek chips get the key, not the register receipt; the type defaults stay
     switch ($kind) { 'website' { 'images/globe.png' } 'file' { 'images/chip-document.png' } 'script' { 'images/chip-files.png' } default { 'images/register.png' } }
 }
 function global:Get-ChipIcon($btn) {   # the target's own icon (local fixed drives only, cached), else a Set A icon for its type
@@ -1353,7 +1357,7 @@ function global:Get-ChipIcon($btn) {   # the target's own icon (local fixed driv
                         $global:iconCache[$ck] = $bs; [void]$global:iconCacheOrder.Add($ck) }
                     if ($global:iconCache[$ck]) { return $global:iconCache[$ck] } } } }
     }
-    return Get-PicSource ([pscustomobject]@{ image = (Get-ChipFallbackPic $kind) }) 32
+    return Get-PicSource ([pscustomobject]@{ image = (Get-ChipFallbackPic $kind (([string]$btn.label) + ' ' + ([string]$btn.target))) }) 32
 }
 function global:New-Chip($btn, [int]$index) {
     $chip = New-Object System.Windows.Controls.Border; $chip.Height = 64; $chip.Margin = '3'
@@ -1542,11 +1546,16 @@ function global:Open-Single {
             return [IntPtr]::Zero })
     }.GetNewClosure())
     $w.Add_ContentRendered({ Request-Relayout })
+    try { $w.Add_DpiChanged({ Request-Relayout }) } catch {}   # WPF's own scale changed: re-size so window and content agree
     $w.Add_Closed({ Save-Config; $global:app.Shutdown() })
     foreach ($p in $groups) { Build-Panel $p }
     Build-Middle
     $w.Show()
 }
+# Pure sizing for the single window. $dpi must be the scale WPF draws at (Get-WpfDpi), so contentPx == wPx.
+function global:Get-SingleSize([double]$waW, [double]$waH, [double]$pct, [double]$dpi) {
+    $wDip = [Math]::Max(180, [Math]::Min(560, ($waW * $pct / 100.0) / $dpi)); $sc = $wDip / $global:BaseWidth
+    @{ wDip = $wDip; sc = $sc; hDip = $waH / $dpi; wPx = [int][Math]::Round($global:BaseWidth * $sc * $dpi); contentPx = $global:BaseWidth * $sc * $dpi } }
 # Dock: the panels' edge (left if the top panel was anchored left, else right), full work-area height of that monitor.
 function global:Layout-Single {
     $s = $global:single; if (-not $s -or -not $s.hwnd -or $s.hwnd -eq [IntPtr]::Zero) { return }
@@ -1555,10 +1564,11 @@ function global:Layout-Single {
     $dpi = Get-WorkAreaDpi $wa $global:panels[0]   # R12-L2: target monitor's scale, so the first layout / a monitor move isn't sized for the old one
     if ([Math]::Abs((Get-Dpi $global:panels[0]) - $dpi) -gt 0.001) {   # on another monitor's scale: move there first, then size (WPF rescales on the move)
         [void][BL.Native]::SetWindowPos($s.hwnd, [IntPtr]::Zero, [int]$wa.L, [int]$wa.T, 0, 0, 0x0015) }
+    $wd = Get-WpfDpi $s.win   # size in the scale WPF draws at, so window px = content px (no left clip); DpiChanged relays out once WPF catches up
+    if ($wd -gt 0 -and [Math]::Abs($wd - $dpi) -gt 0.001) { $dpi = $wd }
     $pct = if ($pc.size -is [string] -and $global:SizePct[[string]$pc.size]) { $global:SizePct[[string]$pc.size] } elseif ($pc.size) { [double]$pc.size } else { 14 }
-    $wDip = [Math]::Max(180, [Math]::Min(560, ($wa.W * $pct / 100.0) / $dpi))
-    $sc = $wDip / $global:BaseWidth
-    $hDip = $wa.H / $dpi
+    $sz = Get-SingleSize $wa.W $wa.H $pct $dpi
+    $wDip = $sz.wDip; $sc = $sz.sc; $hDip = $sz.hDip
     $s.scale.ScaleX = $sc; $s.scale.ScaleY = $sc
     $s.root.Height = $hDip / $sc
     $s.win.SizeToContent = 'Manual'; $s.win.Width = $global:BaseWidth * $sc; $s.win.Height = $hDip   # laptop fix: the window itself fills the work area (DIPs; root is scaled by $sc), so the bottom group isn't cut off
