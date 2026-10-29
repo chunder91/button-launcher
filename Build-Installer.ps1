@@ -112,8 +112,13 @@ New-Item -ItemType Directory -Force $dest | Out-Null
 $zip = Join-Path $env:TEMP ("bl-payload-" + [guid]::NewGuid() + ".zip")   # LJ-I4/CC-L7: unpredictable name
 [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String('__B64__'))
 $z = [IO.Compression.ZipFile]::OpenRead($zip)
+$destRoot = [IO.Path]::GetFullPath($dest).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 foreach ($e in $z.Entries) {
-    $t = Join-Path $dest $e.FullName
+    # LJ-N7: skip entries that are rooted, contain '..', or resolve outside $dest
+    $en = $e.FullName
+    if ([IO.Path]::IsPathRooted($en) -or $en -match '(^|[\\/])\.\.([\\/]|$)') { continue }
+    $t = Join-Path $dest $en
+    if (-not [IO.Path]::GetFullPath($t).StartsWith($destRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
     if ($e.FullName.EndsWith('/') -or $e.FullName.EndsWith('\')) { New-Item -ItemType Directory -Force $t | Out-Null; continue }
     New-Item -ItemType Directory -Force (Split-Path $t) | Out-Null
     [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $t, $true)
