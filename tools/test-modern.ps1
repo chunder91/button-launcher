@@ -121,7 +121,7 @@ $global:touched.Clear()
 Check 'Test-ButtonSetUpQuick: UNC is not missing (no dot) and not touched' ((Test-ButtonSetUpQuick (P '\\srv\share\app.exe')) -and $global:touched.Count -eq 0)
 Check 'tile: only missing gets the dot; unchecked gets a tooltip' ($src -match "if \(\`$ss -eq 'missing'\) \{ \[void\]\`$g\.Children\.Add\(\(New-MissingDot" -and $src -match 'not checked until you click')
 # TS-L2 (a): tile pictures on a share -> default art, the share is never touched
-foreach ($n in 'Get-DefaultPic', 'Resolve-Img', 'Get-PicSource', 'Test-ButtonReady', 'Find-LocalMatch', 'Find-Detected') {
+foreach ($n in 'Get-DefaultPic', 'Resolve-Img', 'Get-PicSource', 'Test-ButtonReady', 'Find-LocalMatch', 'Find-LnkLocal', 'Find-Detected') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 function global:Join-Path { param([string]$Path, [string]$ChildPath) $Path.TrimEnd('\') + '\' + $ChildPath }
@@ -148,6 +148,21 @@ Check 'TS-L2b: Find-Detected skips non-local detect paths (not touched)' (-not (
 Check 'I-R6c: wildcard match that is a junction is never entered' ($hit -eq 'C:\Prog\Jartrek1\jt.exe' -and @($global:touched) -notcontains 'C:\Prog\JartrekLink')
 Check 'I-R6c: file link matches are ignored' ($null -eq (Find-LocalMatch 'C:\Prog\Jartrek1\ln*.exe'))
 $global:touched.Clear()
+# R8-N1: brackets in folder names are literal
+$global:tree['C:\Prog\App [x86]'] = @(@{ n = 'a.exe'; d = $false; a = 0x20 }); $global:tree['C:\Prog\Appx'] = @(@{ n = 'a.exe'; d = $false; a = 0x20 })
+$global:tree['C:\Prog'] = @($global:tree['C:\Prog']) + @(@{ n = 'App [x86]'; d = $true; a = 0x10 }, @{ n = 'Appx'; d = $true; a = 0x10 })
+Check 'R8-N1: [x86] folder matches itself, not as a character class' ((Find-LocalMatch 'C:\Prog\App [x86]\a.exe') -eq 'C:\Prog\App [x86]\a.exe' -and $null -eq (Find-LocalMatch 'C:\Prog\App[x]\a.exe'))
+Check 'R8-N1: * still a wildcard' ((Find-LocalMatch 'C:\Prog\App*\a.exe') -in 'C:\Prog\App [x86]\a.exe', 'C:\Prog\Appx\a.exe')
+# R8-L1: .lnk walk skips link folders, exact names, depth cap 6
+$global:tree['C:\SM'] = @(@{ n = 'Lnkd'; d = $true; a = 0x410 }, @{ n = 'L1'; d = $true; a = 0x10 }); $global:tree['C:\SM\Lnkd'] = @(@{ n = 'Jt [1].lnk'; d = $false; a = 0x20 })
+$global:tree['C:\SM\L1'] = @(@{ n = 'Jt [1].lnk'; d = $false; a = 0x20 })
+$deep = 'C:\D'; foreach ($i in 1..8) { $global:tree[$deep] = @(@{ n = "d$i"; d = $true; a = 0x10 }); $deep += "\d$i" }; $global:tree[$deep] = @(@{ n = 'Far.lnk'; d = $false; a = 0x20 })
+$global:touched.Clear(); $lk = Find-LnkLocal 'C:\SM' 'Jt [1].lnk'
+Check 'R8-L1: finds the .lnk by exact name (brackets literal), never enters a junction' ($lk.FullName -eq 'C:\SM\L1\Jt [1].lnk' -and @($global:touched) -notcontains 'C:\SM\Lnkd')
+Check 'R8-L1: depth capped at 6' ($null -eq (Find-LnkLocal 'C:\D' 'Far.lnk') -and @($global:touched) -notcontains 'C:\D\d1\d2\d3\d4\d5\d6\d7\d8')
+Check 'R8-L1: no recursive Get-ChildItem left in Find-Detected' ($src -notmatch 'Get-ChildItem -Path \$r -Recurse')
+# Lockjaw R7-I2: -small sibling goes through the local check
+Check 'R7-I2: -small sibling checked with Test-LocalFixedPath first' ($src -match '\(Test-LocalFixedPath \$sm\) -and \(Test-Path -LiteralPath \$sm\)')
 Check 'click path: Find-Detected -AllowNetwork may look at a share' (([void](Find-Detected ([pscustomobject]@{ detect = [pscustomobject]@{ paths = @('\\srv\share\jt.exe') } }) -AllowNetwork)) -eq $null -and @($global:touched) -contains '\\srv\share\jt.exe')
 Check 'Resolve-ButtonPath (click) passes -AllowNetwork' ($src -match 'Find-Detected \$btn -AllowNetwork')
 Remove-Item Function:\global:Test-Path, Function:\global:Get-ChildItem, Function:\global:Join-Path

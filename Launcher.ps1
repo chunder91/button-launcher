@@ -96,12 +96,22 @@ function global:Find-LocalMatch([string]$pattern) {
     for ($i = 0; $i -lt $segs.Count; $i++) {
         $last = ($i -eq $segs.Count - 1); $next = @()
         foreach ($c in $cur) {
-            $seg = $segs[$i]
+            $seg = $segs[$i] -replace '([\[\]`])', '`$1'   # R8-N1: [ ] in folder names match themselves; only * and ? are wildcards
             foreach ($it in @(Get-ChildItem -LiteralPath $c -Force -ErrorAction SilentlyContinue)) {
                 if (-not ($it.Name -like $seg) -or ($it.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
                 if ($last -and -not $it.PSIsContainer) { $next += $it.FullName } elseif (-not $last -and $it.PSIsContainer) { $next += $it.FullName } } }
         $cur = $next; if (-not $cur) { return $null } }
     foreach ($f in $cur) { if (Test-LocalFixedPath $f) { return $f } }
+    return $null
+}
+# R8-L1: find a shortcut by exact file name under $root; never enters junction/symlink folders; at most 6 levels deep
+function global:Find-LnkLocal([string]$root, [string]$name, [int]$depth = 0) {
+    if ($depth -gt 6) { return $null }
+    $dirs = @()
+    foreach ($it in @(Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue)) {
+        if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+        if ($it.PSIsContainer) { $dirs += $it.FullName } elseif ($it.Name -eq $name) { return $it } }
+    foreach ($d in $dirs) { $f = Find-LnkLocal $d $name ($depth + 1); if ($f) { return $f } }
     return $null
 }
 function global:Find-Detected($btn, [switch]$AllowNetwork) {   # TS-L2: automatic (first-run) use skips non-local detect paths
@@ -121,7 +131,7 @@ function global:Find-Detected($btn, [switch]$AllowNetwork) {   # TS-L2: automati
         foreach ($r in $roots) {
             if (-not $r -or (-not $AllowNetwork -and -not (Test-LocalFixedPath $r)) -or -not (Test-Path $r)) { continue }   # TS-L2: folders redirected to a share
             foreach ($n in @($d.lnkNames)) {
-                $lnk = Get-ChildItem -Path $r -Recurse -Filter "$n.lnk" -ErrorAction SilentlyContinue | Select-Object -First 1
+                $lnk = Find-LnkLocal $r ($n + '.lnk')   # R8-L1: manual walk, skips links, depth 6
                 if ($lnk) { $tp = $ws.CreateShortcut($lnk.FullName).TargetPath; if ($tp -and ($AllowNetwork -or (Test-LocalFixedPath $tp)) -and (Test-Path $tp)) { return $tp }; return $lnk.FullName }
             }
         }
@@ -262,7 +272,7 @@ function global:Get-PicSource($btn, $px) {
     if (-not (Test-LocalFixedPath $p)) { $p = Resolve-Img (Get-DefaultPic (Get-ButtonType $btn)) }   # TS-L2: non-local picture -> default art, never touched
     if ($px -and $px -le 48) {   # small spots use "<name>-small.png" when it exists (e.g. Red Dog logo without the wordmark)
         $sm = Join-Path ([IO.Path]::GetDirectoryName($p)) ([IO.Path]::GetFileNameWithoutExtension($p) + '-small' + [IO.Path]::GetExtension($p))
-        if (Test-Path -LiteralPath $sm) { $p = $sm }
+        if ((Test-LocalFixedPath $sm) -and (Test-Path -LiteralPath $sm)) { $p = $sm }   # Lockjaw R7-I2
     }
     if (-not (Test-Path -LiteralPath $p)) { return $null }
     try {
