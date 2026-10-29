@@ -10,11 +10,11 @@ $src = $ast.Extent.Text
 $fns = 'Get-ButtonType', 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker', 'Get-MailWorkerScript',
        'New-MailState', 'Get-MailFreshState', 'Update-MailState', 'Step-MailResume', 'Get-MailLostResult', 'Get-MailNextDelaySec', 'Get-MailBadgeText', 'Get-MailBadgeWidth', 'Test-MailShowBadge', 'Test-MailShowRing',
        'Get-MailMotion', 'Format-MailTime', 'Get-MailCountText', 'Get-MailTipLine', 'Get-MailMenuLine', 'Get-MailAccessName', 'Get-MailTestText', 'Format-MailLogLine', 'Get-MailSecretPath', 'Get-MailSettingsPath', 'Remove-MailLogin',
-       'Get-MailAddress', 'Test-MailAddress', 'Test-MailTile', 'ConvertTo-MailSettings', 'Get-MailSettingsJson'
+       'Get-MailAddress', 'Test-MailAddress', 'Test-MailTile', 'ConvertTo-MailSettings', 'Get-MailSettingsJson', 'ConvertTo-MailFullAddress', 'Get-MailInterval', 'Write-LauncherError'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
-foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(MailDomain|MailLogDetails|MailWorkerScript)\s*=') { Invoke-Expression $l.Extent.Text } }
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(MailDomain|MailLogDetails|MailWorkerScript|MailIntervals)\s*=') { Invoke-Expression $l.Extent.Text } }
 $fake = 'test-not-real'   # a fake password, used only in this test
 function Ascii([byte[]]$b) { [Text.Encoding]::ASCII.GetString($b) }
 
@@ -144,13 +144,13 @@ Check 'setup copy present' ($src.Contains("'Show unread email count on the Email
 Check 'menu items: Check email now, Setup item Unread email count...' ($src.Contains("'Check email now'") -and $src.Contains("'Unread email count...'"))
 
 # --- address, settings, log: no password anywhere ---
-Check 'address: name gets @jartrek.net' ((Get-MailAddress ' test.user ') -ceq 'test.user@jartrek.net' -and (Get-MailAddress 'a@b.com') -ceq 'a@b.com')
+Check 'address: only trimmed, typed as is' ((Get-MailAddress ' test.user ') -ceq 'test.user' -and (Get-MailAddress 'a@b.com') -ceq 'a@b.com')
 foreach ($a in 'test.user@jartrek.net', 'first.last+x@jartrek.net') { Check "address ok: $a" (Test-MailAddress $a) }
 foreach ($a in '', 'cc', 'cc@', "test.user@jartrek.net`r`nx", "test.user@jartrek.net`n", 'c c@jartrek.net', 'cc@jartrek', '"x"@jartrek.net') { Check ("address rejected: " + ($a -replace "`r", '\r' -replace "`n", '\n')) (-not (Test-MailAddress $a)) }
 $j = Get-MailSettingsJson @{ enabled = $true; address = 'test.user@example.invalid'; style = 'pulse'; password = $fake; secret = $fake }
-Check 'settings json: only enabled/address/style, no password' ($j -ceq '{"enabled":true,"address":"test.user@example.invalid","style":"pulse"}' -and -not $j.Contains($fake))
+Check 'settings json: only enabled/address/style, no password' ($j -ceq '{"enabled":true,"address":"test.user@example.invalid","style":"pulse","interval":3}' -and -not $j.Contains($fake))
 Check 'settings default: off, Flash' ((ConvertTo-MailSettings @{}).enabled -eq $false -and (ConvertTo-MailSettings @{}).style -eq 'flash')
-Check 'settings: enabled needs a valid address' (-not (ConvertTo-MailSettings @{ enabled = $true; address = 'nope' }).enabled)
+Check 'settings: enabled needs a valid address' (-not (ConvertTo-MailSettings @{ enabled = $true; address = 'no pe' }).enabled)
 $ll = Format-MailLogLine @{ kind = 'auth'; detail = $fake; unseen = -1; password = $fake; user = 'test.user@example.invalid' }
 Check 'log line: no password, no address' (-not $ll.Contains($fake) -and -not $ll.Contains('example.invalid') -and $ll -ceq 'email count: auth')
 Check 'log line: known detail kept' ((Format-MailLogLine @{ kind = 'net'; detail = 'connect timed out' }) -ceq 'email count: net (connect timed out)')
@@ -200,7 +200,7 @@ Check "I3: turn off deletes json, dat and both .tmp, nothing else ($($left -join
 Remove-Item -LiteralPath $tmpd -Recurse -Force
 # Kern / Squint
 Check 'Kern: focus ring grid 26 for checkbox and radio, ring radius 8' (([regex]::Matches($src, '<Grid Width="26" Height="26"')).Count -eq 2 -and $src -match '<Border x:Name="Ring" CornerRadius="8"')
-Check 'Kern: input padding 8,0 and 8,0,96,0' ($src -match "\`$field\.Padding = '8,0'" -and $src -match "\`$ta\.Padding = '8,0,96,0'")
+Check 'Kern: input padding 8,0 (no suffix padding now the address is typed in full)' ($src -match "\`$field\.Padding = '8,0'" -and $src -notmatch "\`$ta\.Padding = '8,0,96,0'")
 Check 'Kern: buttons MinWidth 88, padding 16,0' ($src -match '\$b\.MinWidth = 88' -and $src -match "\`$b\.Padding = '16,0'")
 Check 'Kern: red line on the password after a failed sign-in, cleared on typing' ($sv -match "\`$pErr\.Background = Brush '#F87171'" -and $sv -match "if \(\`$kind -eq 'auth'\) \{ 'Visible' \}" -and $sv -match "Add_PasswordChanged\(\{ \`$ds\.tested = \`$false; \`$pErr\.Visibility = 'Hidden'")
 Check 'Kern: 8 between the result line and the buttons' ($sv -match "\`$rline\.Margin = '0,16,0,8'" -and $sv -match "\`$row\.Margin = '0'")
@@ -321,5 +321,83 @@ Check 'Test results: the dialog has a branch for each and sets only Text/Foregro
 foreach ($st in 'flash', 'pulse', 'badge') { Check "style ${st}: motion path picked, badge only when animations are off" ((Get-MailMotion $st $true) -eq $st -and (Get-MailMotion $st $false) -eq 'badge') }
 $ov = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Add-MailOverlay' }, $true)
 Check 'flash/pulse/badge overlay: every property set exists on its element (property table)' ($ov -and @(Find-WpfPropMisuse $ov).Count -eq 0)
+# --- v1.4.0 laptop bug (4:38 PM): pressing Test -> "The property 'busy' cannot be found on this object" ---
+# Root cause: GetNewClosure copies only LOCAL variables. $onDone (and the wait timer) are closures made inside the Test click
+# closure, so they never had $ds/$showResult/$refresh; when the check finished, "$ds.busy = $false" ran on $null.
+# The suites missed it: they tested the mail functions and New-D2Field, never the click handler's closures, and the
+# property table only knew WPF types. Now: a closure-capture lint over every .ps1, and a run of the REAL Test handler below.
+$capBad = @(); foreach ($f in @(Get-ChildItem (Join-Path $root '*.ps1')) + @(Get-ChildItem (Join-Path $PSScriptRoot '*.ps1'))) {
+    $fa3 = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$null); $capBad += @(Find-ClosureCaptureMisses $fa3 | ForEach-Object { "$($f.Name): $_" }) }
+Check ('every variable a closure reads is captured (GetNewClosure copies locals only) ' + ($capBad -join '; ')) ($capBad.Count -eq 0)
+$nest = [System.Management.Automation.Language.Parser]::ParseInput('function global:P { $ds = @{ busy = 1 }; $b = { $cb = { $ds.busy = 0 }.GetNewClosure() }.GetNewClosure() }', [ref]$null, [ref]$null)
+Check 'the closure lint catches the exact 632a4be bug shape ($ds in a closure inside a closure)' (@(Find-ClosureCaptureMisses $nest).Count -eq 1)
+$hook = [System.Management.Automation.Language.Parser]::ParseInput('function global:P { $w = 1; $x = { $w; $s.AddHook({ param($h, $msg) $msg }) }.GetNewClosure() }', [ref]$null, [ref]$null)
+Check 'the closure lint leaves params of an inner delegate alone' (@(Find-ClosureCaptureMisses $hook | Where-Object { $_ -match 'msg|\$h ' }).Count -eq 0)
+$pco = [System.Management.Automation.Language.Parser]::ParseInput('function global:P { $o = [pscustomobject]@{ a = 1 }; $o.a = 2; $o.busy = 3 }', [ref]$null, [ref]$null)
+Check 'the property lint flags a key that a [pscustomobject] does not have' (@(Find-WpfPropMisuse $pco).Count -eq 1 -and (@(Find-WpfPropMisuse $pco)[0] -match 'busy'))
+# run the REAL Test click handler from Show-MailSetupDialog, built the same way (a closure made inside the dialog's scope)
+$sdAst = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-MailSetupDialog' }, $true)
+$tc = $sdAst.Find({ param($x) $x -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $x.Expression.Extent.Text -eq '$bTest' -and $x.Member.Extent.Text -eq 'Add_Click' }, $true)
+$handlerText = $tc.Arguments[0].Expression.ScriptBlock.Extent.Text
+Check 'found the real Test handler' ($handlerText -match 'Start-MailRun \$addr \$sec \$onDone')
+$global:pendingDone = $null
+function global:Start-MailRun($user, $sec, $OnDone) { $global:pendingDone = $OnDone; $global:pendingUser = $user; return $true }   # like the real one: OnDone runs later, from a timer tick
+function global:Read-MailSecret { $null }
+function Build-TestHandler([string]$text) {   # mirrors the dialog: these are locals of the dialog function, the handler is a closure over them
+    $was = @{ enabled = $false; address = '' }; $origAddr = ''
+    $ds = @{ tested = $false; addr = ''; result = $null; busy = $false; closed = $false; wait = $null }
+    $shown = New-Object System.Collections.ArrayList
+    $showResult = { param($kind, $txt) [void]$shown.Add("$kind|$txt") }.GetNewClosure()
+    $refresh = { [void]$ds.busy }.GetNewClosure()
+    $ta = [pscustomobject]@{ Text = '  Test.User@example.invalid ' } | Add-Member ScriptMethod Focus { $true } -PassThru
+    $ss = New-Object System.Security.SecureString; foreach ($ch in $fake.ToCharArray()) { $ss.AppendChar($ch) }
+    $pb = [pscustomobject]@{ SecurePassword = $ss } | Add-Member ScriptMethod Focus { $true } -PassThru
+    $h = ([scriptblock]::Create($text.Substring(1, $text.Length - 2))).GetNewClosure()
+    return @{ h = $h; ds = $ds; shown = $shown } }
+function Fire-Done($r) { $ds = 'not the dialog state'; $showResult = $null; & $global:pendingDone $r }   # another scope, like DispatcherTimer.FireTick
+$bt = Build-TestHandler $handlerText; $err = $null
+try { & $bt.h; Fire-Done @{ kind = 'ok'; unseen = 2 } } catch { $err = $_.Exception.Message }
+Check 'real Test handler: press Test, the check ends from a timer tick -> no error, busy cleared, result shown, Save allowed' (-not $err -and $bt.ds.busy -eq $false -and $bt.ds.tested -and $bt.ds.addr -eq 'Test.User@example.invalid' -and ($bt.shown -join ';') -match 'busy\|Testing.*;ok\|Signed in. 2 unread')
+Check 'real Test handler: the full typed address (trimmed) is what signs in' ($global:pendingUser -ceq 'Test.User@example.invalid')
+$bt = Build-TestHandler $handlerText; $err = $null
+try { & $bt.h; Fire-Done @{ kind = 'auth'; detail = 'NO' } } catch { $err = $_.Exception.Message }
+Check 'real Test handler: failed sign-in -> no error, busy cleared, red line, not tested' (-not $err -and $bt.ds.busy -eq $false -and -not $bt.ds.tested -and ($bt.shown -join ';') -match 'auth\|Couldn''t sign in')
+$old = $handlerText -replace '\$ds = \$ds; \$showResult = \$showResult; \$refresh = \$refresh', ''
+$bt = Build-TestHandler $old; $err = $null
+try { & $bt.h; Fire-Done @{ kind = 'ok'; unseen = 2 } } catch { $err = $_.Exception.Message }
+Check 'the same run reproduces the laptop error on the 632a4be handler' ($err -match "The property 'busy' cannot be found on this object")
+# --- full address (Charles types and edits it), validated as untrusted ---
+foreach ($a in 'cc@jartrek.net', 'First.Last@jartrek.net', 'a+b_c-d@mail.jartrek.net', ('a' * 64 + '@jartrek.net')) { Check "address ok: $a" (Test-MailAddress (Get-MailAddress " $a ")) }
+foreach ($bad in '', 'cc', '@example.invalid', 'cc@', 'cc@@example.invalid', 'c@c@example.invalid', 'c c@example.invalid', "cc@example.invalid`r`na2 LOGOUT", "cc`n@example.invalid", 'c"c@example.invalid', 'c\c@example.invalid', 'c(c)@example.invalid', 'c{1}@example.invalid', 'c*@example.invalid', 'c%@example.invalid', 'c]@example.invalid', "c`t@example.invalid", ('c' + [char]0 + '@example.invalid'), ('c' + [char]0xE9 + '@example.invalid'), 'cc@example', ('a' * 65 + '@example.invalid'), ('a@' + ('b' * 250) + '.net')) {
+    Check ("address refused: " + ($bad -replace "`r", '\r' -replace "`n", '\n' -replace "`t", '\t' -replace [char]0, '\0')) (-not (Test-MailAddress (Get-MailAddress $bad))) }
+Check 'Get-MailAddress only trims (no hidden @jartrek.net)' ((Get-MailAddress ' cc ') -ceq 'cc')
+Check 'address migration: saved user part only -> full address; full address kept' ((ConvertTo-MailSettings @{ enabled = $true; address = 'cc' }).address -ceq 'cc@jartrek.net' -and (ConvertTo-MailSettings @{ enabled = $true; address = 'x@other.invalid' }).address -ceq 'x@other.invalid' -and -not (ConvertTo-MailSettings @{ enabled = $true; address = 'c c' }).enabled)
+$sd2 = $sdAst.Extent.Text
+Check 'dialog: no locked suffix; the field starts as editable "@jartrek.net", caret at the start' ($sd2 -notmatch '\$suffix' -and $sd2.Contains('$ta.Text = if ($was.address) { [string]$was.address } else { $global:MailDomain }') -and $sd2.Contains('$ta.CaretIndex = 0'))
+Check 'server unchanged: mail.jartrek.net:993, Windows certificate check, no callback' ($src -match "mail\.jartrek\.net" -and $src -match '993' -and $src -notmatch 'RemoteCertificateValidationCallback\s*=|ServerCertificateValidationCallback')
+# --- recheck interval ---
+foreach ($c in @(@($null, 3), @('', 3), @('x', 3), @($true, 3), @(0, 3), @(1, 3), @(1.9, 3), @(-5, 3), @(2, 2), @(3, 3), @('5', 5), @(7, 7), @(30, 30), @(60, 60), @(61, 60), @(1e9, 60), @('NaN', 3), @('Infinity', 3))) {
+    Check ("interval {0} -> {1}" -f $(if ($null -eq $c[0]) { 'null' } else { $c[0] }), $c[1]) ((Get-MailInterval $c[0]) -eq $c[1]) }
+Check 'interval choices are 2, 3, 5, 10, 15, 30; default 3' (($global:MailIntervals -join ',') -eq '2,3,5,10,15,30' -and (ConvertTo-MailSettings @{ enabled = $false }).interval -eq 3)
+$s0 = New-MailState
+Check 'timer uses the saved interval (2 min -> 120 s, 10 -> 600 s, hand-edited 1 -> 180 s)' ((Get-MailNextDelaySec $s0 2) -eq 120 -and (Get-MailNextDelaySec $s0 10) -eq 600 -and (Get-MailNextDelaySec $s0 1) -eq 180 -and (Get-MailNextDelaySec $s0) -eq 180)
+$s0.fails = 2; Check 'network backoff never sooner than the interval' ((Get-MailNextDelaySec $s0 3) -eq 360 -and (Get-MailNextDelaySec $s0 30) -eq 1800)
+$js = Get-MailSettingsJson @{ enabled = $true; address = 'test.user@example.invalid'; style = 'flash'; interval = 5; password = $fake }
+Check 'interval is stored in the non-secret settings; nothing else survives (no password)' ($js -ceq '{"enabled":true,"address":"test.user@example.invalid","style":"flash","interval":5}')
+Check 'Save applies the interval at once (no restart)' ($sd2.Contains('interval = $iv }') -and $sd2.Contains('Set-MailTimer (Get-MailNextDelaySec $global:mail.state $set.interval)') -and $sd2.Contains('Start-MailPolling -firstSec (60 * $set.interval)') -and $src.Contains('Set-MailTimer (Get-MailNextDelaySec $m.state $m.set.interval)'))
+# --- the password never reaches the log (failing sign-in path) ---
+$global:logPath = Join-Path ([IO.Path]::GetTempPath()) ('bl-maillog-' + [guid]::NewGuid() + '.log')
+function global:Get-Date { param([string]$Format) '2026-10-29T16:00:00' }   # the log formats only
+$m = New-Mock @('* OK ready', "a1 NO [AUTHENTICATIONFAILED] wrong password $fake")
+$r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray()
+Add-Content -LiteralPath $global:logPath -Value (Format-MailLogLine $r)
+$m = New-Mock @('* OK ready'); $m.write = { param([byte[]]$b) throw ('socket closed while sending ' + [Text.Encoding]::ASCII.GetString($b).Length + ' bytes') }
+$r2 = $null; try { $r2 = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray() } catch { Write-LauncherError 'while running' $_ }
+if ($r2) { Add-Content -LiteralPath $global:logPath -Value (Format-MailLogLine $r2) }
+try { [void](Get-ImapLoginBytes 'test.user@example.invalid' ("$fake`r`nx").ToCharArray()) } catch { Write-LauncherError 'while running' $_ }
+Remove-Item Function:\Get-Date
+$logText = [IO.File]::ReadAllText($global:logPath); Remove-Item -LiteralPath $global:logPath -Force
+Check 'failing sign-ins: the error log has lines, and never the password (server echo, socket error, bad characters)' ($logText.Length -gt 0 -and $logText -notmatch [regex]::Escape($fake) -and $r.kind -eq 'auth')
+Check 'password never in buttons.json, a command line or the settings JSON (source)' ($src -notmatch 'ArgumentList[^\r\n]*(SecurePassword|\$pass\b|\$secure)' -and $src -notmatch 'Set-Prop \$global:cfg[^\r\n]*(password|secret)')
 ""
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

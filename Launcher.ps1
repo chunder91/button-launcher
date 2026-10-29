@@ -2688,7 +2688,7 @@ function global:Show-VncPicker($btn) {
         if ($f) { $ui.state.favorites.Remove($f) }; $ui.saveFavs.Invoke() }.GetNewClosure()
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure()); $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
     $bScan.Add_Click({ Start-VncScan $ui -Rescan }.GetNewClosure())
-    $bMore.Add_Click({ $m = New-VncRowMenu $ui $false; $m.PlacementTarget = $bMore; $m.Placement = 'Top'; $m.VerticalOffset = -4   # Kern: above the row, right edges aligned, 4 px gap
+    $bMore.Add_Click({ $bMore = $bMore; $m = New-VncRowMenu $ui $false;   # local copy so the Opened closure below can see it (GetNewClosure copies locals only) $m.PlacementTarget = $bMore; $m.Placement = 'Top'; $m.VerticalOffset = -4   # Kern: above the row, right edges aligned, 4 px gap
         $m.Add_Opened({ $m.HorizontalOffset = $bMore.ActualWidth - $m.ActualWidth }.GetNewClosure()); $m.IsOpen = $true }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has }.GetNewClosure())
     $lv.Add_MouseDoubleClick({ if ($lv.SelectedItem) { $ui.go.Invoke($true) } }.GetNewClosure())
@@ -2899,9 +2899,10 @@ function global:Get-MailLostResult($sync, [string]$why) {   # M15-I1: a check cu
     return @{ kind = 'net'; unseen = -1; detail = $why }
 }
 function global:Step-MailResume($s) { $s.epoch = [int]$s.epoch + 1 }   # a check that started before sleep is ignored when it ends
-function global:Get-MailNextDelaySec($s) {   # -1 = stopped (sign-in failed: never retried on a timer); network errors back off 3 -> 6 -> 12 -> 15 min
+function global:Get-MailNextDelaySec($s, $minutes = 3) {   # -1 = stopped (sign-in failed: never retried on a timer); the saved interval, network errors back off to 6 -> 12 -> 15 min (never sooner than the interval)
     if ($s.stopped) { return -1 }
-    switch ([int]$s.fails) { 0 { return 180 } 1 { return 180 } 2 { return 360 } 3 { return 720 } default { return 900 } }
+    $base = 60 * (Get-MailInterval $minutes)
+    switch ([int]$s.fails) { 0 { return $base } 1 { return $base } 2 { return [Math]::Max($base, 360) } 3 { return [Math]::Max($base, 720) } default { return [Math]::Max($base, 900) } }
 }
 function global:Get-MailBadgeText([int]$n) { if ($n -le 0) { '' } elseif ($n -ge 100) { '99+' } else { [string]$n } }
 function global:Get-MailBadgeWidth([string]$t) { switch ($t.Length) { 0 { 18 } 1 { 18 } 2 { 24 } default { 30 } } }   # Kern: fixed width per bucket
@@ -2956,23 +2957,34 @@ function global:Format-MailLogLine($r) {   # fixed words only: never the address
     $d = [string]$r.detail; if ($d -cnotin $global:MailLogDetails) { $d = '' }
     return ('email count: {0}{1}' -f $k, $(if ($d) { " ($d)" } else { '' }))
 }
-function global:Get-MailAddress([string]$text) {   # 'cc' -> 'cc@jartrek.net'; a full address is kept as typed
-    $t = ([string]$text).Trim(); if (-not $t) { return '' }
-    if ($t.Contains('@')) { return $t }; return $t + $global:MailDomain
+function global:Get-MailAddress([string]$text) {   # v1.4.0 laptop test: Charles types the full address; only trimmed, never completed for him
+    return ([string]$text).Trim()
 }
-function global:Test-MailAddress([string]$a) { $a.Length -le 254 -and $a -cmatch '^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+\z' }
+function global:Test-MailAddress([string]$a) {   # untrusted: <= 254, one '@', no whitespace/control/quotes/backslash or IMAP specials ( ) { } % * ] ; plain ASCII
+    if ([string]::IsNullOrEmpty($a) -or $a.Length -gt 254) { return $false }
+    return ($a -cmatch '^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63})+\z' -and ($a.Split('@').Count -eq 2))
+}
+function global:ConvertTo-MailFullAddress([string]$a) {   # migration: a saved user part only ('cc') becomes 'cc@jartrek.net'
+    $t = ([string]$a).Trim(); if ($t -cmatch '^[A-Za-z0-9._+-]{1,64}\z') { return $t + $global:MailDomain }; return $t
+}
+$global:MailIntervals = @(2, 3, 5, 10, 15, 30)   # minutes offered in Setup; the saved value is clamped by Get-MailInterval
+function global:Get-MailInterval($v) {   # minutes: numeric 2..60 kept (hand-edited values too), above 60 -> 60, under 2 / missing / not a number -> 3
+    $n = 0.0
+    if ($null -eq $v -or $v -is [bool] -or -not [double]::TryParse([string]$v, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$n) -or [double]::IsNaN($n) -or [double]::IsInfinity($n)) { return 3 }
+    $n = [Math]::Floor($n); if ($n -lt 2) { return 3 }; if ($n -gt 60) { return 60 }; return [int]$n
+}
 function global:Test-MailTile($btn) { (Get-ButtonType $btn) -eq 'website' -and ([string]$btn.target).Trim() -match '^(?i)mailto:' }   # the Email tile, by what it opens
 
 # ---- per-Windows-user settings and login (never in buttons.json, the log, tooltips or a command line) ----
 function global:Get-MailDir { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ButtonLauncher' }
 function global:Get-MailSettingsPath { Join-Path (Get-MailDir) 'email-count.json' }
 function global:Get-MailSecretPath { Join-Path (Get-MailDir) 'email-count.dat' }
-function global:ConvertTo-MailSettings($o) {   # only these three keys survive, validated
+function global:ConvertTo-MailSettings($o) {   # only these four keys survive, validated (never the password: that is only in the DPAPI file)
     $style = [string]$o.style; if ($style -notin 'pulse', 'flash', 'badge') { $style = 'flash' }   # Charles: Flash by default
-    $addr = [string]$o.address; if (-not (Test-MailAddress $addr)) { $addr = '' }
-    return @{ enabled = ([bool]$o.enabled -and [bool]$addr); address = $addr; style = $style }
+    $addr = ConvertTo-MailFullAddress ([string]$o.address); if (-not (Test-MailAddress $addr)) { $addr = '' }
+    return @{ enabled = ([bool]$o.enabled -and [bool]$addr); address = $addr; style = $style; interval = (Get-MailInterval $o.interval) }
 }
-function global:Get-MailSettingsJson($set) { $c = ConvertTo-MailSettings $set; return ([pscustomobject]@{ enabled = $c.enabled; address = $c.address; style = $c.style } | ConvertTo-Json -Compress) }
+function global:Get-MailSettingsJson($set) { $c = ConvertTo-MailSettings $set; return ([pscustomobject]@{ enabled = $c.enabled; address = $c.address; style = $c.style; interval = $c.interval } | ConvertTo-Json -Compress) }
 function global:Read-MailSettings {
     $p = Get-MailSettingsPath
     try { if (Test-Path -LiteralPath $p) { return (ConvertTo-MailSettings (Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json)) } } catch {}
@@ -3059,7 +3071,7 @@ function global:Complete-MailPoll($r) {
     if ($out.ignored) { if (-not $m.state.stopped) { Set-MailTimer 10 }; return }
     if ($r.kind -ne 'ok') { try { Add-Content -LiteralPath $global:logPath -Value ('{0}  {1}' -f (Get-Date -Format s), (Format-MailLogLine $r)) -Encoding UTF8 } catch {} }
     Update-MailUi $out.grew
-    Set-MailTimer (Get-MailNextDelaySec $m.state)
+    Set-MailTimer (Get-MailNextDelaySec $m.state $m.set.interval)
 }
 function global:Start-MailFollowUp {   # Squint: check again 60 s and 3 min after the Email tile opens email
     $m = $global:mail; if (-not $m -or -not $m.set.enabled -or $m.state.stopped) { return }
@@ -3265,13 +3277,11 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
     $intro = New-D2Label 'Uses your Jartrek email, the same login as webmail.' '#B4B4BC' 13; $intro.Margin = '0,0,0,16'; [void]$acct.Children.Add($intro)
     [void]$acct.Children.Add((New-D2Label 'Email address'))
     $ta = New-Object System.Windows.Controls.TextBox; $ta.MaxLength = 254
-    if ($was.address) { $ta.Text = $(if (([string]$was.address).EndsWith($global:MailDomain, [StringComparison]::OrdinalIgnoreCase)) { ([string]$was.address).Substring(0, ([string]$was.address).Length - $global:MailDomain.Length) } else { [string]$was.address }) }
+    $ta.Text = if ($was.address) { [string]$was.address } else { $global:MailDomain }   # Charles types the whole address; '@jartrek.net' is only an editable start
+    [System.Windows.Automation.AutomationProperties]::SetName($ta, 'Email address')
     $fa = New-D2Field $ta; [void]$acct.Children.Add($fa)
-    $suffix = New-Object System.Windows.Controls.TextBlock; $suffix.Text = $global:MailDomain; $suffix.FontSize = 14; $suffix.Foreground = Brush '#B4B4BC'
-    $suffix.HorizontalAlignment = 'Right'; $suffix.VerticalAlignment = 'Center'; $suffix.Margin = '0,0,8,0'; $suffix.IsHitTestVisible = $false
-    $ph = New-Object System.Windows.Controls.TextBlock; $ph.Text = 'name'; $ph.FontSize = 14; $ph.Foreground = Brush '#9A9AA4'; $ph.VerticalAlignment = 'Center'; $ph.Margin = '10,0,0,0'; $ph.IsHitTestVisible = $false
-    [void]$fa.Child.Children.Add($ph); [void]$fa.Child.Children.Add($suffix)
-    $ta.Padding = '8,0,96,0'
+    $ph = New-Object System.Windows.Controls.TextBlock; $ph.Text = 'name@jartrek.net'; $ph.FontSize = 14; $ph.Foreground = Brush '#9A9AA4'; $ph.VerticalAlignment = 'Center'; $ph.Margin = '10,0,0,0'; $ph.IsHitTestVisible = $false
+    [void]$fa.Child.Children.Add($ph)
     [void]$acct.Children.Add((New-D2Label 'Password'))
     $pb = New-Object System.Windows.Controls.PasswordBox; $pb.MaxLength = 256
     $fp = New-D2Field $pb; [void]$acct.Children.Add($fp)
@@ -3293,6 +3303,12 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $rb = New-Object System.Windows.Controls.RadioButton; $rb.GroupName = 'mailStyle'; $rb.Content = $o[1]; if ($s2) { $rb.Style = $s2 } else { $rb.Foreground = Brush '#FFFFFF'; $rb.FontSize = 14; $rb.Margin = '0,4' }
         $rb.IsChecked = ([string]$was.style -eq $o[0]); $radios[$o[0]] = $rb; [void]$acct.Children.Add($rb) }
     if (-not ($radios.Values | Where-Object { $_.IsChecked })) { $radios['flash'].IsChecked = $true }   # Charles: Flash by default
+    $h3 = New-D2Label 'Check for new email every:' '#FFFFFF' 14; $h3.FontWeight = [System.Windows.FontWeights]::SemiBold; $h3.Margin = '0,16,0,6'; [void]$acct.Children.Add($h3)
+    $cbI = New-Object System.Windows.Controls.ComboBox; $cbI.Width = 140; $cbI.HorizontalAlignment = 'Left'; $cbI.FontSize = 14
+    [System.Windows.Automation.AutomationProperties]::SetName($cbI, 'Check for new email every')
+    $curI = Get-MailInterval $was.interval; $ivals = @($global:MailIntervals); if ($ivals -notcontains $curI) { $ivals = @($ivals + $curI | Sort-Object) }   # a hand-edited value (e.g. 7) still shows
+    foreach ($mi in $ivals) { [void]$cbI.Items.Add(('{0} minutes' -f $mi)) }
+    $cbI.SelectedIndex = [array]::IndexOf($ivals, $curI); [void]$acct.Children.Add($cbI)
     $rline = New-Object System.Windows.Controls.DockPanel; $rline.Margin = '0,16,0,8'; $rline.MinHeight = 20; $rline.Visibility = 'Collapsed'
     $ri = New-Object System.Windows.Controls.TextBlock; $ri.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe MDL2 Assets'; $ri.FontSize = 16; $ri.Margin = '0,0,8,0'; $ri.VerticalAlignment = 'Top'
     $rt = New-Object System.Windows.Controls.TextBlock; $rt.FontSize = 13; $rt.TextWrapping = 'Wrap'
@@ -3304,15 +3320,14 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
     $bCancel = New-D2Button 'Cancel' 'Chip' $dlg; $bCancel.IsCancel = $true
     foreach ($b in @($bTest, $bSave, $bCancel)) { [void]$row.Children.Add($b) }
     [void]$sp.Children.Add($row)
-    $ds = @{ tested = $false; addr = ''; result = $null; busy = $false; closed = $false; wait = $null }
+    $ds = @{ tested = $false; addr = ''; result = $null; busy = $false; closed = $false; wait = $null; ivals = $ivals }
     $origAddr = [string]$was.address
     $refresh = {
         $on = [bool]$cb.IsChecked; $acct.IsEnabled = $on; $acct.Opacity = $(if ($on) { 1.0 } else { 0.45 }); $bTest.IsEnabled = $on -and -not $ds.busy
         $ph.Visibility = if ($ta.Text) { 'Collapsed' } else { 'Visible' }
-        $suffix.Visibility = if ($ta.Text.Contains('@')) { 'Collapsed' } else { 'Visible' }
         $pph.Visibility = if ($pb.SecurePassword.Length -gt 0) { 'Collapsed' } else { 'Visible' }
         $addr = Get-MailAddress $ta.Text
-        $styleOnly = [bool]$was.enabled -and $addr -eq $origAddr -and $pb.SecurePassword.Length -eq 0
+        $styleOnly = [bool]$was.enabled -and $addr -eq $origAddr -and $pb.SecurePassword.Length -eq 0   # style or interval only: no new Test needed
         $ok = if ($on) { ($ds.tested -and $ds.addr -eq $addr) -or $styleOnly } else { [bool]$was.enabled }
         $bSave.IsEnabled = $ok -and -not $ds.busy; $bSave.Opacity = $(if ($bSave.IsEnabled) { 1.0 } else { 0.45 })
         $bSave.IsDefault = $ok; $bTest.IsDefault = -not $ok }.GetNewClosure()   # Squint: Enter = Test until a Test passes, then Save
@@ -3327,8 +3342,11 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
     $ta.Add_TextChanged({ $ds.tested = $false; & $refresh }.GetNewClosure())
     $pb.Add_PasswordChanged({ $ds.tested = $false; $pErr.Visibility = 'Hidden'; & $refresh }.GetNewClosure())
     $bTest.Add_Click({
+        # 4:38 PM laptop bug: GetNewClosure copies only LOCAL variables, so $onDone and the wait timer below (closures made in here)
+        # never saw $ds/$showResult/$refresh and hit "$null.busy = ...". Re-bind them as locals of this handler first.
+        $ds = $ds; $showResult = $showResult; $refresh = $refresh
         $addr = Get-MailAddress $ta.Text
-        if (-not (Test-MailAddress $addr)) { & $showResult 'auth' 'Type your email address first.'; [void]$ta.Focus(); return }
+        if (-not (Test-MailAddress $addr)) { & $showResult 'auth' 'Type your full email address, like name@jartrek.net.'; [void]$ta.Focus(); return }
         $sec = $null
         if ($pb.SecurePassword.Length -gt 0) { $sec = $pb.SecurePassword }                       # a copy; disposed when the check ends
         elseif ([bool]$was.enabled -and $addr -eq $origAddr) { $sec = Read-MailSecret }
@@ -3350,17 +3368,19 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $addr = Get-MailAddress $ta.Text
         $style = 'flash'; foreach ($k in @($radios.Keys)) { if ($radios[$k].IsChecked) { $style = $k } }
         if ($pb.SecurePassword.Length -gt 0) { $ss = $pb.SecurePassword; try { Save-MailSecret $ss } finally { $ss.Dispose() } }
-        $set = ConvertTo-MailSettings @{ enabled = $true; address = $addr; style = $style }
+        $iv = Get-MailInterval $(if ($cbI.SelectedIndex -ge 0) { $ds.ivals[$cbI.SelectedIndex] } else { 3 })
+        $set = ConvertTo-MailSettings @{ enabled = $true; address = $addr; style = $style; interval = $iv }
         Save-MailSettings $set
         $global:mail.set = $set
         if ($ds.tested -and $ds.result) {   # the good Test is this poll: no second sign-in right away; a stopped count starts again
             Stop-MailRunObjects $global:mailRun; $global:mail.state = Get-MailFreshState $global:mail.state; $ds.result.epoch = $global:mail.state.epoch   # CC M1
-            [void](Update-MailState $global:mail.state $ds.result (Get-Date)); Start-MailPolling -firstSec 180 }
-        else { Update-MailUi $false; if (-not $global:mailTimer -or -not $global:mailTimer.IsEnabled) { if (-not $global:mail.state.stopped) { Start-MailPolling } } }
+            [void](Update-MailState $global:mail.state $ds.result (Get-Date)); Start-MailPolling -firstSec (60 * $set.interval) }
+        else { Update-MailUi $false   # the new interval applies now, without a restart
+            if (-not $global:mail.state.stopped) { if (-not $global:mailTimer -or -not $global:mailTimer.IsEnabled) { Start-MailPolling } elseif ([int]$was.interval -ne [int]$set.interval) { Set-MailTimer (Get-MailNextDelaySec $global:mail.state $set.interval) } } }
         $pb.Clear(); $d.Close() }.GetNewClosure())
     $bCancel.Add_Click({ $pb.Clear(); $d.Close() }.GetNewClosure())
     $d.Add_Closed({ $ds.closed = $true; if ($ds.wait) { $ds.wait.Stop() }; $pb.Clear() }.GetNewClosure())
-    $d.Add_ContentRendered({ if ($cb.IsChecked) { [void]$ta.Focus() } else { [void]$cb.Focus() } }.GetNewClosure())
+    $d.Add_ContentRendered({ if ($cb.IsChecked) { [void]$ta.Focus(); $ta.CaretIndex = 0 } else { [void]$cb.Focus() } }.GetNewClosure())   # caret before '@jartrek.net' so typing the name just works
     & $refresh
     [void]$d.ShowDialog()
 }
