@@ -1,6 +1,6 @@
 # Button Launcher release notes
 
-## v1.3.0: find registers automatically, new 3D look
+## v1.3.0: find computers you can view automatically, new 3D look
 
 Pending release (build of 2026-10-29). Includes everything in v1.2.0. ClaudeCode and Lockjaw passed; Kern's and Squint's fixes are in. Waiting on Charles's OK and a test on a real Windows PC.
 
@@ -9,14 +9,14 @@ Pending release (build of 2026-10-29). Includes everything in v1.2.0. ClaudeCode
 - **Glow on hover.** A button lifts and glows in its own color when you point at it, and presses in when you click. It's all cheap drawing, so the launcher still uses next to no CPU when idle.
 - **Restarts look the same as before:** dark, with the red outline, at the bottom. Restart Computer still asks first.
 - Your own button colors still work; they get the same 3D treatment.
-- **Register list is clearer.** Before any scan it says "Not scanned yet" instead of "No registers found". The scan question is in plain words, and Rescan defaults to Yes. Add a register is one small window (address, optional name); Cancel adds nothing.
+- **Computer list is clearer.** Before any scan it says "Not scanned yet" instead of "No computers found". The scan question is in plain words, and Rescan defaults to Yes. Add a computer is one small window (address, optional name); Cancel adds nothing.
 
-### Find registers
+### Find computers you can view
 
-- **View Register finds the registers.** Clicking it opens a list of PCs on this network that answer as UltraVNC servers. The last list shows straight away; Rescan (F5) looks again. It only looks at this PC's own private network (normally the 254 addresses next to it), gently, and only when the list opens and is over a day old, or when you press Rescan.
+- **View Register finds computers you can view.** Clicking it opens a list of PCs on this network that answer as UltraVNC servers. The last list shows straight away; Rescan (F5) looks again. It only looks at this PC's own private network (normally the 254 addresses next to it), gently, and only when the list opens and is over a day old, or when you press Rescan.
 - **View only or Interact.** Enter or double-click is View only. Both open the UltraVNC Viewer scaled to fit your screen.
-- **Names and pins.** Name a register (e.g. "Register 1") to pin it to the top, or add one by hand.
-- **View-only password, saved once.** The first View only asks for the shared view-only password (or "No password"). It's saved for this Windows user only, encrypted by Windows. Change or clear it with the picker's "View-only password..." button or Setup > View-only register password. Interact always asks for its own password.
+- **Names and pins.** Name a computer (e.g. "Register 1") to pin it to the top, or add one by hand.
+- **View-only password, saved once.** The first View only asks for the shared view-only password (or "No password"). It's saved for this Windows user only, encrypted by Windows. Change or clear it with Setup > View-only password (for viewing computers)... Interact always asks for its own password.
 - Old setups: a View Register button that already had an address in its arguments keeps working the old way.
 
 ## v1.2.0 (modern-b): new modern look

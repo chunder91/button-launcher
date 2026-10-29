@@ -1044,7 +1044,7 @@ function global:Panel-Menu($p, $menu) {
     [void]$hs.Children.Add($h1); [void]$hs.Children.Add($h2); $setup.Header = $hs
     [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
     if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" }) }   # installed copies ship without the builder
-    [void](Add-MenuItem $setup 'View-only register password...' { [void](Show-VncPasswordDialog $null) })
+    [void](Add-MenuItem $setup 'View-only password (for viewing computers)...' { [void](Show-VncPasswordDialog $null) })
     [void](Add-MenuItem $setup 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
     $lay = New-Object System.Windows.Controls.MenuItem; $lay.Header = 'Layout'
     foreach ($opt in @(@('two', 'Two panels'), @('single', 'One panel, docked to the edge'))) { $val = $opt[0]
@@ -2052,7 +2052,7 @@ function global:New-D2Button([string]$text, [string]$style, $dlg) {
     return $b
 }
 function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, Address and Name (optional). Cancel adds nothing. Returns @{ addr; name } or $null.
-    $dlg = New-D2Dialog 'Add a register' $owner 380
+    $dlg = New-D2Dialog 'Add a computer' $owner 380
     [void]$dlg.body.Children.Add((New-D2Label 'Address (IP or name, optionally :port)'))
     $tA = New-Object System.Windows.Controls.TextBox; $tA.MaxLength = 260; [void]$dlg.body.Children.Add((New-D2Field $tA))
     [void]$dlg.body.Children.Add((New-D2Label 'Name (optional, e.g. Register 1). Leave empty to name it later with F2.'))
@@ -2063,7 +2063,7 @@ function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, A
     $bOk = New-D2Button 'Add' 'Green' $dlg; $bOk.IsDefault = $true
     $bNo = New-D2Button 'Cancel' 'Chip' $dlg; $bNo.IsCancel = $true
     $bOk.Add_Click({
-        if (-not $tA.Text.Trim()) { $err.Text = "Type the register's address first."; $err.Visibility = 'Visible'; [void]$tA.Focus(); return }
+        if (-not $tA.Text.Trim()) { $err.Text = "Type the computer's address first."; $err.Visibility = 'Visible'; [void]$tA.Focus(); return }
         $res.out = @{ addr = $tA.Text.Trim(); name = $tN.Text.Trim() }; $dlg.win.Close() }.GetNewClosure())
     $bNo.Add_Click({ $res.out = $null; $dlg.win.Close() }.GetNewClosure())
     [void]$row.Children.Add($bOk); [void]$row.Children.Add($bNo); [void]$dlg.body.Children.Add($row)
@@ -2074,7 +2074,7 @@ function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, A
 function global:Show-VncPasswordDialog($owner) {   # set, replace or clear the shared view-only password; returns $true when one is saved
     $dlg = New-D2Dialog 'View-only password' $owner 380; $d = $dlg.win; $sp = $dlg.body   # Kern 6: D2 dialog
     $t = New-D2Label ''
-    $t.Text = "If the computers you view have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). If View only can't connect later, change it in Setup > View-only register password..."
+    $t.Text = "If the computers you view have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). If View only can't connect later, change it in Setup > View-only password (for viewing computers)..."
     [void]$sp.Children.Add($t)
     $st = New-Object System.Windows.Controls.TextBlock; $st.Margin = '0,8,0,0'; $st.Foreground = Brush '#A0A0A0'; $st.FontSize = 12; $st.TextWrapping = 'Wrap'
     $st.Text = if (Test-VncSecret) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only connects straight through.' }
@@ -2358,7 +2358,7 @@ $global:VncPickerXaml = @'
   </Window.Resources>
   <Grid Margin="20,14,20,16">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="2"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <TextBlock Grid.Row="0" Text="Pick a register. View only to watch, Interact to take control." FontSize="13" Foreground="#A0A0A0" Margin="0,0,0,12"/>
+    <TextBlock Grid.Row="0" Text="Pick a computer. View only to watch, Interact to take control." FontSize="13" Foreground="#A0A0A0" Margin="0,0,0,12"/>
     <Border Grid.Row="1" CornerRadius="10" Background="#2E000000" BorderBrush="#1FFFFFFF" BorderThickness="1">
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition Height="*"/></Grid.RowDefinitions>
@@ -2401,10 +2401,10 @@ $global:VncPickerXaml = @'
     <ProgressBar x:Name="Busy" Grid.Row="2" IsIndeterminate="False" Height="2" Margin="10,0" Foreground="#0E7A4B" Background="Transparent" BorderThickness="0" Visibility="Hidden"/>
     <Grid Grid.Row="3" Margin="0,12,0,0">
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <Button x:Name="View" Grid.Column="0" Style="{StaticResource Green}" Content="View only" MinWidth="104" IsDefault="True" ToolTip="Watch this register. Nothing you do reaches it. (Enter)"/>
-      <Button x:Name="Interact" Grid.Column="1" Style="{StaticResource Blue}" Content="Interact" MinWidth="92" Margin="8,0,0,0" ToolTip="Take control of this register's mouse and keyboard. Asks for the full password. (Ctrl+Enter)"/>
+      <Button x:Name="View" Grid.Column="0" Style="{StaticResource Green}" Content="View only" MinWidth="104" IsDefault="True" ToolTip="Watch this computer. Nothing you do reaches it. (Enter)"/>
+      <Button x:Name="Interact" Grid.Column="1" Style="{StaticResource Blue}" Content="Interact" MinWidth="92" Margin="8,0,0,0" ToolTip="Take control of this computer's mouse and keyboard. Asks for the full password. (Ctrl+Enter)"/>
       <Button x:Name="Rescan" Grid.Column="3" Style="{StaticResource Chip}" Content="Rescan" MinWidth="84" ToolTip="Look for computers you can view on this network again (F5)"/>
-      <Button x:Name="Add" Grid.Column="4" Style="{StaticResource Chip}" Content="Add..." MinWidth="72" Margin="8,0,0,0" ToolTip="Type a register's address"/>
+      <Button x:Name="Add" Grid.Column="4" Style="{StaticResource Chip}" Content="Add..." MinWidth="72" Margin="8,0,0,0" ToolTip="Type a computer's address"/>
       <Button x:Name="More" Grid.Column="5" Style="{StaticResource Chip}" Width="36" Padding="0" Margin="8,0,0,0" ToolTip="More actions" AutomationProperties.Name="More actions">
         <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="16"/>
       </Button>
@@ -2439,7 +2439,7 @@ function global:Show-VncPicker($btn) {
     $ui.ageText = Get-VncAgeText $cache.time ([datetime]::UtcNow); $ui.stale = (Test-VncCacheStale $cache ([datetime]::UtcNow)) -and $cache.time -gt [datetime]::MinValue
     try { $w = [Windows.Markup.XamlReader]::Parse($global:VncPickerXaml) }
     catch { Write-LauncherLog ('VNC picker window could not load: ' + $_.Exception.Message)
-            [System.Windows.MessageBox]::Show("The register picker couldn't open.`n`n" + $_.Exception.Message + "`n`nDetails are in launcher-error.log.", 'View Register', 'OK', 'Error') | Out-Null; return }
+            [System.Windows.MessageBox]::Show("The computer finder couldn't open.`n`n" + $_.Exception.Message + "`n`nDetails are in launcher-error.log.", 'View Register', 'OK', 'Error') | Out-Null; return }
     $w.FontFamily = $global:UiFont
     $ui.win = $w
     $lv = $w.FindName('List'); $status = $w.FindName('Status'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
@@ -2451,9 +2451,9 @@ function global:Show-VncPicker($btn) {
         try { $pe = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($status); if ($pe) { $pe.RaiseAutomationEvent('LiveRegionChanged') } } catch {} }.GetNewClosure()
     $ui.busy = [Action[bool]]{ param($on) $busyBar.IsIndeterminate = $on; $busyBar.Visibility = $(if ($on) { 'Visible' } else { 'Hidden' }); $bScan.IsEnabled = -not $on }.GetNewClosure()
     $ui.showEmpty = [Action[string]]{ param($kind)
-        if ($kind -eq 'nonet') { $eT.Text = "This PC isn't connected to a local network we can scan (Wi-Fi or cable)."; $eB.Text = "Connect to the shop Wi-Fi or cable, then press Rescan (F5). Or use Add... to type a register's address." }
+        if ($kind -eq 'nonet') { $eT.Text = "This PC isn't connected to a local network we can scan (Wi-Fi or cable)."; $eB.Text = "Connect to Wi-Fi or a network cable, then press Rescan (F5). Or use Add... to type a computer's address." }
         elseif ($kind -eq 'notscanned') { $eT.Text = 'Not scanned yet.'; $eB.Text = 'Look for computers you can view on this network? Press Rescan (F5), or use Add... to type an address.' }   # Squint Major
-        else { $eT.Text = 'No computers found.'; $eB.Text = 'Check the register is turned on and on the same network as this PC, then press Rescan (F5). Or use Add... to type its address.' }
+        else { $eT.Text = 'No computers found.'; $eB.Text = 'Check the computer is turned on and on the same network as this PC, then press Rescan (F5). Or use Add... to type its address.' }
         if ($lv.Items.Count -eq 0) { $empty.Visibility = 'Visible'; [void]$bAdd.Focus() } }.GetNewClosure()
     $ui.refresh = [Action]{
         $sel = $lv.SelectedItem; $lv.Items.Clear()
@@ -2468,14 +2468,14 @@ function global:Show-VncPicker($btn) {
     }.GetNewClosure()
     $ui.timer = New-Object System.Windows.Threading.DispatcherTimer; $ui.timer.Interval = [TimeSpan]::FromMilliseconds(200)
     $ui.timer.Add_Tick({ Step-VncScan $ui }.GetNewClosure())
-    $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only register password...") }.GetNewClosure()
+    $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only password (for viewing computers)...") }.GetNewClosure()
     $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }
         if ($vo -and (Test-VncSecret) -and -not (Test-VncUsePassword $s.row $true)) { $ui.setStatus.Invoke('The saved view-only password is only sent to computers found in this scan. The viewer will ask for it; press F5 first to use the saved one.') }
         [void](Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw) }.GetNewClosure()
     $ui.saveFavs = [Action]{ Save-VncFavorites $global:cfg $ui.state.favorites $ui.state.invalid; Save-Config; $ui.refresh.Invoke() }.GetNewClosure()
     $ui.rename = [Action]{ $s = $lv.SelectedItem; if (-not $s) { return }
         $old = [string]$s.row.name
-        $n = [Microsoft.VisualBasic.Interaction]::InputBox('Name for this register (e.g. Register 1). Leave it empty to clear the name.', 'Rename', $old)
+        $n = [Microsoft.VisualBasic.Interaction]::InputBox('Name for this computer (e.g. Register 1). Leave it empty to clear the name.', 'Rename', $old)
         if ($n -eq '') {   # Cancel and an empty OK both return '': ask before clearing
             if (-not $old -or [System.Windows.MessageBox]::Show(("Clear the name ""{0}""?" -f (Get-VncDisplayName $old 40)), 'Rename', 'YesNo', 'Question', 'No') -ne 'Yes') { return } }
         [void](Set-VncFavorite $ui.state.favorites $s.row.host $s.row.port $n $null); $ui.saveFavs.Invoke() }.GetNewClosure()
@@ -2512,7 +2512,7 @@ function global:Show-VncPicker($btn) {
         $in = Show-VncAddDialog $ui.win
         if (-not $in) { return }   # Squint 4: Cancel adds nothing
         $ep = ConvertTo-VncEndpoint $in.addr $ui.state.port
-        if (-not $ep) { [System.Windows.MessageBox]::Show("That isn't a valid address. Use an IP like 192.168.1.20 or a name like REG1, optionally with :port.", 'Add a register') | Out-Null; return }
+        if (-not $ep) { [System.Windows.MessageBox]::Show("That isn't a valid address. Use an IP like 192.168.1.20 or a name like REG1, optionally with :port.", 'Add a computer') | Out-Null; return }
         $n = $in.name
         [void](Set-VncFavorite $ui.state.favorites $ep.host $ep.port $n $null); $ui.saveFavs.Invoke() }.GetNewClosure())
     # N1: -All cleanup after close. Workers were told to stop (BeginStop); give them 3 s so Dispose never blocks the UI thread.
