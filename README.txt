@@ -117,6 +117,8 @@ START WITH WINDOWS (without the installer)
   "Start Launcher.vbs" > Create shortcut, and move the shortcut into that folder.
 
 ADVANCED: buttons.json
+  (A fresh install starts from buttons.default.json. Reinstalling or upgrading
+  never overwrites an existing buttons.json or pictures you added to images.)
   Everything above is saved in buttons.json. You never need to edit it, but
   you can (right-click > "Edit buttons.json in Notepad", then Reload).
   In paths, every backslash must be doubled:  C:\\Users\\Charles\\file.pdf

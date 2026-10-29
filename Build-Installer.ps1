@@ -4,7 +4,11 @@
 param([string]$OutDir)
 Add-Type -AssemblyName PresentationFramework
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$cfg  = Get-Content (Join-Path $here 'buttons.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+# R-M2: this PC's buttons.json (or the shipped default) becomes the installer's buttons.default.json.
+# The installer only turns it into buttons.json when the target PC has none, so reinstalls keep that PC's edits.
+$cfgSrc = Join-Path $here 'buttons.json'
+if (-not (Test-Path -LiteralPath $cfgSrc)) { $cfgSrc = Join-Path $here 'buttons.default.json' }
+$cfg  = Get-Content -LiteralPath $cfgSrc -Raw -Encoding UTF8 | ConvertFrom-Json
 $name = if ($cfg.title) { $cfg.title } else { 'Launcher' }
 # H1/M1/LJ-L4: allow-list the name (letters, digits, space, - and _ only) so it can never be empty,
 # rooted, '..', or carry quotes/$()/cmd metacharacters into the generated scripts.
@@ -28,8 +32,9 @@ if (-not $shaFile) { throw 'ButtonLauncher.exe.sha256 is missing, so the exe can
 $wantSha = ((Get-Content -LiteralPath $shaFile -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
 $haveSha = (Get-FileHash -LiteralPath (Join-Path $here 'ButtonLauncher.exe') -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($wantSha -notmatch '^[0-9a-f]{64}$' -or $haveSha -ne $wantSha) { throw "ButtonLauncher.exe does not match its recorded SHA-256.`nexpected $wantSha`nfound    $haveSha" }
-foreach ($f in 'Launcher.ps1','buttons.json','ButtonLauncher.exe','Start Launcher.vbs','Start Launcher.cmd','README.txt','Build-Installer.ps1') {
+foreach ($f in 'Launcher.ps1','ButtonLauncher.exe','Start Launcher.vbs','Start Launcher.cmd','README.txt','Build-Installer.ps1') {
     if (Test-Path (Join-Path $here $f)) { Copy-Item (Join-Path $here $f) $stage } }
+Copy-Item -LiteralPath $cfgSrc -Destination (Join-Path $stage 'buttons.default.json')   # R-M2: never ships as buttons.json
 Copy-Item -LiteralPath $shaFile -Destination (Join-Path $stage 'ButtonLauncher.exe.sha256')   # lets an installed copy build installers too
 if (Test-Path (Join-Path $here 'images')) { Copy-Item -LiteralPath (Join-Path $here 'images') -Destination (Join-Path $stage 'images') -Recurse -Force }
 # Kern-2: make sure every picture a button uses actually ships. Stop the build if one is missing.
@@ -93,6 +98,10 @@ foreach ($e in $z.Entries) {
     [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $t, $true)
 }
 $z.Dispose(); Remove-Item -LiteralPath $zip
+# R-M2: keep this PC's buttons.json (edits, saved paths). Only a first install gets the default. The payload never
+# contains buttons.json, and extraction only writes payload files, so pictures the user added to images\ stay too.
+$userCfg = Join-Path $dest 'buttons.json'
+if (-not (Test-Path -LiteralPath $userCfg)) { Copy-Item -LiteralPath (Join-Path $dest 'buttons.default.json') -Destination $userCfg }
 Get-ChildItem $dest -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
 
 # Uninstall.ps1 comes from the literal template built below (see __UNINST_B64__).

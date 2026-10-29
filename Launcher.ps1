@@ -22,6 +22,7 @@ Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Sys
 # ---------- shared state (all $global:, initialised before any function or window runs) ----------
 $global:here         = Split-Path -Parent $MyInvocation.MyCommand.Path
 $global:cfgPath      = Join-Path $global:here 'buttons.json'
+$global:cfgDefault   = Join-Path $global:here 'buttons.default.json'   # R-M2: shipped default, copied once when buttons.json is missing
 $global:logPath      = Join-Path $global:here 'launcher-error.log'
 $global:cfg          = $null
 $global:panels       = New-Object System.Collections.ArrayList   # each: @{ cfg; items; win; stack; ... }
@@ -852,6 +853,7 @@ try {
         }
         if (-not $got) { [void]$global:showEvent.Set(); exit 0 }   # already running: ask it to show its panels, then quit quietly
     }
+    if (-not (Test-Path -LiteralPath $global:cfgPath) -and (Test-Path -LiteralPath $global:cfgDefault)) { Copy-Item -LiteralPath $global:cfgDefault -Destination $global:cfgPath }
     try { $global:cfg = Get-Content -LiteralPath $global:cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if (-not $global:cfg) { throw 'buttons.json is empty.' } }
     catch {
         $why = $_.Exception.Message; $bak = $global:cfgPath + '.bak'   # CC-M2: fall back to the last good copy

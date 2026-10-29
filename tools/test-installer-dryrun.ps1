@@ -43,7 +43,7 @@ foreach ($c in @(@('Launcher', (Join-Path $progs 'Launcher'), $true), @('Launche
 }
 Remove-Item -LiteralPath $tmpBase -Recurse -Force
 # Pictures: every image a button uses exists, and the builder stages images\ + ButtonLauncher.exe
-$cfg = Get-Content (Join-Path $root 'buttons.json') -Raw | ConvertFrom-Json
+$cfg = Get-Content (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
 foreach ($pc in @($cfg.panels)) { foreach ($b in @($pc.buttons)) { if ($b.image -and $b.image -ne 'icon') {
     Check ("picture ships: " + $b.image) (Test-Path -LiteralPath (Join-Path $root $b.image)) } } }
 Check 'builder copies images folder' ($ast.Extent.Text -match "Copy-Item -LiteralPath \(Join-Path \`$here 'images'\)")

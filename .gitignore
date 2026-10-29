@@ -4,3 +4,6 @@ build/
 dist/
 launcher-error.log
 installer-output/
+buttons.json
+buttons.json.bak
+buttons.json.tmp
