@@ -2187,7 +2187,7 @@ function global:Get-VncScanPlan($ui, [bool]$Ask) {   # targets for confirmed net
         if ($st -eq 'declined' -and -not $Ask) { $plan.declined = $true; continue }
         if ($st -ne 'ok') {
             # Squint: plain words; range and port only in the small print. Default Yes when Rescan asked on purpose, No on automatic opens.
-            $a = [System.Windows.MessageBox]::Show(("Look for registers on this network ({1})?`n`nThis quickly checks this network for computers you can view. You'll only be asked again if the network changes.`n`n(Range {0}, port {2})" -f $rg, $n.label, $ui.state.port), 'View Register', 'YesNo', 'Question', $(if ($Ask) { 'Yes' } else { 'No' }))
+            $a = [System.Windows.MessageBox]::Show(("Look for computers you can view on this network ({1})?`n`nThis quickly checks this network for computers you can view. You'll only be asked again if the network changes.`n`n(Range {0}, port {2})" -f $rg, $n.label, $ui.state.port), 'View Register', 'YesNo', 'Question', $(if ($Ask) { 'Yes' } else { 'No' }))
             if ($a -ne 'Yes') {
                 $plan.declined = $true
                 if ($st -eq 'new') { $ui.state.declined = @($ui.state.declined) + $key; Set-Prop $global:cfg.vnc 'declinedRanges' @($ui.state.declined); Save-Config }
@@ -2202,7 +2202,7 @@ function global:Get-VncScanPlan($ui, [bool]$Ask) {   # targets for confirmed net
 function global:Start-VncScan($ui, [switch]$Rescan) {
     Stop-VncScan $ui   # L1: a Rescan cancels the old workers, name lookups included
     $plan = Get-VncScanPlan $ui ([bool]$Rescan)
-    if ($plan.none) { $ui.showEmpty.Invoke('nonet'); $ui.setStatus.Invoke('No shop network found on this PC, so nothing was scanned.'); return }
+    if ($plan.none) { $ui.showEmpty.Invoke('nonet'); $ui.setStatus.Invoke('No local network found on this PC, so nothing was scanned.'); return }
     if ($plan.targets.Count -eq 0) { $ui.setStatus.Invoke('Not scanned. Press Rescan (F5) to scan anyway, or use Add... to type an address.'); $ui.refresh.Invoke(); return }
     $sync = [hashtable]::Synchronized(@{ cancel = $false; done = $false; scanned = 0; total = $plan.targets.Count; found = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]); names = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]); namesDone = $false })
     $rs = $null; $ps = $null
@@ -2403,7 +2403,7 @@ $global:VncPickerXaml = @'
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <Button x:Name="View" Grid.Column="0" Style="{StaticResource Green}" Content="View only" MinWidth="104" IsDefault="True" ToolTip="Watch this register. Nothing you do reaches it. (Enter)"/>
       <Button x:Name="Interact" Grid.Column="1" Style="{StaticResource Blue}" Content="Interact" MinWidth="92" Margin="8,0,0,0" ToolTip="Take control of this register's mouse and keyboard. Asks for the full password. (Ctrl+Enter)"/>
-      <Button x:Name="Rescan" Grid.Column="3" Style="{StaticResource Chip}" Content="Rescan" MinWidth="84" ToolTip="Look for registers on this network again (F5)"/>
+      <Button x:Name="Rescan" Grid.Column="3" Style="{StaticResource Chip}" Content="Rescan" MinWidth="84" ToolTip="Look for computers you can view on this network again (F5)"/>
       <Button x:Name="Add" Grid.Column="4" Style="{StaticResource Chip}" Content="Add..." MinWidth="72" Margin="8,0,0,0" ToolTip="Type a register's address"/>
       <Button x:Name="More" Grid.Column="5" Style="{StaticResource Chip}" Width="36" Padding="0" Margin="8,0,0,0" ToolTip="More actions" AutomationProperties.Name="More actions">
         <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="16"/>
@@ -2451,9 +2451,9 @@ function global:Show-VncPicker($btn) {
         try { $pe = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($status); if ($pe) { $pe.RaiseAutomationEvent('LiveRegionChanged') } } catch {} }.GetNewClosure()
     $ui.busy = [Action[bool]]{ param($on) $busyBar.IsIndeterminate = $on; $busyBar.Visibility = $(if ($on) { 'Visible' } else { 'Hidden' }); $bScan.IsEnabled = -not $on }.GetNewClosure()
     $ui.showEmpty = [Action[string]]{ param($kind)
-        if ($kind -eq 'nonet') { $eT.Text = "This PC isn't on the shop network."; $eB.Text = "Connect to the shop Wi-Fi or cable, then press Rescan (F5). Or use Add... to type a register's address." }
-        elseif ($kind -eq 'notscanned') { $eT.Text = 'Not scanned yet.'; $eB.Text = 'Press Rescan (F5) to look for registers on this network, or use Add... to type an address.' }   # Squint Major
-        else { $eT.Text = 'No registers found.'; $eB.Text = 'Check the register is turned on and on the shop network, then press Rescan (F5). Or use Add... to type its address.' }
+        if ($kind -eq 'nonet') { $eT.Text = "This PC isn't connected to a local network we can scan (Wi-Fi or cable)."; $eB.Text = "Connect to the shop Wi-Fi or cable, then press Rescan (F5). Or use Add... to type a register's address." }
+        elseif ($kind -eq 'notscanned') { $eT.Text = 'Not scanned yet.'; $eB.Text = 'Look for computers you can view on this network? Press Rescan (F5), or use Add... to type an address.' }   # Squint Major
+        else { $eT.Text = 'No registers found.'; $eB.Text = 'Check the register is turned on and on the same network as this PC, then press Rescan (F5). Or use Add... to type its address.' }
         if ($lv.Items.Count -eq 0) { $empty.Visibility = 'Visible'; [void]$bAdd.Focus() } }.GetNewClosure()
     $ui.refresh = [Action]{
         $sel = $lv.SelectedItem; $lv.Items.Clear()
