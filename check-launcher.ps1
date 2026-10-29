@@ -1,5 +1,11 @@
 # Static scope checker for Launcher.ps1 (runs on pwsh, no Windows needed)
-param([string]$Path = '/workspace/button-launcher/Launcher.ps1')
+# R-L5: defaults to the Launcher.ps1 next to this script (repo root), or one folder up if it lives in tools/.
+param([string]$Path)
+if (-not $Path) {
+    $Path = @((Join-Path $PSScriptRoot 'Launcher.ps1'), (Join-Path (Split-Path -Parent $PSScriptRoot) 'Launcher.ps1')) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $Path) { throw "Launcher.ps1 not found next to $PSScriptRoot; pass -Path." }
+}
+"Checking: $Path"
 $tok = $null; $err = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tok, [ref]$err)
 $issues = New-Object System.Collections.ArrayList
