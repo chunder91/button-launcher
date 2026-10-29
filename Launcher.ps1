@@ -332,10 +332,26 @@ function global:Get-PicSource($btn) {
     } catch { return $null }
 }
 
+# Kern-2/Kern-6: a button whose picture file is missing gets a small amber corner dot + tooltip, and a log line.
+function global:Add-MissingPicCue($content, $btn) {
+    $img = [string]$btn.image
+    Add-Content -LiteralPath $global:logPath -Value ("{0}  picture not found for '{1}': {2}" -f (Get-Date -Format s), (([string]$btn.label) -replace "`n", ' '), (Resolve-Img $img)) -ErrorAction SilentlyContinue
+    $g = New-Object System.Windows.Controls.Grid
+    $dot = New-Object System.Windows.Shapes.Ellipse; $dot.Width = 10; $dot.Height = 10
+    $dot.Fill = Brush '#FFB000'; $dot.Stroke = Brush '#000000'; $dot.StrokeThickness = 1.5
+    $dot.HorizontalAlignment = 'Right'; $dot.VerticalAlignment = 'Top'; $dot.Margin = '0,5,5,0'
+    $dot.ToolTip = "Picture not found: $img"
+    [void]$g.Children.Add($content); [void]$g.Children.Add($dot)
+    return $g
+}
+
 function global:New-Content($btn, $fs, $h) {
     $label = New-Label $btn.label $btn.fg $fs
     $src = Get-PicSource $btn
-    if (-not $src) { return $label }
+    if (-not $src) {
+        if ($btn.image -and [string]$btn.image -ne 'icon') { return (Add-MissingPicCue $label $btn) }
+        return $label
+    }
     $mode = if ($btn.imageMode) { $btn.imageMode } else { 'left' }
     $img = New-Object System.Windows.Controls.Image; $img.Source = $src; $img.Stretch = 'Uniform'
     switch ($mode) {
