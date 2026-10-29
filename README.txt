@@ -21,6 +21,12 @@ WHAT EACH BUTTON DOES
   INTERNET             Opens Google in your browser.
   EMAIL                Opens your email app. To use Outlook instead: edit the
                        button, set Type to Program, Browse to OUTLOOK.EXE.
+                       Optional unread count (v1.4.0, off by default): unlock,
+                       right-click > Setup > Unread email count..., tick the box,
+                       type your @jartrek.net name and webmail password, Test,
+                       then Save. Each Windows user signs in separately; the
+                       password is encrypted by Windows for that user only.
+                       Right-click Email for Check email now and its status.
   USER GUIDE buttons   First click asks you to pick the PDF; after that it
                        just opens it.
   PLCE                 PA State Police Liquor Control Enforcement page.

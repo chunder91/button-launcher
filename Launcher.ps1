@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.3.0'
+$global:AppVersion   = '1.4.0'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -675,6 +675,7 @@ function global:New-Tile($p, $btn) {
                         elseif ($_.Key -eq 'Enter' -or $_.Key -eq 'Space') { $_.Handled = $true } }.GetNewClosure())
     $tile.Add_MouseRightButtonDown({ [void]$tile.Focus() }.GetNewClosure())
     $tile.ContextMenu = Button-Menu $p $btn
+    if (Test-MailTile $btn) { try { Add-MailOverlay $tile $wrap $g $c $ir $btn; Add-MailMenu $tile.ContextMenu } catch { Add-Content -LiteralPath $global:logPath -Value ('{0}  email count tile: {1}' -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue } }   # v1.4.0
     if ($btn.width -eq 'half') { $wrap.Tag = 'half' } else { $wrap.Tag = 'full' }
     return $wrap
 }
@@ -1045,6 +1046,7 @@ function global:Panel-Menu($p, $menu) {
     [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
     if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" }) }   # installed copies ship without the builder
     [void](Add-MenuItem $setup 'View-only password (for viewing computers)...' { [void](Show-VncPasswordDialog $null) })
+    [void](Add-MenuItem $setup 'Unread email count...' { [void](Show-MailSetupDialog $null) })   # v1.4.0, opt-in
     [void](Add-MenuItem $setup 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
     $lay = New-Object System.Windows.Controls.MenuItem; $lay.Header = 'Layout'
     foreach ($opt in @(@('two', 'Two panels'), @('single', 'One panel, docked to the edge'))) { $val = $opt[0]
@@ -2536,6 +2538,607 @@ function global:Show-VncPicker($btn) {
         $ui.setStatus.Invoke($(if ($ui.ageText) { 'Showing saved computers. Last scan {0}{1}. Press F5 to rescan.' -f $ui.ageText, $(if ($ui.stale) { ' (out of date)' } else { '' }) } else { 'Showing saved computers. Not scanned yet. Press F5 to look for others.' })) }
 }
 
+# ================= v1.4.0 unread email count on the Email tile (opt-in, per Windows user) =================
+# Charles: off by default; Flash by default once on; each Windows user signs in with their own @jartrek.net login; INBOX only.
+# IMAP over implicit TLS to mail.jartrek.net:993. The only commands ever sent: LOGIN, STATUS INBOX (UNSEEN), LOGOUT.
+# The certificate is checked by Windows itself (no custom validation callback; global .NET network settings untouched); a failure is an error.
+# The password: a DPAPI CurrentUser blob (ConvertFrom-SecureString, no key) in %LOCALAPPDATA%\ButtonLauncher\email-count.dat,
+# read back only as a SecureString; plaintext exists only as a char[]/byte[] inside the worker and is zeroed after the write.
+# Squint: copy, flow, shared-PC warning, stop polling on a sign-in failure. Kern: badge, pulse, flash, error ring, setup dialog.
+$global:MailDomain   = '@jartrek.net'
+$global:mail         = $null        # @{ set; state; ui }
+$global:mailRun      = $null        # the one check in flight
+$global:mailTimer    = $null        # the one poll timer
+$global:mailFollow   = $null        # follow-up checks after the Email tile is clicked (60 s, 3 min)
+$global:MailWorkerScript = $null
+$global:MailDialogRes = $null
+$global:MailLogDetails = @('server closed', 'no greeting', 'login has characters IMAP cannot send', 'sign-in refused', 'no continuation', 'server closed at sign-in', 'no sign-in reply',
+                           'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result')   # the only words the log may carry
+
+# ---- IMAP protocol (pure; the worker runs these in a background runspace; tools/test-mail.ps1 drives them with a mock) ----
+function global:ConvertTo-ImapQuotedBytes([char[]]$chars) {   # RFC 3501 quoted string as ASCII bytes ('\' and '"' escaped); $null = needs a literal; CR, LF, NUL throw
+    $n = 0
+    foreach ($ch in $chars) { $c = [int]$ch
+        if ($c -eq 13 -or $c -eq 10 -or $c -eq 0) { throw 'CR, LF and NUL are not allowed.' }
+        if ($c -lt 0x20 -or $c -gt 0x7E) { return $null }
+        if ($c -eq 0x5C -or $c -eq 0x22) { $n += 2 } else { $n++ } }
+    $b = New-Object byte[] ($n + 2); $i = 1; $b[0] = 0x22
+    foreach ($ch in $chars) { $c = [int]$ch; if ($c -eq 0x5C -or $c -eq 0x22) { $b[$i] = 0x5C; $i++ }; $b[$i] = [byte]$c; $i++ }
+    $b[$i] = 0x22
+    return ,$b
+}
+function global:Get-ImapLoginBytes([string]$user, [char[]]$pass) {   # @{ cmd; literal }: the password is a quoted string, or a {n} literal (UTF-8) when it has non-ASCII characters
+    $u = ConvertTo-ImapQuotedBytes $user.ToCharArray()
+    if ($null -eq $u) { throw 'The email address must be plain ASCII.' }
+    $q = ConvertTo-ImapQuotedBytes $pass
+    $ms = New-Object IO.MemoryStream; $lit = $null
+    try {
+        $h = [Text.Encoding]::ASCII.GetBytes('a1 LOGIN '); $ms.Write($h, 0, $h.Length); $ms.Write($u, 0, $u.Length); $ms.WriteByte(0x20)
+        if ($null -ne $q) { $ms.Write($q, 0, $q.Length); [Array]::Clear($q, 0, $q.Length) }
+        else {
+            $pb = [Text.Encoding]::UTF8.GetBytes($pass)
+            $t = [Text.Encoding]::ASCII.GetBytes('{' + $pb.Length + '}'); $ms.Write($t, 0, $t.Length)
+            $lit = New-Object byte[] ($pb.Length + 2); [Array]::Copy($pb, $lit, $pb.Length); $lit[$pb.Length] = 13; $lit[$pb.Length + 1] = 10
+            [Array]::Clear($pb, 0, $pb.Length) }
+        $ms.WriteByte(13); $ms.WriteByte(10)
+        return @{ cmd = $ms.ToArray(); literal = $lit }
+    } finally { $buf = $ms.GetBuffer(); [Array]::Clear($buf, 0, $buf.Length); $ms.Dispose() }
+}
+function global:Get-ImapTagged([string]$line, [string]$tag) {   # 'OK' / 'NO' / 'BAD' for this tag's completion line, else $null
+    if ($line -match ('(?i)^' + [regex]::Escape($tag) + ' (OK|NO|BAD)\b')) { return $Matches[1].ToUpperInvariant() }
+    return $null
+}
+function global:Get-ImapStatusUnseen([string]$line) {   # '* STATUS INBOX (MESSAGES 9 UNSEEN 3)' -> 3; anything else -> -1
+    if ($line -notmatch '(?i)^\*\s+STATUS\s+.*\(([^()]*)\)\s*$') { return -1 }
+    if ($Matches[1] -notmatch '(?i)(?:^|\s)UNSEEN\s+(\d{1,9})(?:\s|$)') { return -1 }
+    return [int]$Matches[1]
+}
+function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, [string]$user, [char[]]$pass) {   # @{ kind = ok|auth|net|proto; unseen; detail }
+    $max = 200
+    $g = [string](& $ReadLine)
+    if ($g -match '(?i)^\* BYE') { return @{ kind = 'net'; unseen = -1; detail = 'server closed' } }
+    if ($g -notmatch '(?i)^\* (OK|PREAUTH)\b') { return @{ kind = 'proto'; unseen = -1; detail = 'no greeting' } }
+    if ($g -notmatch '(?i)^\* PREAUTH\b') {
+        $lb = $null
+        try { $lb = Get-ImapLoginBytes $user $pass } catch { return @{ kind = 'auth'; unseen = -1; detail = 'login has characters IMAP cannot send' } }
+        try {
+            & $Write $lb.cmd
+            if ($lb.literal) {
+                $cont = [string](& $ReadLine)
+                if ($cont -notmatch '^\+') { if (Get-ImapTagged $cont 'a1') { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused' } }; return @{ kind = 'proto'; unseen = -1; detail = 'no continuation' } }
+                & $Write $lb.literal }
+        } finally { if ($lb) { [Array]::Clear($lb.cmd, 0, $lb.cmd.Length); if ($lb.literal) { [Array]::Clear($lb.literal, 0, $lb.literal.Length) } } }
+        $t = $null
+        for ($k = 0; $k -lt $max -and -not $t; $k++) { $l = [string](& $ReadLine)
+            $t = Get-ImapTagged $l 'a1'
+            if (-not $t -and $l -match '(?i)^\* BYE') { return @{ kind = 'auth'; unseen = -1; detail = 'server closed at sign-in' } } }   # lockout-safe: never retried on a timer
+        if ($t -ne 'OK') { if ($t) { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused' } }; return @{ kind = 'proto'; unseen = -1; detail = 'no sign-in reply' } }
+    }
+    & $Write ([Text.Encoding]::ASCII.GetBytes("a2 STATUS INBOX (UNSEEN)`r`n"))
+    $n = -1; $t = $null
+    for ($k = 0; $k -lt $max -and -not $t; $k++) { $l = [string](& $ReadLine)
+        $t = Get-ImapTagged $l 'a2'
+        if (-not $t) { $u = Get-ImapStatusUnseen $l; if ($u -ge 0) { $n = $u } elseif ($l -match '(?i)^\* BYE') { return @{ kind = 'net'; unseen = -1; detail = 'server closed' } } } }
+    $res = if ($t -eq 'OK' -and $n -ge 0) { @{ kind = 'ok'; unseen = $n; detail = '' } } else { @{ kind = 'proto'; unseen = -1; detail = 'no STATUS reply' } }
+    try { & $Write ([Text.Encoding]::ASCII.GetBytes("a3 LOGOUT`r`n")); for ($k = 0; $k -lt 20; $k++) { if (Get-ImapTagged ([string](& $ReadLine)) 'a3') { break } } } catch {}
+    return $res
+}
+function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureString]$secure, $sync) {   # runs in the background runspace; one TLS connection, then closed
+    $tcp = $null; $ssl = $null; $chars = $null; $bstr = [IntPtr]::Zero
+    try {
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        $sync.tcp = $tcp                                                            # lets the UI close it on exit or timeout
+        $ar = $tcp.BeginConnect('mail.jartrek.net', 993, $null, $null)
+        if (-not $ar.AsyncWaitHandle.WaitOne(10000)) { return @{ kind = 'net'; unseen = -1; detail = 'connect timed out' } }
+        $tcp.EndConnect($ar)
+        $tcp.ReceiveTimeout = 10000; $tcp.SendTimeout = 10000
+        $ns = $tcp.GetStream(); $ns.ReadTimeout = 10000; $ns.WriteTimeout = 10000
+        $ssl = New-Object System.Net.Security.SslStream($ns, $false)                 # no validation callback: Windows checks the chain and the name
+        $ssl.ReadTimeout = 10000; $ssl.WriteTimeout = 10000
+        $proto = [System.Security.Authentication.SslProtocols]::Tls12
+        try { if ([Environment]::OSVersion.Version.Build -ge 22000) { $proto = $proto -bor [System.Security.Authentication.SslProtocols]::Tls13 } } catch {}   # TLS 1.3 where Windows' client supports it
+        try { $ssl.AuthenticateAsClient('mail.jartrek.net', $null, $proto, $true) }   # checkCertificateRevocation = true
+        catch { $e = $_.Exception; while ($e -and -not ($e -is [System.Security.Authentication.AuthenticationException])) { $e = $e.InnerException }
+                if ($e) { return @{ kind = 'cert'; unseen = -1; detail = 'certificate or TLS check failed' } }; return @{ kind = 'net'; unseen = -1; detail = 'TLS handshake failed' } }
+        $buf = New-Object IO.MemoryStream
+        $readLine = { $buf.SetLength(0)
+            while ($true) { $b = $ssl.ReadByte(); if ($b -lt 0) { throw 'closed' }; if ($b -eq 10) { break }; if ($buf.Length -lt 16384) { $buf.WriteByte([byte]$b) } }
+            ([Text.Encoding]::UTF8.GetString($buf.ToArray())).TrimEnd("`r") }.GetNewClosure()
+        $write = { param([byte[]]$bytes) $ssl.Write($bytes, 0, $bytes.Length); $ssl.Flush() }.GetNewClosure()
+        $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        $chars = New-Object char[] $secure.Length
+        [Runtime.InteropServices.Marshal]::Copy($bstr, $chars, 0, $chars.Length)
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr); $bstr = [IntPtr]::Zero
+        return (Invoke-ImapSession $readLine $write $user $chars)
+    } catch { return @{ kind = 'net'; unseen = -1; detail = 'network error' } }
+    finally {
+        if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+        if ($chars) { [Array]::Clear($chars, 0, $chars.Length) }
+        try { if ($ssl) { $ssl.Dispose() } } catch {}
+        try { if ($tcp) { $tcp.Close() } } catch {}
+        $sync.tcp = $null }
+}
+function global:Get-MailWorkerScript {   # the worker's functions, copied by name into the runspace (no file, no command line)
+    if (-not $global:MailWorkerScript) {
+        $parts = foreach ($n in 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker') {
+            'function global:{0} {{ {1} }}' -f $n, (Get-Item -LiteralPath ('function:' + $n)).ScriptBlock.ToString() }
+        $global:MailWorkerScript = ($parts -join "`n") + "`nInvoke-MailCheckWorker `$args[0] `$args[1] `$args[2]" }
+    return $global:MailWorkerScript
+}
+
+# ---- state machine (pure) ----
+function global:New-MailState { @{ phase = 'checking'; count = -1; lastOk = $null; fails = 0; failSince = $null; failAt = $null; stopped = $false; epoch = 0 } }
+function global:Update-MailState($s, $r, [datetime]$now) {   # one check result -> state; @{ grew; ignored }. Squint: auth stops polling; offline after 2 tried polls; sleep never counts.
+    $out = @{ grew = $false; ignored = $false }
+    if ($null -ne $r.epoch -and [int]$r.epoch -ne [int]$s.epoch) { $out.ignored = $true; return $out }   # started before a sleep: not a tried poll
+    switch ([string]$r.kind) {
+        'ok' {
+            $prev = [Math]::Max(0, [int]$s.count); $n = [Math]::Max(0, [int]$r.unseen)
+            $out.grew = $n -gt $prev
+            $s.count = $n; $s.lastOk = $now; $s.fails = 0; $s.failSince = $null; $s.failAt = $null; $s.phase = 'ok'; $s.stopped = $false }
+        'auth' { $s.phase = 'authfail'; $s.stopped = $true; $s.fails = 0; $s.failSince = $null }
+        default {
+            $s.fails++; $s.failAt = $now; if ($s.fails -eq 1) { $s.failSince = $now }
+            $s.phase = if ($s.fails -ge 2) { 'offline' } else { 'retry' } }
+    }
+    return $out
+}
+function global:Step-MailResume($s) { $s.epoch = [int]$s.epoch + 1 }   # a check that started before sleep is ignored when it ends
+function global:Get-MailNextDelaySec($s) {   # -1 = stopped (sign-in failed: never retried on a timer); network errors back off 3 -> 6 -> 12 -> 15 min
+    if ($s.stopped) { return -1 }
+    switch ([int]$s.fails) { 0 { return 180 } 1 { return 180 } 2 { return 360 } 3 { return 720 } default { return 900 } }
+}
+function global:Get-MailBadgeText([int]$n) { if ($n -le 0) { '' } elseif ($n -ge 100) { '99+' } else { [string]$n } }
+function global:Get-MailBadgeWidth([string]$t) { switch ($t.Length) { 0 { 18 } 1 { 18 } 2 { 24 } default { 30 } } }   # Kern: fixed width per bucket
+function global:Test-MailShowBadge($s) { ($s.phase -eq 'ok' -or $s.phase -eq 'retry') -and [int]$s.count -gt 0 }
+function global:Test-MailShowRing($s) { $s.phase -eq 'authfail' -or $s.phase -eq 'offline' }   # the count is hidden whenever the ring shows
+function global:Get-MailMotion([string]$style, [bool]$animOn) { if (-not $animOn) { return 'badge' }; if ($style -in 'pulse', 'flash', 'badge') { return $style }; return 'flash' }
+function global:Format-MailTime($t, [datetime]$now) {   # Squint: '9:41 AM' today, 'Oct 28, 4:10 PM' otherwise
+    if ($null -eq $t) { return '' }
+    $c = [Globalization.CultureInfo]::GetCultureInfo('en-US'); $d = [datetime]$t
+    if ($d.Date -eq $now.Date) { return $d.ToString('h:mm tt', $c) }
+    return $d.ToString('MMM d, h:mm tt', $c)
+}
+function global:Get-MailCountText([int]$n) { if ($n -le 0) { 'No unread email.' } elseif ($n -eq 1) { '1 unread email in Inbox.' } else { "$n unread emails in Inbox." } }
+function global:Get-MailTipLine($s, [datetime]$now) {   # Squint's tooltip table (second line, under 'Open email')
+    switch ($s.phase) {
+        'authfail' { return 'Email count stopped: can''t sign in. If you changed your webmail password, update it in Setup > Unread email count...' }
+        'offline'  { return ('Can''t reach email since {0}. The count is hidden until it reconnects.' -f (Format-MailTime $s.failSince $now)) }
+        'retry'    { if ([int]$s.count -ge 0) { return ('{0} Couldn''t check at {1}, trying again.' -f (Get-MailCountText $s.count), (Format-MailTime $s.failAt $now)) }
+                     return ('Couldn''t check email at {0}, trying again.' -f (Format-MailTime $s.failAt $now)) }
+        'ok'       { return ('{0} Checked {1}.' -f (Get-MailCountText $s.count), (Format-MailTime $s.lastOk $now)) }
+        default    { return 'Checking email...' }
+    }
+}
+function global:Get-MailMenuLine($s, [datetime]$now) {   # Squint: the first (disabled) line of the Email tile's right-click menu
+    switch ($s.phase) {
+        'authfail' { return 'Email count: can''t sign in' }
+        'offline'  { return ('Email count: offline since {0}' -f (Format-MailTime $s.failSince $now)) }
+        'retry'    { if (-not $s.lastOk) { return ('Email count: couldn''t check at {0}, trying again' -f (Format-MailTime $s.failAt $now)) }
+                     return ('Email count: {0}, checked {1}' -f $(if ([int]$s.count -le 0) { 'no unread' } else { "$([int]$s.count) unread" }), (Format-MailTime $s.lastOk $now)) }
+        'ok'       { return ('Email count: {0}, checked {1}' -f $(if ([int]$s.count -le 0) { 'no unread' } else { "$([int]$s.count) unread" }), (Format-MailTime $s.lastOk $now)) }
+        default    { return 'Email count: checking...' }
+    }
+}
+function global:Get-MailAccessName([string]$base, $s) {   # Squint: 'Email, 3 unread'; error states in the name too
+    switch ($s.phase) {
+        'authfail' { return "$base, email count can't sign in" }
+        'offline'  { return "$base, email count offline" }
+        default { if ([int]$s.count -gt 0) { return "$base, $([int]$s.count) unread" }; if ([int]$s.count -eq 0) { return "$base, no unread email" }; return $base }
+    }
+}
+function global:Get-MailTestText($r) {   # Squint's 3 Test results: @{ kind = ok|auth|net; text }
+    switch ([string]$r.kind) {
+        'ok'   { $n = [int]$r.unseen; $t = if ($n -le 0) { 'Signed in. No unread email in Inbox.' } elseif ($n -eq 1) { 'Signed in. 1 unread email in Inbox.' } else { "Signed in. $n unread emails in Inbox." }; return @{ kind = 'ok'; text = $t } }
+        'auth' { return @{ kind = 'auth'; text = 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.' } }
+        default { return @{ kind = 'net'; text = 'Can''t reach the mail server. Check this PC is online, then press Test again.' } }
+    }
+}
+function global:Format-MailLogLine($r) {   # fixed words only: never the address, the password or server text
+    $k = [string]$r.kind; if ($k -notin 'ok', 'auth', 'net', 'cert', 'proto') { $k = 'error' }
+    $d = [string]$r.detail; if ($d -cnotin $global:MailLogDetails) { $d = '' }
+    return ('email count: {0}{1}' -f $k, $(if ($d) { " ($d)" } else { '' }))
+}
+function global:Get-MailAddress([string]$text) {   # 'cc' -> 'cc@jartrek.net'; a full address is kept as typed
+    $t = ([string]$text).Trim(); if (-not $t) { return '' }
+    if ($t.Contains('@')) { return $t }; return $t + $global:MailDomain
+}
+function global:Test-MailAddress([string]$a) { $a.Length -le 254 -and $a -cmatch '^[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$' }
+function global:Test-MailTile($btn) { (Get-ButtonType $btn) -eq 'website' -and ([string]$btn.target).Trim() -match '^(?i)mailto:' }   # the Email tile, by what it opens
+
+# ---- per-Windows-user settings and login (never in buttons.json, the log, tooltips or a command line) ----
+function global:Get-MailDir { Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ButtonLauncher' }
+function global:Get-MailSettingsPath { Join-Path (Get-MailDir) 'email-count.json' }
+function global:Get-MailSecretPath { Join-Path (Get-MailDir) 'email-count.dat' }
+function global:ConvertTo-MailSettings($o) {   # only these three keys survive, validated
+    $style = [string]$o.style; if ($style -notin 'pulse', 'flash', 'badge') { $style = 'flash' }   # Charles: Flash by default
+    $addr = [string]$o.address; if (-not (Test-MailAddress $addr)) { $addr = '' }
+    return @{ enabled = ([bool]$o.enabled -and [bool]$addr); address = $addr; style = $style }
+}
+function global:Get-MailSettingsJson($set) { $c = ConvertTo-MailSettings $set; return ([pscustomobject]@{ enabled = $c.enabled; address = $c.address; style = $c.style } | ConvertTo-Json -Compress) }
+function global:Read-MailSettings {
+    $p = Get-MailSettingsPath
+    try { if (Test-Path -LiteralPath $p) { return (ConvertTo-MailSettings (Get-Content -LiteralPath $p -Raw -Encoding UTF8 | ConvertFrom-Json)) } } catch {}
+    return (ConvertTo-MailSettings @{ enabled = $false })
+}
+function global:Write-MailFile([string]$p, [string]$text) {
+    [void][IO.Directory]::CreateDirectory((Split-Path -Parent $p))
+    $tmp = $p + '.tmp'; [IO.File]::WriteAllText($tmp, $text, (New-Object Text.UTF8Encoding $false))
+    if (Test-Path -LiteralPath $p) { [IO.File]::Replace($tmp, $p, [NullString]::Value) } else { [IO.File]::Move($tmp, $p) }
+}
+function global:Save-MailSettings($set) { Write-MailFile (Get-MailSettingsPath) (Get-MailSettingsJson $set) }
+function global:Save-MailSecret([System.Security.SecureString]$ss) { Write-MailFile (Get-MailSecretPath) (ConvertFrom-SecureString -SecureString $ss) }   # DPAPI CurrentUser (no -Key)
+function global:Read-MailSecret {   # SecureString or $null
+    $p = Get-MailSecretPath; if (-not (Test-Path -LiteralPath $p)) { return $null }
+    try { return (ConvertTo-SecureString -String ([IO.File]::ReadAllText($p).Trim())) } catch { return $null }
+}
+function global:Remove-MailLogin { foreach ($p in (Get-MailSecretPath), (Get-MailSettingsPath)) { try { if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } } catch {} } }
+
+# ---- one background check at a time (never on the UI thread) ----
+function global:Start-MailRun([string]$user, [System.Security.SecureString]$secure, [scriptblock]$OnDone) {   # $false when a check is already running
+    if ($global:mailRun) { return $false }
+    $sync = [hashtable]::Synchronized(@{ tcp = $null })
+    $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open()
+    $ps = [powershell]::Create(); $ps.Runspace = $rs
+    [void]$ps.AddScript((Get-MailWorkerScript)).AddArgument($user).AddArgument($secure).AddArgument($sync)
+    $epoch = if ($global:mail) { [int]$global:mail.state.epoch } else { 0 }
+    $run = @{ ps = $ps; rs = $rs; sync = $sync; secure = $secure; start = [DateTime]::UtcNow; done = $OnDone; epoch = $epoch; timer = $null; handle = $null }
+    $run.handle = $ps.BeginInvoke()
+    $global:mailRun = $run
+    $t = New-Object System.Windows.Threading.DispatcherTimer; $t.Interval = [TimeSpan]::FromMilliseconds(250)   # only while a check runs
+    $t.Add_Tick({
+        $r = $null
+        if ($run.handle.IsCompleted) { try { $o = $run.ps.EndInvoke($run.handle); if ($o.Count -gt 0) { $r = $o[$o.Count - 1]; if ($r -is [psobject]) { $r = $r.BaseObject } } } catch {} }
+        elseif (([DateTime]::UtcNow - $run.start).TotalSeconds -ge 45) { $r = @{ kind = 'net'; unseen = -1; detail = 'timed out' } }
+        else { return }
+        $t.Stop(); Stop-MailRunObjects $run
+        if (-not ($r -is [hashtable])) { $r = @{ kind = 'net'; unseen = -1; detail = 'no result' } }
+        $r.epoch = $run.epoch
+        if ($run.done) { & $run.done $r } }.GetNewClosure())
+    $run.timer = $t; $t.Start()
+    return $true
+}
+function global:Stop-MailRunObjects($run) {   # closes the socket first so a stuck read ends at once, then frees the runspace
+    if (-not $run) { return }
+    try { if ($run.timer) { $run.timer.Stop() } } catch {}
+    try { if ($run.sync.tcp) { $run.sync.tcp.Close() } } catch {}
+    try { if (-not $run.handle.IsCompleted) { $run.ps.Stop() } } catch {}
+    try { $run.ps.Dispose() } catch {}; try { $run.rs.Dispose() } catch {}
+    try { if ($run.secure) { $run.secure.Dispose() } } catch {}
+    if ($global:mailRun -eq $run) { $global:mailRun = $null }
+}
+
+# ---- controller ----
+function global:Initialize-Mail { $global:mail = @{ set = (Read-MailSettings); state = (New-MailState); ui = (New-Object System.Collections.ArrayList) } }
+function global:Set-MailTimer([double]$sec) {   # (re)arms the one poll timer; -1 stops it
+    if (-not $global:mailTimer) { $global:mailTimer = New-Object System.Windows.Threading.DispatcherTimer
+        $global:mailTimer.Add_Tick({ $global:mailTimer.Stop(); Invoke-MailPoll $false }) }
+    $global:mailTimer.Stop()
+    if ($sec -lt 0) { return }
+    $global:mailTimer.Interval = [TimeSpan]::FromSeconds([Math]::Max(1, $sec)); $global:mailTimer.Start()
+}
+function global:Stop-MailFollow { if ($global:mailFollow) { foreach ($t in @($global:mailFollow)) { try { $t.Stop() } catch {} } }; $global:mailFollow = $null }
+function global:Start-MailPolling([int]$firstSec = 5) {   # startup, and after Setup saves; nothing at all while off
+    Stop-MailFollow; Set-MailTimer -1
+    if ($global:mail -and $global:mail.set.enabled -and -not $global:mail.state.stopped) { Set-MailTimer $firstSec }
+    Update-MailUi $false
+}
+function global:Invoke-MailPoll([bool]$byUser) {   # timer, follow-ups and wake: skipped after a sign-in failure. Check email now: always one try.
+    $m = $global:mail; if (-not $m -or -not $m.set.enabled) { return }
+    if ($m.state.stopped -and -not $byUser) { return }
+    if ($global:mailRun) { if (-not $byUser) { Set-MailTimer 15 }; return }
+    $ss = Read-MailSecret
+    if (-not $ss) { [void](Update-MailState $m.state @{ kind = 'auth'; epoch = $m.state.epoch } (Get-Date)); Update-MailUi $false; return }
+    if (-not (Start-MailRun $m.set.address $ss { param($r) Complete-MailPoll $r })) { $ss.Dispose() }
+}
+function global:Complete-MailPoll($r) {
+    $m = $global:mail; if (-not $m -or -not $m.set.enabled) { return }
+    $out = Update-MailState $m.state $r (Get-Date)
+    if ($out.ignored) { if (-not $m.state.stopped) { Set-MailTimer 10 }; return }
+    if ($r.kind -ne 'ok') { try { Add-Content -LiteralPath $global:logPath -Value ('{0}  {1}' -f (Get-Date -Format s), (Format-MailLogLine $r)) -Encoding UTF8 } catch {} }
+    Update-MailUi $out.grew
+    Set-MailTimer (Get-MailNextDelaySec $m.state)
+}
+function global:Start-MailFollowUp {   # Squint: check again 60 s and 3 min after the Email tile opens email
+    $m = $global:mail; if (-not $m -or -not $m.set.enabled -or $m.state.stopped) { return }
+    Stop-MailFollow; $list = @()
+    foreach ($sec in 60, 180) { $t = New-Object System.Windows.Threading.DispatcherTimer; $t.Interval = [TimeSpan]::FromSeconds($sec)
+        $t.Add_Tick({ $t.Stop(); Invoke-MailPoll $false }.GetNewClosure()); $t.Start(); $list += $t }
+    $global:mailFollow = $list
+}
+function global:Resume-Mail {   # wake from sleep: the check in flight (if any) doesn't count; check once ~10 s after wake
+    $m = $global:mail; if (-not $m) { return }
+    Step-MailResume $m.state
+    if ($m.set.enabled -and -not $m.state.stopped) { Set-MailTimer 10 }
+}
+function global:Stop-Mail { Stop-MailFollow; try { Set-MailTimer -1 } catch {}; Stop-MailRunObjects $global:mailRun }   # app exit / turn off
+function global:Disable-Mail {   # Turn off: forget the login on this PC and clear the badge at once
+    Stop-Mail; Remove-MailLogin
+    $global:mail.set = ConvertTo-MailSettings @{ enabled = $false }; $global:mail.state = New-MailState
+    Update-MailUi $false
+}
+
+# ---- tile visuals (Kern D2): badge, error ring, flash overlay; opacity / scale only ----
+function global:Test-MailAnimOn { try { return [bool][System.Windows.SystemParameters]::ClientAreaAnimation } catch { return $true } }   # re-read on every update
+function global:New-MailKeyAnim([double[]]$ms, [double[]]$val, [bool]$sine) {
+    $k = New-Object System.Windows.Media.Animation.DoubleAnimationUsingKeyFrames
+    for ($i = 0; $i -lt $ms.Count; $i++) {
+        $kt = [System.Windows.Media.Animation.KeyTime]::FromTimeSpan([TimeSpan]::FromMilliseconds($ms[$i]))
+        if ($sine) { $f = New-Object System.Windows.Media.Animation.EasingDoubleKeyFrame $val[$i], $kt; $e = New-Object System.Windows.Media.Animation.SineEase; $e.EasingMode = 'EaseInOut'; $f.EasingFunction = $e }
+        else { $f = New-Object System.Windows.Media.Animation.LinearDoubleKeyFrame $val[$i], $kt }
+        [void]$k.KeyFrames.Add($f) }
+    return $k
+}
+function global:Add-MailOverlay($tile, $wrap, $g, $c, [string]$ir, $btn) {   # Email tile only: built collapsed; nothing runs until the count is on
+    if (-not $global:mail) { return }
+    $ov = New-Object System.Windows.Controls.Border; $ov.IsHitTestVisible = $false; $ov.Opacity = 0; $ov.CornerRadius = $ir
+    $ov.Background = New-VGrad '#C49A0C' '#A8850A'                               # Kern 7b: frozen darker yellow, only its Opacity toggles
+    $g.Children.Insert([Math]::Max(0, $g.Children.IndexOf($c.el)), $ov)          # under the icon and label
+    $cv = New-Object System.Windows.Controls.Canvas; $cv.IsHitTestVisible = $false; $cv.ClipToBounds = $false
+    [System.Windows.Controls.Panel]::SetZIndex($cv, 2)
+    $ipx = 24.0
+    if ($c.icon) {   # the badge is a sibling of the icon (rides the tile's lift and press, not the icon's 1.06 hover scale)
+        if (-not [double]::IsNaN([double]$c.icon.Width)) { $ipx = [double]$c.icon.Width }
+        $sp = $c.el; $i = $sp.Children.IndexOf($c.icon)
+        $ib = New-Object System.Windows.Controls.Grid; $ib.HorizontalAlignment = $c.icon.HorizontalAlignment; $ib.VerticalAlignment = $c.icon.VerticalAlignment
+        $ib.Margin = $c.icon.Margin; $c.icon.Margin = '0'
+        $sp.Children.RemoveAt($i); [void]$ib.Children.Add($c.icon); [void]$ib.Children.Add($cv); $sp.Children.Insert($i, $ib)
+    } else { $cv.HorizontalAlignment = 'Left'; $cv.VerticalAlignment = 'Top'; $cv.Margin = '12,14,0,0'; [void]$g.Children.Add($cv) }
+    $bd = New-Object System.Windows.Controls.Border; $bd.Height = 18; $bd.Width = 18; $bd.CornerRadius = '9'
+    $bd.Background = Brush '#111111'; $bd.BorderBrush = Brush '#B3FFFFFF'; $bd.BorderThickness = '1.5'   # 70% white ring
+    $bd.UseLayoutRounding = $true; $bd.SnapsToDevicePixels = $true; $bd.Visibility = 'Collapsed'; $bd.Opacity = 0
+    $sc = New-Object System.Windows.Media.ScaleTransform 1, 1; $bd.RenderTransform = $sc; $bd.RenderTransformOrigin = '0.5,0.5'
+    $tx = New-Object System.Windows.Controls.TextBlock; $tx.Foreground = Brush '#FACC15'; $tx.FontSize = 11; $tx.FontWeight = [System.Windows.FontWeights]::Bold
+    $tx.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe UI Variable Text, Segoe UI Semibold, Segoe UI'   # 11 px numeral badge: Kern's accepted exception to the 12 floor
+    $tx.HorizontalAlignment = 'Center'; $tx.VerticalAlignment = 'Center'; $tx.TextAlignment = 'Center'
+    [System.Windows.Documents.Typography]::SetNumeralAlignment($tx, [System.Windows.FontNumeralAlignment]::Tabular)
+    $bd.Child = $tx
+    [System.Windows.Controls.Canvas]::SetLeft($bd, $ipx - 8); [System.Windows.Controls.Canvas]::SetTop($bd, -6)   # Kern Minor 2: icon right - 8, icon top - 6
+    $rg = New-Object System.Windows.Shapes.Ellipse; $rg.Width = 8; $rg.Height = 8; $rg.Stroke = Brush '#4A4A4A'; $rg.StrokeThickness = 1.5; $rg.Visibility = 'Collapsed'
+    $rg.SnapsToDevicePixels = $true
+    [System.Windows.Controls.Canvas]::SetLeft($rg, $ipx - 3); [System.Windows.Controls.Canvas]::SetTop($rg, -1)   # centred where the badge centre is
+    [void]$cv.Children.Add($rg); [void]$cv.Children.Add($bd)
+    $lab = Get-DisplayLabel $btn; $base = ([string]$lab.main -replace "`n", ' ').Trim(); if (-not $base) { $base = 'Email' }
+    $e = @{ tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; flash = $ov; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
+    $tile.Add_MouseEnter({ Stop-MailFlash })                                            # hover wins over the flash
+    $tile.Add_PreviewMouseLeftButtonDown({ Stop-MailFlash })
+    $tile.Add_PreviewMouseLeftButtonUp({ Start-MailFollowUp })                      # the click itself still does exactly what it did
+    $tile.Add_PreviewKeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { Stop-MailFlash; Start-MailFollowUp } })
+    [void]$global:mail.ui.Add($e)
+    Set-MailEntry $e $false
+}
+function global:Add-MailMenu($menu) {   # Squint: status line first, then Check email now, then Email count settings... (only while the count is on)
+    $st = New-Object System.Windows.Controls.MenuItem; $st.IsEnabled = $false; $st.Header = 'Email count: checking...'
+    $ck = New-Object System.Windows.Controls.MenuItem; $ck.Header = 'Check email now'; $ck.Add_Click({ Invoke-MailPoll $true })
+    $se = New-Object System.Windows.Controls.MenuItem; $se.Header = 'Email count settings...'; $se.Add_Click({ [void](Show-MailSetupDialog $null) })
+    $sep = New-Object System.Windows.Controls.Separator
+    $menu.Items.Insert(0, $st); $menu.Items.Insert(1, $ck); $menu.Items.Insert(2, $se); $menu.Items.Insert(3, $sep)
+    $menu.Add_Opened({
+        $on = [bool]($global:mail -and $global:mail.set.enabled); $v = if ($on) { 'Visible' } else { 'Collapsed' }
+        foreach ($x in @($st, $ck, $se, $sep)) { $x.Visibility = $v }
+        if ($on) { $st.Header = Get-MailMenuLine $global:mail.state (Get-Date); $ck.IsEnabled = -not $global:mailRun } }.GetNewClosure())
+}
+function global:Stop-MailFlash {
+    if (-not $global:mail) { return }
+    foreach ($e in @($global:mail.ui)) { $e.flash.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null); $e.flash.Opacity = 0 }
+}
+function global:Set-MailEntry($e, [bool]$grew) {
+    $m = $global:mail; $s = $m.state; $op = [System.Windows.UIElement]::OpacityProperty
+    $bd = $e.badge
+    if (-not $m.set.enabled) {
+        Stop-MailFlash; $bd.BeginAnimation($op, $null); $bd.Opacity = 0; $bd.Visibility = 'Collapsed'; $e.ring.Visibility = 'Collapsed'
+        $e.tile.ToolTip = $e.tip0; $e.tile.ClearValue([System.Windows.Automation.AutomationProperties]::NameProperty); return }
+    $now = Get-Date
+    $e.tile.ToolTip = "Open email`n" + (Get-MailTipLine $s $now)
+    [System.Windows.Automation.AutomationProperties]::SetName($e.tile, (Get-MailAccessName $e.name $s))
+    $e.ring.Visibility = if (Test-MailShowRing $s) { 'Visible' } else { 'Collapsed' }
+    $motion = Get-MailMotion ([string]$m.set.style) (Test-MailAnimOn)
+    if (Test-MailShowBadge $s) {
+        $txt = Get-MailBadgeText ([int]$s.count); $e.text.Text = $txt; $bd.Width = Get-MailBadgeWidth $txt
+        $appear = $bd.Visibility -ne 'Visible'
+        $bd.Visibility = 'Visible'
+        $sx = [System.Windows.Media.ScaleTransform]::ScaleXProperty; $sy = [System.Windows.Media.ScaleTransform]::ScaleYProperty
+        if ($grew -and $motion -eq 'pulse') {   # Kern 2: appear 150 ms (0.6 -> 1), then 3 x 1200 ms sine pulses, then steady
+            $t0 = if ($appear) { 150 } else { 0 }
+            $ms = @(0); $sv = @($(if ($appear) { 0.6 } else { 1.0 })); $ov = @($(if ($appear) { 0.0 } else { 1.0 }))
+            if ($appear) { $ms += 150; $sv += 1.0; $ov += 1.0 }
+            for ($k = 0; $k -lt 3; $k++) { $ms += ($t0 + $k * 1200 + 600); $sv += 1.12; $ov += 0.75; $ms += ($t0 + $k * 1200 + 1200); $sv += 1.0; $ov += 1.0 }
+            $e.scale.BeginAnimation($sx, (New-MailKeyAnim $ms $sv $true)); $e.scale.BeginAnimation($sy, (New-MailKeyAnim $ms $sv $true))
+            $bd.BeginAnimation($op, (New-MailKeyAnim $ms $ov $true))
+        } else {
+            $e.scale.BeginAnimation($sx, $null); $e.scale.BeginAnimation($sy, $null); $e.scale.ScaleX = 1; $e.scale.ScaleY = 1
+            if ($appear) { $fade = if ($motion -eq 'badge') { 120 } else { 150 }
+                $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, 1.0, ([System.Windows.Duration][TimeSpan]::FromMilliseconds($fade)); $bd.BeginAnimation($op, $a) }
+            elseif ($bd.Opacity -lt 1) { $bd.BeginAnimation($op, $null); $bd.Opacity = 1 }
+        }
+        if ($grew -and $motion -eq 'flash' -and -not $e.tile.IsMouseOver) {   # Kern 7b: 3 flashes at 1 Hz, 500 on / 500 off, 60 ms ramps
+            $fm = @(0, 60, 500, 560, 1000, 1060, 1500, 1560, 2000, 2060, 2500, 2560); $fv = @(0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0)
+            $e.flash.BeginAnimation($op, (New-MailKeyAnim $fm $fv $false)) }
+        if ($grew) { try { $peer = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($e.tile); if ($peer) { $peer.RaiseAutomationEvent([System.Windows.Automation.Peers.AutomationEvents]::LiveRegionChanged) } } catch {} }   # polite, only when it goes up
+    } else {
+        $e.scale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleXProperty, $null); $e.scale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $null)
+        if ($bd.Visibility -eq 'Visible') {   # Kern 3: 150 ms fade, then collapsed (120 ms with motion off)
+            $fade = if ($motion -eq 'badge') { 120 } else { 150 }
+            $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, ([System.Windows.Duration][TimeSpan]::FromMilliseconds($fade))
+            $a.Add_Completed({ if ($bd.Opacity -lt 0.01) { $bd.Visibility = 'Collapsed' } }.GetNewClosure())
+            $bd.BeginAnimation($op, $a) }
+        if ((Test-MailShowRing $s)) { Stop-MailFlash }
+    }
+}
+function global:Update-MailUi([bool]$grew) {   # drops tiles from old panel builds, then redraws each Email tile
+    $m = $global:mail; if (-not $m) { return }
+    $keep = New-Object System.Collections.ArrayList
+    foreach ($e in @($m.ui)) { if ($e.wrap.Parent -or ([DateTime]::UtcNow - $e.born).TotalSeconds -lt 5) { [void]$keep.Add($e) } }
+    $m.ui = $keep
+    foreach ($e in @($m.ui)) { try { Set-MailEntry $e $grew } catch { Add-Content -LiteralPath $global:logPath -Value ('{0}  email count display: {1}' -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue } }
+}
+
+# ---- Setup > Unread email count... (Kern D2 dialog, Squint copy) ----
+$global:MailDialogXaml = @'
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Style x:Key="D2Check" TargetType="CheckBox">
+    <Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+      <Grid Background="Transparent" MinHeight="24"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Grid Width="22" Height="22" VerticalAlignment="Center">
+          <Border x:Name="Ring" CornerRadius="6" BorderBrush="#FFFFFF" BorderThickness="2" Visibility="Hidden"/>
+          <Border x:Name="Box" Width="18" Height="18" CornerRadius="4" BorderBrush="#8CFFFFFF" BorderThickness="1.5" Background="Transparent"/>
+          <Path x:Name="Mark" Data="M 6,11.5 L 9.5,15 L 16,7.5" Stroke="#111111" StrokeThickness="2" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Visibility="Collapsed"/>
+        </Grid>
+        <ContentPresenter Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"/>
+      </Grid>
+      <ControlTemplate.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Box" Property="Background" Value="#14FFFFFF"/></Trigger>
+        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Box" Property="Background" Value="#22C55E"/><Setter TargetName="Box" Property="BorderThickness" Value="0"/><Setter TargetName="Mark" Property="Visibility" Value="Visible"/></Trigger>
+        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Ring" Property="Visibility" Value="Visible"/></Trigger>
+        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+      </ControlTemplate.Triggers>
+    </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="D2Radio" TargetType="RadioButton">
+    <Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Cursor" Value="Hand"/>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="RadioButton">
+      <Grid Background="Transparent" Height="28"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <Grid Width="22" Height="22" VerticalAlignment="Center">
+          <Ellipse x:Name="Ring" Stroke="#FFFFFF" StrokeThickness="2" Visibility="Hidden"/>
+          <Ellipse x:Name="Outer" Width="18" Height="18" Stroke="#8CFFFFFF" StrokeThickness="1.5" Fill="Transparent"/>
+          <Ellipse x:Name="Dot" Width="8" Height="8" Fill="#22C55E" Visibility="Collapsed"/>
+        </Grid>
+        <ContentPresenter Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"/>
+      </Grid>
+      <ControlTemplate.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Outer" Property="Fill" Value="#14FFFFFF"/></Trigger>
+        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Outer" Property="Stroke" Value="#22C55E"/><Setter TargetName="Dot" Property="Visibility" Value="Visible"/></Trigger>
+        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Ring" Property="Visibility" Value="Visible"/></Trigger>
+        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+      </ControlTemplate.Triggers>
+    </ControlTemplate></Setter.Value></Setter>
+  </Style>
+</ResourceDictionary>
+'@
+function global:Show-MailConfirmOff($owner) {   # Squint: 'Turn off the email count and forget this login on this PC?' Default No.
+    $dlg = New-D2Dialog 'Unread email count' $owner 348
+    [void]$dlg.body.Children.Add((New-D2Label 'Turn off the email count and forget this login on this PC?'))
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = '0,16,0,0'
+    $res = @{ yes = $false }
+    $bNo = New-D2Button 'No' 'Green' $dlg; $bNo.IsDefault = $true; $bNo.IsCancel = $true
+    $bYes = New-D2Button 'Yes, turn off' 'Chip' $dlg
+    $bNo.Add_Click({ $dlg.win.Close() }.GetNewClosure()); $bYes.Add_Click({ $res.yes = $true; $dlg.win.Close() }.GetNewClosure())
+    [void]$row.Children.Add($bNo); [void]$row.Children.Add($bYes); [void]$dlg.body.Children.Add($row)
+    $dlg.win.Add_ContentRendered({ [void]$bNo.Focus() }.GetNewClosure())
+    [void]$dlg.win.ShowDialog()
+    return $res.yes
+}
+function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a good Test; the password lives only in the PasswordBox and the DPAPI file
+    if (-not $global:mail) { Initialize-Mail }
+    $was = $global:mail.set
+    $dlg = New-D2Dialog 'Unread email count' $owner 408; $d = $dlg.win; $sp = $dlg.body
+    if (-not $global:MailDialogRes) { try { $global:MailDialogRes = [Windows.Markup.XamlReader]::Parse($global:MailDialogXaml) } catch { Add-Content -LiteralPath $global:logPath -Value ('{0}  email dialog styles: {1}' -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue } }
+    if ($global:MailDialogRes) { foreach ($k in @($global:MailDialogRes.Keys)) { $d.Resources[$k] = $global:MailDialogRes[$k] } }
+    $hd = New-D2Label 'Unread email count' '#FFFFFF' 18; $hd.FontWeight = [System.Windows.FontWeights]::SemiBold; $hd.Margin = '0,0,0,16'; [void]$sp.Children.Add($hd)
+    $cb = New-Object System.Windows.Controls.CheckBox; $cb.Content = 'Show unread email count on the Email button'; $cb.Margin = '0,0,0,16'
+    $s1 = $d.TryFindResource('D2Check'); if ($s1) { $cb.Style = $s1 } else { $cb.Foreground = Brush '#FFFFFF'; $cb.FontSize = 14 }
+    $cb.IsChecked = [bool]$was.enabled; [void]$sp.Children.Add($cb)
+    $acct = New-Object System.Windows.Controls.StackPanel; [void]$sp.Children.Add($acct)
+    $intro = New-D2Label 'Uses your Jartrek email, the same login as webmail.' '#B4B4BC' 13; $intro.Margin = '0,0,0,16'; [void]$acct.Children.Add($intro)
+    [void]$acct.Children.Add((New-D2Label 'Email address'))
+    $ta = New-Object System.Windows.Controls.TextBox; $ta.MaxLength = 254
+    if ($was.address) { $ta.Text = $(if (([string]$was.address).EndsWith($global:MailDomain, [StringComparison]::OrdinalIgnoreCase)) { ([string]$was.address).Substring(0, ([string]$was.address).Length - $global:MailDomain.Length) } else { [string]$was.address }) }
+    $fa = New-D2Field $ta; [void]$acct.Children.Add($fa)
+    $suffix = New-Object System.Windows.Controls.TextBlock; $suffix.Text = $global:MailDomain; $suffix.FontSize = 14; $suffix.Foreground = Brush '#B4B4BC'
+    $suffix.HorizontalAlignment = 'Right'; $suffix.VerticalAlignment = 'Center'; $suffix.Margin = '0,0,8,0'; $suffix.IsHitTestVisible = $false
+    $ph = New-Object System.Windows.Controls.TextBlock; $ph.Text = 'name'; $ph.FontSize = 14; $ph.Foreground = Brush '#9A9AA4'; $ph.VerticalAlignment = 'Center'; $ph.Margin = '10,0,0,0'; $ph.IsHitTestVisible = $false
+    [void]$fa.Child.Children.Add($ph); [void]$fa.Child.Children.Add($suffix)
+    $ta.Padding = '6,0,96,0'
+    [void]$acct.Children.Add((New-D2Label 'Password'))
+    $pb = New-Object System.Windows.Controls.PasswordBox; $pb.MaxLength = 256
+    $fp = New-D2Field $pb; [void]$acct.Children.Add($fp)
+    $pph = New-Object System.Windows.Controls.TextBlock; $pph.FontSize = 14; $pph.Foreground = Brush '#9A9AA4'; $pph.VerticalAlignment = 'Center'; $pph.Margin = '10,0,0,0'; $pph.IsHitTestVisible = $false
+    $pph.Text = if ($was.enabled -and (Test-Path -LiteralPath (Get-MailSecretPath))) { 'Saved. Type it again only to change it.' } else { '' }
+    [void]$fp.Child.Children.Add($pph)
+    foreach ($f in @($fa, $fp)) { $rl = New-Object System.Windows.Controls.Border; $rl.Height = 1; $rl.VerticalAlignment = 'Bottom'; $rl.Background = Brush '#66FFFFFF'; $rl.IsHitTestVisible = $false; $f.Child.Children.Insert(0, $rl) }   # Kern: 40% rest line (3:1 edge)
+    $warn = New-Object System.Windows.Controls.Border; $warn.CornerRadius = '8'; $warn.Background = Brush '#1FF59E0B'; $warn.BorderBrush = Brush '#59F59E0B'; $warn.BorderThickness = '1'; $warn.Padding = '10,8'; $warn.Margin = '0,8,0,24'
+    $wd = New-Object System.Windows.Controls.DockPanel
+    $wi = New-Object System.Windows.Controls.TextBlock; $wi.Text = [string][char]0xE7BA; $wi.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe MDL2 Assets'; $wi.FontSize = 16; $wi.Foreground = Brush '#FBBF24'; $wi.Margin = '0,0,8,0'; $wi.VerticalAlignment = 'Top'
+    [System.Windows.Automation.AutomationProperties]::SetName($wi, 'Warning')
+    $wt = New-Object System.Windows.Controls.TextBlock; $wt.Text = 'Everyone who uses this Windows login on this PC will see how many unread emails this account has.'; $wt.FontSize = 13; $wt.Foreground = Brush '#FBBF24'; $wt.TextWrapping = 'Wrap'
+    [void]$wd.Children.Add($wi); [void]$wd.Children.Add($wt); $warn.Child = $wd; [void]$acct.Children.Add($warn)
+    $h2 = New-D2Label 'When new mail arrives:' '#FFFFFF' 14; $h2.FontWeight = [System.Windows.FontWeights]::SemiBold; [void]$acct.Children.Add($h2)
+    $s2 = $d.TryFindResource('D2Radio'); $radios = @{}
+    foreach ($o in @(@('pulse', 'Pulse the number'), @('flash', 'Flash the button 3 times'), @('badge', 'Just show the number'))) {
+        $rb = New-Object System.Windows.Controls.RadioButton; $rb.GroupName = 'mailStyle'; $rb.Content = $o[1]; if ($s2) { $rb.Style = $s2 } else { $rb.Foreground = Brush '#FFFFFF'; $rb.FontSize = 14; $rb.Margin = '0,4' }
+        $rb.IsChecked = ([string]$was.style -eq $o[0]); $radios[$o[0]] = $rb; [void]$acct.Children.Add($rb) }
+    if (-not ($radios.Values | Where-Object { $_.IsChecked })) { $radios['flash'].IsChecked = $true }   # Charles: Flash by default
+    $rline = New-Object System.Windows.Controls.DockPanel; $rline.Margin = '0,16,0,8'; $rline.MinHeight = 20; $rline.Visibility = 'Collapsed'
+    $ri = New-Object System.Windows.Controls.TextBlock; $ri.FontFamily = New-Object System.Windows.Media.FontFamily 'Segoe MDL2 Assets'; $ri.FontSize = 16; $ri.Margin = '0,0,8,0'; $ri.VerticalAlignment = 'Top'
+    $rt = New-Object System.Windows.Controls.TextBlock; $rt.FontSize = 13; $rt.TextWrapping = 'Wrap'
+    try { [System.Windows.Automation.AutomationProperties]::SetLiveSetting($rt, [System.Windows.Automation.AutomationLiveSetting]::Polite) } catch {}
+    [void]$rline.Children.Add($ri); [void]$rline.Children.Add($rt); [void]$sp.Children.Add($rline)
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'; $row.Margin = '0,8,0,0'
+    $bTest = New-D2Button 'Test' 'Chip' $dlg
+    $bSave = New-D2Button 'Save' 'Green' $dlg; $bSave.IsDefault = $true
+    $bCancel = New-D2Button 'Cancel' 'Chip' $dlg; $bCancel.IsCancel = $true
+    foreach ($b in @($bTest, $bSave, $bCancel)) { [void]$row.Children.Add($b) }
+    [void]$sp.Children.Add($row)
+    $ds = @{ tested = $false; addr = ''; result = $null; busy = $false; closed = $false; wait = $null }
+    $origAddr = [string]$was.address
+    $refresh = {
+        $on = [bool]$cb.IsChecked; $acct.IsEnabled = $on; $acct.Opacity = $(if ($on) { 1.0 } else { 0.45 }); $bTest.IsEnabled = $on -and -not $ds.busy
+        $ph.Visibility = if ($ta.Text) { 'Collapsed' } else { 'Visible' }
+        $suffix.Visibility = if ($ta.Text.Contains('@')) { 'Collapsed' } else { 'Visible' }
+        $pph.Visibility = if ($pb.SecurePassword.Length -gt 0) { 'Collapsed' } else { 'Visible' }
+        $addr = Get-MailAddress $ta.Text
+        $styleOnly = [bool]$was.enabled -and $addr -eq $origAddr -and $pb.SecurePassword.Length -eq 0
+        $ok = if ($on) { ($ds.tested -and $ds.addr -eq $addr) -or $styleOnly } else { [bool]$was.enabled }
+        $bSave.IsEnabled = $ok -and -not $ds.busy; $bSave.Opacity = $(if ($bSave.IsEnabled) { 1.0 } else { 0.45 }) }.GetNewClosure()
+    $showResult = { param($kind, $text)
+        $rline.Visibility = 'Visible'; $rt.Text = $text
+        switch ($kind) { 'ok' { $ri.Text = [string][char]0xE930; $ri.Foreground = Brush '#22C55E'; $rt.Foreground = Brush '#4ADE80' }
+                         'auth' { $ri.Text = [string][char]0xEA39; $ri.Foreground = Brush '#F87171'; $rt.Foreground = Brush '#F87171' }
+                         'net' { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
+                         default { $ri.Text = ''; $rt.Foreground = Brush '#B4B4BC' } } }.GetNewClosure()
+    $cb.Add_Click({ $ds.tested = $false; & $refresh }.GetNewClosure())
+    $ta.Add_TextChanged({ $ds.tested = $false; & $refresh }.GetNewClosure())
+    $pb.Add_PasswordChanged({ $ds.tested = $false; & $refresh }.GetNewClosure())
+    $bTest.Add_Click({
+        $addr = Get-MailAddress $ta.Text
+        if (-not (Test-MailAddress $addr)) { & $showResult 'auth' 'Type your email address first.'; [void]$ta.Focus(); return }
+        $sec = $null
+        if ($pb.SecurePassword.Length -gt 0) { $sec = $pb.SecurePassword }                       # a copy; disposed when the check ends
+        elseif ([bool]$was.enabled -and $addr -eq $origAddr) { $sec = Read-MailSecret }
+        if (-not $sec) { & $showResult 'auth' 'Type your password first.'; [void]$pb.Focus(); return }
+        $ds.busy = $true; $ds.tested = $false; & $showResult 'busy' 'Testing...'; & $refresh
+        $onDone = { param($r)
+            $ds.busy = $false
+            if ($ds.closed) { return }
+            $tr = Get-MailTestText $r; & $showResult $tr.kind $tr.text
+            if ($tr.kind -eq 'ok') { $ds.tested = $true; $ds.addr = $addr; $ds.result = $r }
+            & $refresh }.GetNewClosure()
+        if (-not (Start-MailRun $addr $sec $onDone)) {   # a background check is running: start as soon as it ends
+            $w = New-Object System.Windows.Threading.DispatcherTimer; $w.Interval = [TimeSpan]::FromMilliseconds(300); $ds.wait = $w
+            $w.Add_Tick({ if ($ds.closed) { $w.Stop(); $sec.Dispose(); return }; if (Start-MailRun $addr $sec $onDone) { $w.Stop() } }.GetNewClosure()); $w.Start() } }.GetNewClosure())
+    $bSave.Add_Click({
+        if (-not [bool]$cb.IsChecked) {
+            if ([bool]$was.enabled -and (Show-MailConfirmOff $d)) { Disable-Mail; $pb.Clear(); $d.Close() }
+            return }
+        $addr = Get-MailAddress $ta.Text
+        $style = 'flash'; foreach ($k in @($radios.Keys)) { if ($radios[$k].IsChecked) { $style = $k } }
+        if ($pb.SecurePassword.Length -gt 0) { $ss = $pb.SecurePassword; try { Save-MailSecret $ss } finally { $ss.Dispose() } }
+        $set = ConvertTo-MailSettings @{ enabled = $true; address = $addr; style = $style }
+        Save-MailSettings $set
+        $global:mail.set = $set
+        if ($ds.tested -and $ds.result) {   # the good Test is this poll: no second sign-in right away; a stopped count starts again
+            $global:mail.state = New-MailState; $ds.result.epoch = $global:mail.state.epoch
+            [void](Update-MailState $global:mail.state $ds.result (Get-Date)); Start-MailPolling -firstSec 180 }
+        else { Update-MailUi $false; if (-not $global:mailTimer -or -not $global:mailTimer.IsEnabled) { if (-not $global:mail.state.stopped) { Start-MailPolling } } }
+        $pb.Clear(); $d.Close() }.GetNewClosure())
+    $bCancel.Add_Click({ $pb.Clear(); $d.Close() }.GetNewClosure())
+    $d.Add_Closed({ $ds.closed = $true; if ($ds.wait) { $ds.wait.Stop() }; $pb.Clear() }.GetNewClosure())
+    $d.Add_ContentRendered({ if ($cb.IsChecked) { [void]$ta.Focus() } else { [void]$cb.Focus() } }.GetNewClosure())
+    & $refresh
+    [void]$d.ShowDialog()
+}
+
 # ================= MAIN (runs only after every function above is defined) =================
 try {
     # CC-M3: one launcher per install folder. A Reload waits (up to 10 s) for the old copy to save and exit.
@@ -2584,12 +3187,14 @@ try {
     $global:relayoutTimer.Add_Tick({ $global:relayoutTimer.Stop(); $f = [bool]$global:forceRelayout; $global:forceRelayout = $false; [void](Invoke-Relayout -Force:$f) })
 
     $global:middle = New-MiddleState $global:cfg
+    try { Initialize-Mail } catch { $global:mail = $null; Add-Content -LiteralPath $global:logPath -Value ('{0}  email count settings unreadable: {1}' -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }   # v1.4.0: reads a per-user file only; no network
     if ((Get-LayoutMode $global:cfg) -eq 'single' -and @($global:cfg.panels).Count -ge 1) { Open-Single }
     else { foreach ($pc in @($global:cfg.panels)) { [void](Open-Panel $pc) } }
     Apply-Lock                                          # builds every panel (menus know every panel) + tool-window style + placement
     if ($global:panels.Count -eq 0) { throw 'No panels could be opened.' }
+    try { Start-MailPolling } catch { Write-LauncherError 'starting the email count' $_ }   # v1.4.0: nothing at all unless this Windows user turned it on
     Start-TrayAndHotkey                                 # Squint Major 1: tray icon + Ctrl+Alt+L bring the launcher forward (both layouts)
-    $global:app.Add_Exit({ Stop-TrayAndHotkey; try { Clear-VncDeadWorkers -All } catch {} })   # N1
+    $global:app.Add_Exit({ Stop-TrayAndHotkey; try { Clear-VncDeadWorkers -All } catch {}; try { Stop-Mail } catch {} })   # N1
     # Idle CPU: wait for the "show" signal on a thread-pool wait instead of polling every 400 ms; it posts to the UI thread.
     # R11-M1: its own Add-Type (WPF is loaded by now; BL.Native stays exactly as before). On failure: log, 1 s poll.
     $showWatch = $false
@@ -2597,7 +3202,7 @@ try {
         if (-not ('BL.Waits' -as [type])) { Add-Type -ReferencedAssemblies WindowsBase, System -TypeDefinition $global:WaitsSource }
         [BL.Waits]::WatchHandle($global:showEvent, $global:app.Dispatcher, [Action]{ Show-AllPanels }); $showWatch = $true
     } catch { Add-Content -LiteralPath $global:logPath -Value ("{0}  event waits unavailable ({1}); polling for the show signal instead" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }
-    try { if ('BL.Waits' -as [type]) { [BL.Waits]::WatchResume($global:app.Dispatcher, [Action]{ $global:forceRelayout = $true; Request-Relayout }) } }   # R12-N1: own try; R10-L1 re-dock after sleep
+    try { if ('BL.Waits' -as [type]) { [BL.Waits]::WatchResume($global:app.Dispatcher, [Action]{ $global:forceRelayout = $true; Request-Relayout; try { Resume-Mail } catch {} }) } }   # R12-N1: own try; R10-L1 re-dock after sleep
     catch { Add-Content -LiteralPath $global:logPath -Value ("{0}  resume watch unavailable ({1})" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }
     if (-not $showWatch) {
         $showTimer = New-Object System.Windows.Threading.DispatcherTimer; $showTimer.Interval = [TimeSpan]::FromMilliseconds(1000)

@@ -163,7 +163,7 @@ Check 'idle: relayout timer goes through Invoke-Relayout' ($src -match '\$global
 Check 'idle: show signal is a thread-pool wait, not a 400 ms poll' ($src -match 'RegisterWaitForSingleObject' -and $src -notmatch 'FromMilliseconds\(400\)\s*\r?\n\s*\$showTimer' -and $src -notmatch "showTimer\.Interval = \[TimeSpan\]::FromMilliseconds\(400\)")
 Check 'idle: no forever-repeating animations' ($src -notmatch 'RepeatBehavior')
 $ticks = [regex]::Matches($src, 'DispatcherTimer').Count
-Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback, VNC scan drain, VNC temp-file delete, VNC worker cleanup after close)' ($ticks -eq 7)
+Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback, VNC scan drain, VNC temp-file delete, VNC worker cleanup after close; v1.4.0 email count: poll, check drain, follow-ups after a click, Test wait)' ($ticks -eq 11)
 # First run: no file picker without a click
 $afp = [regex]::Matches($src, '(?m)^.*Ask-ForPath \$.*$') | ForEach-Object { $_.Value.Trim() }
 Check 'first run: Ask-ForPath only from Pick..., Edit Browse, or a launch click' (@($afp | Where-Object { $_ -notmatch '^\$f = Ask-ForPath \$b' -and $_ -notmatch '^\$found = Ask-ForPath \$btn \$kind' -and $_ -notmatch "^\`$p = Ask-ForPath \(\[pscustomobject\]" }).Count -eq 0)
@@ -179,7 +179,7 @@ $global:single = $null
 $sap = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-AllPanels' }, $true).Extent.Text
 Check 'R10-L1: Show-AllPanels (second launch, tray Show, Ctrl+Alt+L) forces relayout in both layouts' (([regex]::Matches($sap, '\$global:forceRelayout = \$true; Request-Relayout')).Count -eq 2)
 Check 'R10-L1: relayout tick honours the force flag' ($src -match '\$f = \[bool\]\$global:forceRelayout; \$global:forceRelayout = \$false; \[void\]\(Invoke-Relayout -Force:\$f\)')
-Check 'R10-L1: resume from sleep forces relayout (PowerModeChanged Resume)' ($src -match 'PowerModes\.Resume\) d\.BeginInvoke\(a\)' -and $src -match '\[BL\.Waits\]::WatchResume\(\$global:app\.Dispatcher, \[Action\]\{ \$global:forceRelayout = \$true; Request-Relayout \}\)')
+Check 'R10-L1: resume from sleep forces relayout (PowerModeChanged Resume)' ($src -match 'PowerModes\.Resume\) d\.BeginInvoke\(a\)' -and $src -match '\[BL\.Waits\]::WatchResume\(\$global:app\.Dispatcher, \[Action\]\{ \$global:forceRelayout = \$true; Request-Relayout; try \{ Resume-Mail \} catch \{\} \}\)')
 # R10-N1
 $c3 = [pscustomobject]@{ panels = @(1, 2, 3, 4) }
 Check 'R10-N1: notice when single hides panels 3+' (Test-HiddenPanelsNotice $c3 $true)
