@@ -74,11 +74,31 @@ function global:Get-ButtonType($btn) {
     return 'file'
 }
 
-function global:Find-Detected($btn) {
+# I-R6c: files matching a detect pattern, walked one path segment at a time so wildcard matches that are links
+# (junctions/symlinks) are never entered; only a local fixed-drive result is returned.
+function global:Find-LocalMatch([string]$pattern) {
+    $x = ([string]$pattern).Replace('/', '\')
+    if (-not (Test-LocalFixedPath $x)) { return $null }
+    $segs = @($x.Substring(3).Split([char]'\') | Where-Object { $_ })
+    $cur = @($x.Substring(0, 3))
+    for ($i = 0; $i -lt $segs.Count; $i++) {
+        $last = ($i -eq $segs.Count - 1); $next = @()
+        foreach ($c in $cur) {
+            foreach ($it in @(Get-ChildItem -LiteralPath $c -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like $segs[$i] })) {
+                if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+                if ($last -and -not $it.PSIsContainer) { $next += $it.FullName } elseif (-not $last -and $it.PSIsContainer) { $next += $it.FullName } } }
+        $cur = $next; if (-not $cur) { return $null } }
+    foreach ($f in $cur) { if (Test-LocalFixedPath $f) { return $f } }
+    return $null
+}
+function global:Find-Detected($btn, [switch]$AllowNetwork) {   # TS-L2: automatic (first-run) use skips non-local detect paths
     $d = $btn.detect; if (-not $d) { return $null }
     foreach ($pat in @($d.paths)) {
         if (-not $pat) { continue }
-        $hit = Get-ChildItem -Path (Expand $pat) -File -ErrorAction SilentlyContinue | Select-Object -First 1
+        $e = Expand $pat
+        if (Test-LocalFixedPath $e) { $hit = Find-LocalMatch $e; if ($hit) { return $hit }; continue }
+        if (-not $AllowNetwork) { continue }
+        $hit = Get-ChildItem -Path $e -File -ErrorAction SilentlyContinue | Select-Object -First 1   # the user clicked: a network path is fine
         if ($hit) { return $hit.FullName }
     }
     if ($d.lnkNames) {
@@ -86,10 +106,10 @@ function global:Find-Detected($btn) {
                    [Environment]::GetFolderPath('CommonStartMenu'), [Environment]::GetFolderPath('StartMenu'))
         $ws = New-Object -ComObject WScript.Shell
         foreach ($r in $roots) {
-            if (-not $r -or -not (Test-Path $r)) { continue }
+            if (-not $r -or (-not $AllowNetwork -and -not (Test-LocalFixedPath $r)) -or -not (Test-Path $r)) { continue }   # TS-L2: folders redirected to a share
             foreach ($n in @($d.lnkNames)) {
                 $lnk = Get-ChildItem -Path $r -Recurse -Filter "$n.lnk" -ErrorAction SilentlyContinue | Select-Object -First 1
-                if ($lnk) { $tp = $ws.CreateShortcut($lnk.FullName).TargetPath; if ($tp -and (Test-Path $tp)) { return $tp }; return $lnk.FullName }
+                if ($lnk) { $tp = $ws.CreateShortcut($lnk.FullName).TargetPath; if ($tp -and ($AllowNetwork -or (Test-LocalFixedPath $tp)) -and (Test-Path $tp)) { return $tp }; return $lnk.FullName }
             }
         }
     }
@@ -118,7 +138,7 @@ function global:Resolve-ButtonPath($btn, $kind) {
         [System.Windows.MessageBox]::Show("This button isn't set up yet.`nRight-click it > Edit this button to choose what it opens.", 'Launcher') | Out-Null
         return $null
     }
-    $found = Find-Detected $btn
+    $found = Find-Detected $btn -AllowNetwork   # the user clicked: network detect paths are fine
     if (-not $found) {
         $why = if (-not (Is-Todo $t)) { "Couldn't find:`n$t`n`nPlease pick it on this PC." } elseif ($btn.askTitle) { $btn.askTitle + '.' } else { 'Please pick the file for this button.' }
         [System.Windows.MessageBox]::Show($why + "`n`nIf you pick the wrong one, right-click the button > Edit this button to change it.", 'Launcher') | Out-Null
@@ -219,17 +239,19 @@ function global:Get-IconImage($path) {
 }
 
 
+function global:Get-DefaultPic([string]$kind) { switch ($kind) { 'website' { 'images/globe.png' } 'file' { 'images/guide.png' } 'script' { 'images/screenconnect.png' } 'builtin' { 'images/power.png' } default { 'images/register.png' } } }
 function global:Resolve-Img($path) { if ([IO.Path]::IsPathRooted($path)) { $path } else { Join-Path $global:here $path } }
 
 function global:Get-PicSource($btn, $px) {
     if (-not $btn.image) { return $null }
     if ($btn.image -eq 'icon') { return Get-IconImage $btn.target }
     $p = Resolve-Img $btn.image
+    if (-not (Test-LocalFixedPath $p)) { $p = Resolve-Img (Get-DefaultPic (Get-ButtonType $btn)) }   # TS-L2: non-local picture -> default art, never touched
     if ($px -and $px -le 48) {   # small spots use "<name>-small.png" when it exists (e.g. Red Dog logo without the wordmark)
         $sm = Join-Path ([IO.Path]::GetDirectoryName($p)) ([IO.Path]::GetFileNameWithoutExtension($p) + '-small' + [IO.Path]::GetExtension($p))
         if (Test-Path -LiteralPath $sm) { $p = $sm }
     }
-    if (-not (Test-Path $p)) { return $null }
+    if (-not (Test-Path -LiteralPath $p)) { return $null }
     try {
         $bi = New-Object System.Windows.Media.Imaging.BitmapImage
         # CC-N2: load from a stream so paths with # or % work
@@ -357,11 +379,13 @@ function global:Test-LocalFixedPath([string]$path, [scriptblock]$DriveType, [int
         return (Test-LocalFixedPath ($inner.TrimEnd('\') + '\' + $x.Substring(3)) $DriveType ($depth + 1)) }
     if ($dd -match '^(?i)\\Device\\(Mup|LanmanRedirector|WebDavRedirector)') { return $false }
     $bad = 0x400 -bor 0x1000 -bor 0x40000 -bor 0x400000                                      # ReparsePoint, Offline, RECALL_ON_OPEN, RECALL_ON_DATA_ACCESS
-    $cur = $x.Replace('/', '\').TrimEnd('\')
-    while ($cur.Length -gt 2) {
+    # R7-L1: root-down (drive root's first folder, then each deeper one); stop at the first link so nothing past it is read
+    $cur = $x.Substring(0, 2)
+    foreach ($seg in @($x.Substring(3).Replace('/', '\').Split([char]'\') | Where-Object { $_ })) {
+        $cur = $cur + '\' + $seg
         $a = & $global:PathProbe.Attr $cur
-        if ($a -ne $null -and ([int]$a -band $bad)) { return $false }
-        $i = $cur.LastIndexOf('\'); if ($i -lt 2) { break }; $cur = $cur.Substring(0, $i) }
+        if ($a -eq $null) { break }                                                             # not there yet: nothing deeper to read
+        if ([int]$a -band $bad) { return $false } }
     return $true
 }
 # OP-N3: the file whose icon is drawn: the checked target itself, or for a .lnk its checked target (never the .lnk's own
@@ -661,8 +685,9 @@ function global:Test-ButtonReady($btn) {
     if ($kind -notin 'program', 'file', 'script') { return $true }
     $t = Expand $btn.target
     if (-not (Is-Todo $t)) {
-        if (Test-Path -LiteralPath $t) { return $true }
         if ($kind -eq 'program' -and $t -notmatch '[\\/]') { return $true }
+        if (-not (Test-LocalFixedPath $t)) { return $true }   # TS-L2: non-local = not checked here (resolved on click), never listed as missing
+        if (Test-Path -LiteralPath $t) { return $true }
     }
     $found = Find-Detected $btn
     if ($found) { Set-Prop $btn 'target' $found; return $true }
