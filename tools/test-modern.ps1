@@ -152,7 +152,11 @@ foreach ($b in 'C:\x\a.chm', 'C:\x\a.jar', 'C:\x\a.wsc', 'C:\x\a.settingcontent-
     Check "LJ M18: file target refused: $b" ([bool](Test-CustomSlotTarget 'file' $b)) }
 foreach ($b in 'C:\x\run.ex?', 'C:\x\*.exe', 'C:\x\a.exe.', 'C:\x\a.exe ', 'C:\x\a.exe:s', 'C:\x\[a].exe') { Check "LJ M18: program target refused: $b" ([bool](Test-CustomSlotTarget 'program' $b)) }
 foreach ($e in $global:CustomFileExts) { Check "LJ M18: allowlisted .$e passes" ($null -eq (Test-CustomSlotTarget 'file' "C:\Docs\a b.$e")) }
-Check 'LJ M18: allowlist has no macro, archive, image or script types' (-not @($global:CustomFileExts | Where-Object { $_ -match '^(docm|xlsm|pptm|zip|iso|img|vhdx?|exe|bat|cmd|ps1|js|chm|jar)$' }).Count)
+foreach ($b in 'C:\x\a.doc', 'C:\x\a.xls', 'C:\x\a.ppt', 'C:\x\a.odt', 'C:\x\a.ods', 'C:\x\a.rtf', 'C:\x\X~1.DOC', 'C:\PROGRA~1\a.pdf', '\\srv\SHARE~2\a.pdf') { Check "LJ M19-M1: file target refused: $b" ([bool](Test-CustomSlotTarget 'file' $b)) }
+Check 'LJ M19-M1: short name refused for programs too, and after %VAR% expansion' ([bool](Test-CustomSlotTarget 'program' 'C:\PROGRA~1\App\app.exe') -and $(try { $env:BLT_SHORT = 'C:\PROGRA~1'; [bool](Test-CustomSlotTarget 'file' '%BLT_SHORT%\a.pdf') } finally { Remove-Item Env:BLT_SHORT -ErrorAction SilentlyContinue }))
+Check 'LJ M19-M1: allowlist is exactly the 21 types' ($global:CustomFileExts.Count -eq 21 -and (($global:CustomFileExts | Sort-Object) -join ',') -eq 'avi,bmp,csv,docx,gif,jpeg,jpg,m4a,mov,mp3,mp4,pdf,png,pptx,tif,tiff,txt,wav,webp,wmv,xlsx')
+Check 'LJ M19-M1: a tilde without a digit is fine (C:\My~Docs\a.pdf)' ($null -eq (Test-CustomSlotTarget 'file' 'C:\My~Docs\a.pdf'))
+Check 'LJ M18: allowlist has no macro, archive, image or script types' (-not @($global:CustomFileExts | Where-Object { $_ -match '^(doc|xls|ppt|rtf|odt|ods|docm|xlsm|pptm|zip|iso|img|vhdx?|exe|bat|cmd|ps1|js|chm|jar)$' }).Count)
 $env:BLT_DIR = 'C:\Docs'; $env:BLT_BAD = 'C:\x\run.bat'; $env:BLT_WILD = 'C:\x\*'
 Check 'CC L1: %VAR% expanded then checked (good)' ($null -eq (Test-CustomSlotTarget 'file' '%BLT_DIR%\a.pdf'))
 Check 'CC L1: %VAR% expanding to a script or wildcard is refused' ([bool](Test-CustomSlotTarget 'file' '%BLT_BAD%') -and [bool](Test-CustomSlotTarget 'file' '%BLT_WILD%\a.pdf') -and [bool](Test-CustomSlotTarget 'file' '%BLT_NOPE_UNSET%\a.pdf'))

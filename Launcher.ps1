@@ -388,8 +388,8 @@ function global:Test-DangerButton($btn) {
 # Only Program, Website (http/https) or File; never a script, never arguments, never elevated. Targets are untrusted input.
 $global:CustomSlotTypes = @('program', 'website', 'file')
 $global:CustomSlotBadExt = '(?i)\.(ps1|psm1|psd1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|msc|scr|pif|com|cpl|reg|inf|msi|msp|application|appref-ms|url|scf|lnk)$'
-# LJ M18-M1: File targets are an ALLOWLIST of documents, pictures and media (no macro Office types, no archives or disk images)
-$global:CustomFileExts = @('pdf', 'txt', 'rtf', 'csv', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tif', 'tiff', 'mp3', 'wav', 'm4a', 'mp4', 'mov', 'wmv', 'avi')
+# LJ M18-M1/M19-M1: File targets are an ALLOWLIST of documents, pictures and media: only the macro-free OOXML Office types (no .doc/.xls/.ppt/.rtf/.odt/.ods, which can carry macros or embedded objects), no archives or disk images
+$global:CustomFileExts = @('pdf', 'txt', 'csv', 'docx', 'xlsx', 'pptx', 'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'tif', 'tiff', 'mp3', 'wav', 'm4a', 'mp4', 'mov', 'wmv', 'avi')
 $global:CustomFileFilter = 'Documents, pictures and media|' + (($global:CustomFileExts | ForEach-Object { '*.' + $_ }) -join ';')
 function global:Test-CustomSlot($btn) { return ($null -ne $btn -and [string]$btn.slot -eq 'custom') }
 function global:Test-SlotEmpty($btn) { return ((Test-CustomSlot $btn) -and [bool]$btn.empty) }
@@ -422,6 +422,7 @@ function global:Test-CustomSlotTarget([string]$type, [string]$target) {   # $nul
         return (Test-CustomSlotTarget $type $x) }
     if (([string]$target).TrimStart() -match '[. ]$') { return "That path isn't allowed (a name ends with a dot or a space)." }   # checked before Trim: 'run.bat ' must not pass
     if (($t -replace '^[a-zA-Z]:', '').Contains(':')) { return "That path isn't allowed (':' after the drive letter)." }   # LJ M18-M1: no alternate data streams
+    if (@($t -split '\\' | Where-Object { $_ -match '~\d' }).Count) { return "Use the full long path, not a short 8.3 name (like PROGRA~1). Browse... gives the full path." }   # LJ M19-M1: x.docm -> X~1.DOC
     if (@($t -split '\\' | Where-Object { $_ -match '[. ]$' }).Count) { return "That path isn't allowed (a name ends with a dot or a space)." }   # Windows drops them: run.bat. runs run.bat
     if ($t -match $global:CustomSlotBadExt) { return "Scripts and shortcuts can't be custom buttons. Pick the program or file itself." }
     if ($type -eq 'program' -and $t -notmatch '(?i)\.exe$') { return 'A program must be an .exe file.' }
