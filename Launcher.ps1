@@ -693,6 +693,16 @@ function global:New-PanelFromMenu {
 
 # ================= MAIN (runs only after every function above is defined) =================
 try {
+    # CC-M3: one launcher per install folder. A Reload waits (up to 10 s) for the old copy to save and exit.
+    $sha = New-Object System.Security.Cryptography.SHA1Managed
+    $hash = ([BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($global:here.ToLowerInvariant()))) -replace '-', '').Substring(0, 16)
+    $created = $false
+    $global:mutex = New-Object System.Threading.Mutex($true, "Local\ButtonLauncher-$hash", [ref]$created)
+    if (-not $created) {
+        $got = $false
+        try { $got = $global:mutex.WaitOne(10000) } catch [System.Threading.AbandonedMutexException] { $got = $true }
+        if (-not $got) { exit 0 }   # already running
+    }
     try { $global:cfg = Get-Content -LiteralPath $global:cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if (-not $global:cfg) { throw 'buttons.json is empty.' } }
     catch {
         $why = $_.Exception.Message; $bak = $global:cfgPath + '.bak'   # CC-M2: fall back to the last good copy
