@@ -122,7 +122,7 @@ if (-not (Test-Path -LiteralPath $userCfg)) { Copy-Item -LiteralPath (Join-Path 
 Get-ChildItem $dest -Recurse -File | Unblock-File -ErrorAction SilentlyContinue
 
 # Uninstall.ps1 comes from the literal template built below (see __UNINST_B64__).
-$uninst = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__UNINST_B64__')).Replace('__NAME__', $AppName)
+$uninst = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__UNINST_B64__'))   # name already filled in by the builder
 Set-Content (Join-Path $dest 'Uninstall.ps1') $uninst -Encoding UTF8
 $unCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$dest\Uninstall.ps1`""
 
@@ -165,7 +165,8 @@ Start-Process -FilePath $exe -WorkingDirectory $dest
 $where = if ($Desktop) { 'the Start menu and the desktop' } else { 'the Start menu' }
 [System.Windows.MessageBox]::Show("$AppName is installed.`nFind it in $where (type its name in Windows search).`nUninstall from Settings > Apps.", "$AppName Setup") | Out-Null
 '@
-$unB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($uninstTemplate))
+# Fill the uninstaller's name here: replacing __NAME__ inside $install would also rewrite a .Replace('__NAME__',...) call there.
+$unB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($uninstTemplate.Replace('__NAME__', $safe)))
 $install = $install.Replace('__NAME__', $safe).Replace('__B64__', $b64).Replace('__UNINST_B64__', $unB64).Replace('__VERSION__', $AppVersion)   # $safe is allow-listed: no quotes possible
 $ps1Name = "$safe Setup.ps1"
 $ps1 = Join-Path $OutDir $ps1Name
