@@ -42,6 +42,13 @@ function global:Brush($hex) { New-Object System.Windows.Media.SolidColorBrush ([
 function global:Expand($s) { [Environment]::ExpandEnvironmentVariables([string]$s) }
 
 # ---------- running a button: Program / Website / File / Script / Built-in ----------
+# CC-L1/LJ-L2: website buttons open only http, https or mailto. Bare addresses get https://. Returns $null if not allowed.
+function global:Get-SafeUrl($u) {
+    $u = ([string]$u).Trim(); if (-not $u) { return $null }
+    if ($u -match '^(?i)(https?://|mailto:)') { return $u }
+    if ($u -match '^[a-z][a-z0-9+.-]*:(?!\d)' -or $u -match '^[a-z]:' -or $u -match '^[\\/]') { return $null }   # other scheme, drive or UNC path
+    return 'https://' + $u
+}
 function global:Is-Todo($t) { [string]::IsNullOrWhiteSpace($t) -or ([string]$t).Trim() -like 'TODO*' }
 
 function global:Get-ButtonType($btn) {
@@ -165,7 +172,8 @@ function global:Invoke-Button($btn) {
             'website' {
                 $u = Expand $btn.target
                 if (Is-Todo $u) { [System.Windows.MessageBox]::Show("This button isn't set up yet.`nRight-click it > Edit this button to add a web address.", 'Launcher') | Out-Null; return $false }
-                if ($u -notmatch '^[a-z][a-z0-9+.-]*:') { $u = 'https://' + $u }
+                $u = Get-SafeUrl $u
+                if (-not $u) { [System.Windows.MessageBox]::Show("This button's web address isn't allowed.`nWebsite buttons can only open http, https or mailto addresses.`nRight-click it > Edit this button to fix it.", 'Launcher') | Out-Null; return $false }
                 Start-Process $u; return $true
             }
             default {
@@ -367,7 +375,8 @@ function global:Edit-Button($btn) {
     $tT = TB $btn.target; $bBrowse = Btn 'Browse...'; $bTest = Btn 'Test'
     $tLbl = AddRow 'target' 'Path' $tT $bBrowse
     $tUrl = TB $btn.target; [void](AddRow 'url' 'Web address' $tUrl $bTest)
-    $bTest.Add_Click({ $u = $tUrl.Text; if ($u -and $u -notmatch '^[a-z][a-z0-9+.-]*:') { $u = 'https://' + $u }; if ($u) { try { Start-Process $u } catch {} } }.GetNewClosure())
+    $bTest.Add_Click({ if (-not $tUrl.Text.Trim()) { return }; $u = Get-SafeUrl $tUrl.Text
+        if ($u) { try { Start-Process $u } catch {} } else { [System.Windows.MessageBox]::Show('Only http, https or mailto addresses can be opened.', 'Test') | Out-Null } }.GetNewClosure())
     $tA = TB $btn.args; $tA.ToolTip = 'Optional, e.g. a host:port for VNC'; [void](AddRow 'args' 'Arguments' $tA $null)
     $chAdmin = New-Object System.Windows.Controls.CheckBox; $chAdmin.Content = 'Run as admin (Windows will ask)'; $chAdmin.IsChecked = [bool]$btn.runAsAdmin
     [void](AddRow 'admin' '' $chAdmin $null)
