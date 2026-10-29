@@ -81,6 +81,14 @@ Check 'RELEASE.md lists verify-exe, dry-run, check-launcher (R3-L2)' ((Get-Conte
 Check 'builder prints the RELEASE.md reminder (R3-L2)' ($ast.Extent.Text -match 'RELEASE\.md checklist')
 Check 'builder checks the exe SHA-256' ($ast.Extent.Text -match 'does not match its recorded SHA-256')
 Check 'R4-L2: uninstall delete has no recursive Directory.Delete' ($tmpl['$uninstTemplate'] -notmatch 'Delete\(\$d, \$true\)' -and $tmpl['$uninstTemplate'] -match 'for \(\$i = \$order\.Count - 1')
+# R6-N1: every SVG master in the repo's history is a known shipped hash
+$svgMiss = @(); foreach ($c in (& git -C $root rev-list --all -- images/svg)) { foreach ($ln in (& git -C $root ls-tree -r $c images/svg)) {
+    $bid = ($ln -split '\s+')[2]; $tmpf = [IO.Path]::GetTempFileName()
+    $pi = New-Object System.Diagnostics.ProcessStartInfo -Property @{ FileName = 'git'; Arguments = "-C `"$root`" cat-file blob $bid"; RedirectStandardOutput = $true; UseShellExecute = $false }
+    $pr = [System.Diagnostics.Process]::Start($pi); $ms = New-Object IO.MemoryStream; $pr.StandardOutput.BaseStream.CopyTo($ms); $pr.WaitForExit()
+    $h = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($ms.ToArray())).Replace('-', '').ToLowerInvariant()
+    if (-not $tmpl['$install'].Contains("'$h'")) { $svgMiss += $h } ; Remove-Item $tmpf } }
+Check 'R6-N1: all older SVG master hashes known to the installer' ($svgMiss.Count -eq 0)
 Check 'builder never ships buttons.json' ($ast.Extent.Text -notmatch "'Launcher.ps1','buttons.json'" -and $ast.Extent.Text -match "Join-Path \`$stage 'buttons.default.json'")
 
 # Simulated install -> reinstall -> uninstall in a temp dir. Registry, shortcuts, message boxes, processes are mocked.
