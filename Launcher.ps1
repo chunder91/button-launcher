@@ -926,7 +926,9 @@ function global:Open-Panel($pc) {
 # Option B: Start Jartrek Security moves above the Restarts group. Only a buttons.json whose bottom panel still has the
 # exact old default order (same labels, same order) is migrated; anything the user rearranged is left alone.
 function global:Update-OldDefaultOrder {
-    if ([int]$global:cfg.layoutVersion -ge 2) { return }
+    $lv = 0   # MB-L1: a missing or bad layoutVersion counts as 1
+    if (-not [int]::TryParse([string]$global:cfg.layoutVersion, [ref]$lv)) { $lv = 1 }
+    if ($lv -ge 2) { return }
     $old = @("BACK OFFICE`nUSER GUIDE`nVERSION 11", "REGISTER`nUSER GUIDE`nVERSION 11", 'PLCE', "DEPARTMENT`nOF`nREVENUE",
              "RESTART`nSCREEN CONNECT", "START`nJARTREK`nSECURITY", "RESTART`nCOMPUTER")
     $changed = $false

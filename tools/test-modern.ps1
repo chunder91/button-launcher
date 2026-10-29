@@ -63,5 +63,8 @@ Check 'migration: saved with both panels and layoutVersion 2' (@($saved.panels).
 $global:cfg = $oldJson | ConvertFrom-Json
 $b = @($global:cfg.panels[1].buttons); $global:cfg.panels[1].buttons = @($b[1], $b[0]) + $b[2..6]; Update-OldDefaultOrder
 Check 'migration: a rearranged panel is left alone' ((([string]$global:cfg.panels[1].buttons[0].label) -replace "`n", ' ') -eq 'REGISTER USER GUIDE VERSION 11' -and (([string]$global:cfg.panels[1].buttons[4].label) -replace "`n", ' ') -eq 'RESTART SCREEN CONNECT')
+foreach ($bad in 'abc', '2.5x', '') { $global:cfg = $oldJson | ConvertFrom-Json; $global:cfg | Add-Member layoutVersion $bad -Force; $e = $null
+    try { Update-OldDefaultOrder } catch { $e = $_ }
+    Check "MB-L1: layoutVersion '$bad' treated as 1 (migrates, no error)" (-not $e -and $global:cfg.layoutVersion -eq 2 -and (([string]$global:cfg.panels[1].buttons[4].label) -replace "`n", ' ') -eq 'START JARTREK SECURITY') }
 Remove-Item -LiteralPath $tmp -Recurse -Force
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
