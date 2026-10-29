@@ -26,7 +26,8 @@ WHAT EACH BUTTON DOES
                        admin permission (click Yes), then a message says
                        whether it worked.
   START JARTREK SECURITY  Not set yet. Edit it to choose the program.
-  RESTART COMPUTER     Asks first (No is the default), then force-restarts.
+  RESTART COMPUTER     Always asks first (No is the default), then
+                       force-restarts. It asks even if "Ask first" is blank.
   If a saved program or PDF isn't on this PC (like after installing on a
   different computer), the button asks you to pick it once, then remembers.
 
@@ -68,7 +69,9 @@ PANELS
   monitors, move the taskbar, or wake the PC.
 
   LOCK: Right-click a panel > "Lock panels" (on by default).
-    Locked   = can't be dragged, no grey bar, no taskbar button, not in Alt+Tab.
+    Locked   = can't be dragged, no grey bar, no taskbar button, not in Alt+Tab,
+               and right-click shows only "Unlock to edit..." and "Close this
+               panel", so nobody can change or delete buttons by accident.
     Unlocked = drag by the grey bar or edge. When you let go it snaps to the
                nearest edge or corner and remembers it. Lock again when done.
   SIZE: right-click > Size > Small / Medium / Large.
@@ -115,3 +118,25 @@ ADVANCED: buttons.json
   Everything above is saved in buttons.json. You never need to edit it, but
   you can (right-click > "Edit buttons.json in Notepad", then Reload).
   In paths, every backslash must be doubled:  C:\\Users\\Charles\\file.pdf
+
+SET UP THIS PC
+  The first time the launcher runs (right after install) a "Set up this PC"
+  window lists every button whose program or file isn't on this PC yet, with
+  a Pick... button for each. Run it again any time: unlock, then right-click
+  a panel > "Set up this PC...".
+  If a button's picture file is missing, a small amber dot shows in its corner
+  (point at it to see the file name) and it's noted in launcher-error.log.
+
+SAFETY NOTES
+  - Website buttons only open http, https or mailto addresses.
+  - Restart ScreenConnect always shows the Windows admin (UAC) prompt.
+  - The launcher installs per-user in %LOCALAPPDATA%\Programs\<name>. Any
+    program running as this Windows user can change Launcher.ps1 or
+    buttons.json there, including "Run as admin" and script arguments. So if
+    a launcher button ever shows an admin prompt you didn't expect, click No,
+    and don't type an admin password into it on a PC you don't trust.
+    (A per-machine install to Program Files is not available yet.)
+  - Script buttons run with the arguments written in buttons.json, as typed.
+  - If Windows shows an admin prompt when you run "<name> Setup.exe", click
+    No. The installer is per-user and doesn't need admin; saying Yes would
+    install it into the admin account instead.
