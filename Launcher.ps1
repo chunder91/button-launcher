@@ -84,8 +84,9 @@ function global:Find-LocalMatch([string]$pattern) {
     for ($i = 0; $i -lt $segs.Count; $i++) {
         $last = ($i -eq $segs.Count - 1); $next = @()
         foreach ($c in $cur) {
-            foreach ($it in @(Get-ChildItem -LiteralPath $c -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -like $segs[$i] })) {
-                if ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+            $seg = $segs[$i]
+            foreach ($it in @(Get-ChildItem -LiteralPath $c -Force -ErrorAction SilentlyContinue)) {
+                if (-not ($it.Name -like $seg) -or ($it.Attributes -band [IO.FileAttributes]::ReparsePoint)) { continue }
                 if ($last -and -not $it.PSIsContainer) { $next += $it.FullName } elseif (-not $last -and $it.PSIsContainer) { $next += $it.FullName } } }
         $cur = $next; if (-not $cur) { return $null } }
     foreach ($f in $cur) { if (Test-LocalFixedPath $f) { return $f } }
