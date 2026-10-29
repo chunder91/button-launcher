@@ -34,6 +34,95 @@ VIAddVersionKey "LegalCopyright" "Charles Cipolla"
 Page instfiles
 UninstPage instfiles
 
+
+; NSIS RMDir /r recurses into every directory entry without checking FILE_ATTRIBUTE_REPARSE_POINT (Source/exehead/util.c
+; myDelete), and CopyFiles is SHFileOperation, which copies through links. So: never copy an install that has links,
+; and unlink every link (the link only) before any RMDir /r. $R7 = "count" or "unlink"; $R8 += links found.
+!macro WALKLINKS un
+Function ${un}WalkLinks
+  Exch $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  ClearErrors
+  FindFirst $1 $2 "$0\*.*"
+  loop:
+    StrCmp $2 "" done
+    StrCmp $2 "." next
+    StrCmp $2 ".." next
+    System::Call 'kernel32::GetFileAttributesW(w "$0\$2")i.r3'
+    ${If} $3 = -1
+      IntOp $R8 $R8 + 1          ; unreadable entry: treat as unsafe
+      Goto next
+    ${EndIf}
+    IntOp $4 $3 & 0x400
+    ${If} $4 <> 0
+      IntOp $R8 $R8 + 1
+      ${If} $R7 == "unlink"
+        IntOp $4 $3 & 0x10
+        ${If} $4 <> 0
+          RMDir "$0\$2"            ; RemoveDirectory on a junction/dir symlink removes the link, not the target
+        ${Else}
+          Delete "$0\$2"           ; a file symlink is deleted as-is
+        ${EndIf}
+      ${EndIf}
+    ${Else}
+      IntOp $4 $3 & 0x10
+      ${If} $4 <> 0
+        Push "$0\$2"
+        Call ${un}WalkLinks
+      ${EndIf}
+    ${EndIf}
+  next:
+    FindNext $1 $2
+    Goto loop
+  done:
+  FindClose $1
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+; $R6 = dir. Sets $R5 = 1 if the dir itself is a link.
+Function ${un}IsLink
+  StrCpy $R5 0
+  System::Call 'kernel32::GetFileAttributesW(w "$R6")i.r9'
+  ${If} $9 <> -1
+    IntOp $9 $9 & 0x400
+    ${If} $9 <> 0
+      StrCpy $R5 1
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+!macroend
+!insertmacro WALKLINKS ""
+!insertmacro WALKLINKS "un."
+
+; Remove a folder tree without following links: refuse a link root, unlink inner links, re-check, then RMDir /r.
+!macro SAFE_RMDIR un dir
+  StrCpy $R6 "${dir}"
+  Call ${un}IsLink
+  ${If} $R5 = 1
+    RMDir "${dir}"
+  ${Else}
+    StrCpy $R7 "unlink"
+    StrCpy $R8 0
+    Push "${dir}"
+    Call ${un}WalkLinks
+    StrCpy $R7 "count"
+    StrCpy $R8 0
+    Push "${dir}"
+    Call ${un}WalkLinks
+    ${If} $R8 = 0
+      RMDir /r "${dir}"
+    ${Else}
+      DetailPrint "Not removed (links left inside): ${dir}"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 Var Stage
 Var Old
 Var Keep
@@ -86,10 +175,24 @@ Section "Install"
   CreateDirectory "$LOCALAPPDATA\Programs"
   CreateDirectory "$Stage"
   ${If} ${FileExists} "$INSTDIR\*.*"
+    StrCpy $R6 "$INSTDIR"
+    Call IsLink
+    StrCpy $R7 "count"
+    StrCpy $R8 0
+    ${If} $R5 = 0
+      Push "$INSTDIR"
+      Call WalkLinks
+    ${EndIf}
+    ${If} $R5 = 1
+    ${OrIf} $R8 > 0
+      RMDir "$Stage"
+      StrCpy $R9 "${APPNAME} could not be updated: the install folder is, or contains, a folder or file link (junction or symlink), and links are never copied or followed.$\n$INSTDIR$\n$\nYour current install was not changed. Remove the link and run Setup again."
+      Call Fail
+    ${EndIf}
     ClearErrors
     CopyFiles /SILENT "$INSTDIR\*.*" "$Stage"
     ${If} ${Errors}
-      RMDir /r "$Stage"
+      !insertmacro SAFE_RMDIR "" "$Stage"
       StrCpy $R9 "${APPNAME} could not be updated: copying the current install failed.$\n$\nYour current install was not changed."
       Call Fail
     ${EndIf}
@@ -109,7 +212,7 @@ Section "Install"
   !insertmacro PAYLOAD_FILES
   ${If} ${Errors}
     SetOutPath "$TEMP"
-    RMDir /r "$Stage"
+    !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be installed: unpacking the files failed.$\n$\nNothing was added to the Start menu or the registry. Your current install was not changed."
     Call Fail
   ${EndIf}
@@ -126,7 +229,7 @@ Section "Install"
   ${OrIfNot} ${FileExists} "$Stage\buttons.default.json"
   ${OrIfNot} ${FileExists} "$Stage\Uninstall.exe"
     SetOutPath "$TEMP"
-    RMDir /r "$Stage"
+    !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be installed: core files are missing after unpacking.$\n$\nNothing was added to the Start menu or the registry. Your current install was not changed."
     Call Fail
   ${EndIf}
@@ -136,7 +239,7 @@ Section "Install"
     ClearErrors
     Rename "$INSTDIR" "$Old"
     ${If} ${Errors}
-      RMDir /r "$Stage"
+      !insertmacro SAFE_RMDIR "" "$Stage"
       StrCpy $R9 "${APPNAME} could not be updated (a file may be in use). Your current install was not changed."
       Call Fail
     ${EndIf}
@@ -153,12 +256,12 @@ Section "Install"
         Call Fail
       ${EndIf}
     ${EndIf}
-    RMDir /r "$Stage"
+    !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be updated (a file may be in use). Your current install was not changed."
     Call Fail
   ${EndIf}
   ${If} $2 = 1
-    RMDir /r "$Old"
+    !insertmacro SAFE_RMDIR "" "$Old"
   ${EndIf}
   SetOutPath "$INSTDIR"
 
@@ -219,6 +322,13 @@ Function un.onInit
     SetErrorLevel 1
     Quit
   ${EndIf}
+  StrCpy $R6 "$INSTDIR"
+  Call un.IsLink
+  ${If} $R5 = 1
+    MessageBox MB_OK "Uninstall stopped: the install folder is a link (junction or symlink), so nothing was removed.$\n$INSTDIR" /SD IDOK
+    SetErrorLevel 1
+    Quit
+  ${EndIf}
   ${IfNot} ${Silent}
     MessageBox MB_YESNO "Remove ${APPNAME}?" IDYES +2
     Quit
@@ -231,6 +341,20 @@ Section "Uninstall"
   nsExec::ExecToLog `${PS} "& {${STOP_LAUNCHER}}"`
   Pop $0
   Sleep 500
+  ; Links first: unlink them, and if any is left, stop before touching shortcuts, registry or files.
+  StrCpy $R7 "unlink"
+  StrCpy $R8 0
+  Push "$INSTDIR"
+  Call un.WalkLinks
+  StrCpy $R7 "count"
+  StrCpy $R8 0
+  Push "$INSTDIR"
+  Call un.WalkLinks
+  ${If} $R8 > 0
+    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: the install folder contains a folder or file link (junction or symlink) that could not be removed safely, so nothing was removed.$\n$INSTDIR" /SD IDOK
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
   Delete "$DESKTOP\${APPNAME}.lnk"
   Delete "$SMSTARTUP\${APPNAME}.lnk"
@@ -249,5 +373,5 @@ Section "Uninstall"
   ${EndIf}
   ; Same as the IExpress uninstaller: the whole folder goes, including buttons.json and pictures.
   SetOutPath "$TEMP"
-  RMDir /r "$INSTDIR"
+  !insertmacro SAFE_RMDIR "un." "$INSTDIR"
 SectionEnd

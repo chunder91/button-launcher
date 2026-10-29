@@ -105,7 +105,8 @@ PANELS
   The installer carries all of this, so panels land right on any PC.
 
 MAKE AN INSTALLER FOR ANOTHER PC
-  Right-click a panel > "Build installer..." (or right-click
+  From the source folder (installed copies don't include the builder):
+  right-click a panel > "Build installer..." (or right-click
   Build-Installer.ps1 > Run with PowerShell). It makes "<name> Setup.exe" in
   the installer-output folder with your current buttons and pictures inside.
   Copy that one file to the other PC and double-click it. No admin needed.

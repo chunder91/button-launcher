@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the per-user NSIS installer from a committed tree, reproducibly (same commit -> same bytes).
 # Usage: tools/build-nsis.sh [commit=HEAD] [outdir=installer-output]. Needs makensis (apt nsis), python3, pwsh, git.
-# Payload = the same files Build-Installer.ps1 ships (no tests, no tools). No network access.
+# Payload = the files Build-Installer.ps1 ships minus Build-Installer.ps1 itself (a build tool; AV flags it). No tests, no tools. No network access.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 rev="${1:-HEAD}"; out="${2:-$root/installer-output}"
@@ -14,7 +14,7 @@ epoch="$(git -C "$root" show -s --format=%ct "$commit")"
 # exe must be the one whose hash was recorded (same rule as Build-Installer.ps1)
 want="$(awk '{print tolower($1)}' "$tmp/exe/ButtonLauncher.exe.sha256")"; have="$(sha256sum "$tmp/ButtonLauncher.exe" | cut -d' ' -f1)"
 [ "$want" = "$have" ] || { echo "FAIL: ButtonLauncher.exe does not match exe/ButtonLauncher.exe.sha256"; exit 1; }
-for f in Launcher.ps1 ButtonLauncher.exe "Start Launcher.vbs" "Start Launcher.cmd" README.txt Build-Installer.ps1; do cp "$tmp/$f" "$src/"; done
+for f in Launcher.ps1 ButtonLauncher.exe "Start Launcher.vbs" "Start Launcher.cmd" README.txt; do cp "$tmp/$f" "$src/"; done
 cp "$tmp/buttons.default.json" "$src/"; cp "$tmp/exe/ButtonLauncher.exe.sha256" "$src/"; cp -r "$tmp/images" "$src/"
 python3 - "$src" "$tmp" "$root" <<'PY'
 import json, sys, os, hashlib, re, subprocess
@@ -47,6 +47,8 @@ for d, _, fs in sorted(os.walk(src)):
     for f in sorted(fs): g.write('  File "%s"\n' % os.path.join(d, f))
 g.write('  SetOutPath "$Stage"\n!macroend\n'); g.close()
 PY
+bad="$(find "$src" -iname 'Build-Installer.ps1' -o -ipath '*/tools/*' -o -iname 'test-*' -o -iname 'check-launcher.ps1')"
+[ -z "$bad" ] || { echo "FAIL: build tools/tests in payload: $bad"; exit 1; }
 find "$tmp" -exec touch -h -d "@$epoch" {} +
 mkdir -p "$out"; exe="$out/ButtonLauncher-Setup-v$ver.exe"
 SOURCE_DATE_EPOCH="$epoch" makensis -V2 -WX ${NSIS_EXTRA:-} -NOCD -INPUTCHARSET UTF8 \
