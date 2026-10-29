@@ -481,6 +481,50 @@ function global:Edit-Button($btn) {
     return $true
 }
 
+# ---------- UX-2a: "Set up this PC" - pick every missing program/file once, right after install ----------
+function global:Test-ButtonReady($btn) {
+    $kind = Get-ButtonType $btn
+    if ($kind -notin 'program', 'file', 'script') { return $true }
+    $t = Expand $btn.target
+    if (-not (Is-Todo $t)) {
+        if (Test-Path -LiteralPath $t) { return $true }
+        if ($kind -eq 'program' -and $t -notmatch '[\\/]') { return $true }
+    }
+    $found = Find-Detected $btn
+    if ($found) { Set-Prop $btn 'target' $found; return $true }
+    return $false
+}
+
+function global:Show-SetupWindow([switch]$OnlyIfNeeded) {
+    $todo = @()
+    foreach ($p in $global:panels) { foreach ($b in $p.items) { if (-not (Test-ButtonReady $b)) { $todo += $b } } }
+    Save-Config   # keeps anything Find-Detected just found
+    if ($OnlyIfNeeded -and $todo.Count -eq 0) { return }
+    $d = New-Object System.Windows.Window; $d.Title = 'Set up this PC'; $d.SizeToContent = 'WidthAndHeight'; $d.WindowStartupLocation = 'CenterScreen'
+    $d.Topmost = $true; $d.ResizeMode = 'NoResize'
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Margin = '14'
+    $hd = New-Object System.Windows.Controls.TextBlock; $hd.FontSize = 14; $hd.TextWrapping = 'Wrap'; $hd.MaxWidth = 460; $hd.Margin = '0,0,0,10'
+    $hd.Text = if ($todo.Count) { "These buttons need a program or file on this PC. Click Pick... for each one. You can also do this later: right-click a panel (unlocked) > Set up this PC..." } else { 'Every button is set up on this PC.' }
+    [void]$sp.Children.Add($hd)
+    foreach ($b in $todo) {
+        $row = New-Object System.Windows.Controls.DockPanel; $row.Margin = '0,3'
+        $pick = New-Object System.Windows.Controls.Button; $pick.Content = 'Pick...'; $pick.Padding = '10,2'; $pick.Margin = '10,0,0,0'
+        [System.Windows.Controls.DockPanel]::SetDock($pick, 'Right'); [void]$row.Children.Add($pick)
+        $st = New-Object System.Windows.Controls.TextBlock; $st.Width = 90; $st.Text = 'Needs setup'; $st.Foreground = Brush '#B06000'; $st.VerticalAlignment = 'Center'
+        [System.Windows.Controls.DockPanel]::SetDock($st, 'Right'); [void]$row.Children.Add($st)
+        $nm = New-Object System.Windows.Controls.TextBlock; $nm.Text = (([string]$b.label) -replace "`n", ' '); $nm.FontWeight = 'Bold'; $nm.VerticalAlignment = 'Center'; $nm.MinWidth = 240
+        [void]$row.Children.Add($nm)
+        $pick.Add_Click({
+            $f = Ask-ForPath $b (Get-ButtonType $b)
+            if ($f) { Set-Prop $b 'target' $f; Save-Config; $st.Text = 'Done'; $st.Foreground = Brush '#0B7A4A' }
+        }.GetNewClosure())
+        [void]$sp.Children.Add($row)
+    }
+    $close = New-Object System.Windows.Controls.Button; $close.Content = 'Close'; $close.Padding = '14,3'; $close.HorizontalAlignment = 'Right'; $close.Margin = '0,12,0,0'; $close.IsCancel = $true
+    $close.Add_Click({ $d.Close() }.GetNewClosure()); [void]$sp.Children.Add($close)
+    $d.Content = $sp; [void]$d.ShowDialog()
+}
+
 # ---------- config + layout: anchors are relative, so they work at any resolution / scaling ----------
 function global:Save-Config {
     foreach ($p in $global:panels) { Set-Prop $p.cfg 'buttons' @($p.items.ToArray()) }
@@ -638,6 +682,7 @@ function global:Panel-Menu($p, $menu) {
             $global:panels.Remove($p); $p.deleted = $true; Save-Config; $p.win.Close()
             foreach ($o in $global:panels) { Build-Panel $o } } }.GetNewClosure())   # CC-L5: drop the deleted panel from Move menus
     [void]$menu.Items.Add((New-Object System.Windows.Controls.Separator))
+    [void](Add-MenuItem $menu 'Set up this PC...' { Show-SetupWindow })
     [void](Add-MenuItem $menu 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" })
     [void](Add-MenuItem $menu 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
     [void](Add-MenuItem $menu 'Reload' { Save-Config; Start-Process wscript.exe "`"$(Join-Path $global:here 'Start Launcher.vbs')`""; $global:app.Shutdown() })
@@ -793,6 +838,10 @@ try {
     foreach ($pc in @($global:cfg.panels)) { [void](Open-Panel $pc) }
     Apply-Lock                                          # builds every panel (menus know every panel) + tool-window style + placement
     if ($global:panels.Count -eq 0) { throw 'No panels could be opened.' }
+    if (-not [bool]$global:cfg.setupDone) {   # UX-2a: first run (right after install) lists every button that still needs a file
+        Set-Prop $global:cfg 'setupDone' $true
+        [void]$global:app.Dispatcher.BeginInvoke([Action]{ Show-SetupWindow -OnlyIfNeeded }, [System.Windows.Threading.DispatcherPriority]::ApplicationIdle)
+    }
     [void]$global:app.Run()
 }
 catch {
