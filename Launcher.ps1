@@ -311,7 +311,10 @@ function global:Get-PicSource($btn) {
     if (-not (Test-Path $p)) { return $null }
     try {
         $bi = New-Object System.Windows.Media.Imaging.BitmapImage
-        $bi.BeginInit(); $bi.CacheOption = 'OnLoad'; $bi.UriSource = New-Object Uri $p; $bi.EndInit(); return $bi
+        # CC-N2: load from a stream so paths with # or % work
+        $fsm = [IO.File]::OpenRead($p)
+        try { $bi.BeginInit(); $bi.CacheOption = 'OnLoad'; $bi.StreamSource = $fsm; $bi.EndInit(); $bi.Freeze() } finally { $fsm.Dispose() }
+        return $bi
     } catch { return $null }
 }
 
