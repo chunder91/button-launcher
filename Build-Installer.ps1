@@ -116,7 +116,24 @@ $KeyName = if ($AppName -eq 'Launcher') { 'ButtonLauncher' } else { 'ButtonLaunc
 if ([System.Windows.MessageBox]::Show("Install $AppName for this user?`n`nIt goes in the Start menu and starts with Windows (you can turn that off: unlock, right-click a panel > Start with Windows).", "$AppName Setup", 'OKCancel', 'Question') -ne 'OK') { exit }
 if (-not $Desktop) { $Desktop = ([System.Windows.MessageBox]::Show("Also put a shortcut on the desktop?", "$AppName Setup", 'YesNo', 'Question', 'No') -eq 'Yes') }
 Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*$dest\Launcher.ps1*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-New-Item -ItemType Directory -Force $dest | Out-Null
+# R6-L1: unpack into a fresh folder beside $dest (a copy of the current install plus the new files), check it, then swap it in.
+# A failed check or swap leaves the existing install as it was.
+$parent = Split-Path -Parent $dest
+New-Item -ItemType Directory -Force $parent | Out-Null
+$stage = Join-Path $parent ($AppName + '.new-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+$failLog = Join-Path $env:TEMP ($AppName + '-install.log')
+function Copy-Tree($from, $to) {   # copies the old install into the stage; links (junctions/symlinks) are not followed or copied
+    New-Item -ItemType Directory -Force $to | Out-Null
+    foreach ($i in @(Get-ChildItem -LiteralPath $from -Force -ErrorAction SilentlyContinue)) {
+        $o = Join-Path $to $i.Name
+        if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { Add-Content -LiteralPath $failLog -Value ("{0}  not carried over (link): {1}" -f (Get-Date -Format s), $i.FullName) -ErrorAction SilentlyContinue; continue }
+        if ($i.PSIsContainer) { Copy-Tree $i.FullName $o } else { [IO.File]::Copy($i.FullName, $o, $true) } } }
+function Remove-Tree($p) {         # bottom-up; a link is removed as a link, never followed
+    if (-not (Test-Path -LiteralPath $p)) { return }
+    $it = Get-Item -LiteralPath $p -Force
+    if (-not ($it.Attributes -band [IO.FileAttributes]::ReparsePoint) -and $it.PSIsContainer) { foreach ($c in @(Get-ChildItem -LiteralPath $p -Force)) { Remove-Tree $c.FullName } }
+    if ($it.PSIsContainer) { [IO.Directory]::Delete($p, $false) } else { $it.Attributes = 'Normal'; [IO.File]::Delete($p) } }
+if (Test-Path -LiteralPath $dest) { Copy-Tree $dest $stage } else { New-Item -ItemType Directory -Force $stage | Out-Null }
 $zip = Join-Path $env:TEMP ("bl-payload-" + [guid]::NewGuid() + ".zip")   # LJ-I4/CC-L7: unpredictable name
 [IO.File]::WriteAllBytes($zip, [Convert]::FromBase64String('__B64__'))
 $z = [IO.Compression.ZipFile]::OpenRead($zip)
@@ -151,8 +168,9 @@ else {   # R4-L1/R5-L1: installs from before the manifest shipped these pictures
         'images/svg/screenconnect.svg' = @('e9ae1141b148a9199ab6e6a353bffff885516d373b0bb284eb6745a2b93c3b5a', '43bd6a94d5028be617570fc29aa13730cb99cc3f7edcc51614b540f379224e70', 'ab1837b9e30b6e468ace29de0fd6ed360366d9fed9dbb64426545d200c9e034a')
         'images/svg/email.svg' = @('edc024409b3e514db726f3ccc6cb629edda7965fd4d15434b787b5cb995b56e9', '35ca69874d548cd2e46402208f19c80bc59ba1d619f7ce5ae4cc9d8f4bf19822', 'cd7601cdd2eea62e9dc8eb00a81bbfedfd4fee65f50c175ee451d078cc09041c')
         'images/app.ico' = @('f1cab83836a4af76b9f86f43f863ca5abaae409ba6d07bc0a8be0a6f98426c02') } }
-$instLog = Join-Path $dest 'install.log'
-$destRoot = [IO.Path]::GetFullPath($dest).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+$instLog = Join-Path $stage 'install.log'
+$destRoot = [IO.Path]::GetFullPath($stage).TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+$fromPayload = @{}   # R6-L1: core files must come from this payload, not from the copy of the old install
 foreach ($e in $z.Entries) {
     # LJ-N7: skip entries that are rooted, contain '..', or resolve outside $dest
     $en = $e.FullName
@@ -160,7 +178,7 @@ foreach ($e in $z.Entries) {
     if ($en.IndexOf(':') -ge 0 -or $en.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0 -or $en.IndexOfAny([char[]]'*?"<>|') -ge 0) {
         Add-Content -LiteralPath $instLog -Value ("{0}  skipped a payload entry with an invalid name: {1}" -f (Get-Date -Format s), $en) -ErrorAction SilentlyContinue; continue }
     if ([IO.Path]::IsPathRooted($en) -or $en -match '(^|[\\/])\.\.([\\/]|$)') { continue }
-    $t = Join-Path $dest $en
+    $t = Join-Path $stage $en
     if (-not [IO.Path]::GetFullPath($t).StartsWith($destRoot, [StringComparison]::OrdinalIgnoreCase)) { continue }
     if ($e.FullName.EndsWith('/') -or $e.FullName.EndsWith('\')) { New-Item -ItemType Directory -Force $t | Out-Null; continue }
     $rel = $en.Replace('\', '/')
@@ -172,15 +190,31 @@ foreach ($e in $z.Entries) {
             continue } }
     New-Item -ItemType Directory -Force (Split-Path $t) | Out-Null
     [IO.Compression.ZipFileExtensions]::ExtractToFile($e, $t, $true)
+    $fromPayload[$rel.ToLowerInvariant()] = $true
 }
 $z.Dispose(); Remove-Item -LiteralPath $zip
 # R5-L2: stop before any shortcut or registry write if the core files didn't land
-$missingCore = @('Launcher.ps1', 'ButtonLauncher.exe', 'buttons.default.json' | Where-Object { -not (Test-Path -LiteralPath (Join-Path $dest $_)) })
+$missingCore = @('Launcher.ps1', 'ButtonLauncher.exe', 'buttons.default.json' | Where-Object { -not $fromPayload[$_.ToLowerInvariant()] -or -not (Test-Path -LiteralPath (Join-Path $stage $_)) })
 if ($missingCore.Count) {
-    Add-Content -LiteralPath (Join-Path $dest 'install.log') -Value ("{0}  install stopped: missing after extraction: {1}" -f (Get-Date -Format s), ($missingCore -join ', ')) -ErrorAction SilentlyContinue
-    [System.Windows.MessageBox]::Show("$AppName could not be installed: these files are missing after unpacking:`n" + ($missingCore -join "`n") + "`n`nNothing was added to the Start menu or the registry. Try the installer again.", "$AppName Setup", 'OK', 'Error') | Out-Null
+    Add-Content -LiteralPath $failLog -Value ("{0}  install stopped: missing after extraction: {1}; existing install left as it was" -f (Get-Date -Format s), ($missingCore -join ', ')) -ErrorAction SilentlyContinue
+    try { Remove-Tree $stage } catch {}
+    [System.Windows.MessageBox]::Show("$AppName could not be installed: these files are missing after unpacking:`n" + ($missingCore -join "`n") + "`n`nNothing was added to the Start menu or the registry. Your current install was not changed. Details: $failLog`nTry the installer again.", "$AppName Setup", 'OK', 'Error') | Out-Null
     exit 1
 }
+# R6-L1: swap: current -> .old, stage -> current, then remove .old. Any failure puts the old folder back.
+$old = $null
+try {
+    if (Test-Path -LiteralPath $dest) { $old = $dest + '.old-' + [guid]::NewGuid().ToString('N').Substring(0, 8); [IO.Directory]::Move($dest, $old) }
+    [IO.Directory]::Move($stage, $dest)
+} catch {
+    $why = $_.Exception.Message
+    if ($old -and -not (Test-Path -LiteralPath $dest)) { try { [IO.Directory]::Move($old, $dest) } catch {} }
+    try { Remove-Tree $stage } catch {}
+    Add-Content -LiteralPath $failLog -Value ("{0}  install stopped: could not swap in the new files ({1}); existing install restored" -f (Get-Date -Format s), $why) -ErrorAction SilentlyContinue
+    [System.Windows.MessageBox]::Show("$AppName could not be updated (a file may be in use). Your current install was not changed. Details: $failLog", "$AppName Setup", 'OK', 'Error') | Out-Null
+    exit 1
+}
+if ($old) { try { Remove-Tree $old } catch { Add-Content -LiteralPath (Join-Path $dest 'install.log') -Value ("{0}  could not remove {1}: {2}" -f (Get-Date -Format s), $old, $_.Exception.Message) -ErrorAction SilentlyContinue } }
 # R-M2: keep this PC's buttons.json (edits, saved paths). Only a first install gets the default. The payload never
 # contains buttons.json, and extraction only writes payload files, so pictures the user added to images\ stay too.
 $userCfg = Join-Path $dest 'buttons.json'
