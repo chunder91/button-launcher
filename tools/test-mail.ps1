@@ -10,11 +10,11 @@ $src = $ast.Extent.Text
 $fns = 'Get-ButtonType', 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker', 'Get-MailWorkerScript',
        'New-MailState', 'Get-MailFreshState', 'Update-MailState', 'Step-MailResume', 'Get-MailLostResult', 'Get-MailNextDelaySec', 'Get-MailBadgeText', 'Get-MailBadgeWidth', 'Test-MailShowBadge', 'Test-MailShowRing',
        'Get-MailMotion', 'Format-MailTime', 'Get-MailCountText', 'Get-MailTipLine', 'Get-MailMenuLine', 'Get-MailAccessName', 'Get-MailTestText', 'Format-MailLogLine', 'Get-MailSecretPath', 'Get-MailSettingsPath', 'Remove-MailLogin',
-       'Get-MailAddress', 'Test-MailAddress', 'Test-MailTile', 'ConvertTo-MailSettings', 'Get-MailSettingsJson', 'ConvertTo-MailFullAddress', 'Get-MailInterval', 'Write-LauncherError'
+       'Get-MailAddress', 'Test-MailAddress', 'Test-MailTile', 'ConvertTo-MailSettings', 'Get-MailSettingsJson', 'ConvertTo-MailFullAddress', 'Get-MailInterval', 'Get-MailAddressProblem', 'Write-LauncherError'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
-foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(MailDomain|MailLogDetails|MailWorkerScript|MailIntervals)\s*=') { Invoke-Expression $l.Extent.Text } }
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(MailDomain|MailLogDetails|MailWorkerScript|MailIntervals|MailDialogXaml)\s*=') { Invoke-Expression $l.Extent.Text } }
 $fake = 'test-not-real'   # a fake password, used only in this test
 function Ascii([byte[]]$b) { [Text.Encoding]::ASCII.GetString($b) }
 
@@ -177,7 +177,7 @@ $dv = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Functi
 Check 'M1: turn off stops the check (Stop-Mail) and takes a fresh epoch' ($dv -match 'Stop-Mail;' -and $dv -match 'Get-MailFreshState' -and $dv -notmatch 'New-MailState')
 $sr = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Stop-MailRunObjects' }, $true).Extent.Text
 Check 'L1: stopping a check never blocks the UI (BeginStop, no ps.Stop())' ($sr -match 'BeginStop\(\$null, \$null\)' -and $sr -notmatch '\.ps\.Stop\(\)')
-Check 'L1: stopped checks are freed later (Clear-MailDeadRuns at the next check)' ($src -match 'function global:Clear-MailDeadRuns' -and $src -match '\{ return \$false \}\s+Clear-MailDeadRuns')
+Check 'L1: stopped checks are freed later (Clear-MailDeadRuns at the next check)' ($src -match 'function global:Clear-MailDeadRuns' -and $src -match '\{ return \$false \}\s+if \(-not \(Test-MailAddress \$user\)\) \{[^\r\n]*\r?\n[^\r\n]*\r?\n[^\r\n]*\r?\n[^\r\n]*return \$true \}\s+Clear-MailDeadRuns')
 # N1: untagged lines before '+'
 $m = New-Mock @('* OK ready', '* CAPABILITY IMAP4rev1', '* OK [ALERT] hello', '+ go', 'a1 OK', '* STATUS INBOX (UNSEEN 4)', 'a2 OK', 'a3 OK')
 $r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $pw.ToCharArray()
@@ -399,5 +399,41 @@ Remove-Item Function:\Get-Date
 $logText = [IO.File]::ReadAllText($global:logPath); Remove-Item -LiteralPath $global:logPath -Force
 Check 'failing sign-ins: the error log has lines, and never the password (server echo, socket error, bad characters)' ($logText.Length -gt 0 -and $logText -notmatch [regex]::Escape($fake) -and $r.kind -eq 'auth')
 Check 'password never in buttons.json, a command line or the settings JSON (source)' ($src -notmatch 'ArgumentList[^\r\n]*(SecurePassword|\$pass\b|\$secure)' -and $src -notmatch 'Set-Prop \$global:cfg[^\r\n]*(password|secret)')
+# --- Kern/Squint email setup fixes + Lockjaw M21 (6c96c6b review) ---
+Check 'address: empty name before @ gets its own words (Squint) (Test and Save)' ((Get-MailAddressProblem '@jartrek.net') -ceq 'Type your name before @jartrek.net.' -and (Get-MailAddressProblem ' @jartrek.net ') -ceq 'Type your name before @jartrek.net.' -and (Get-MailAddressProblem 'cc') -ceq 'Type your full email address, like name@jartrek.net.' -and $null -eq (Get-MailAddressProblem 'test.user@example.invalid'))
+$sd3 = $sdAst.Extent.Text
+Check 'Squint: Test and Save both use the address message' (([regex]::Matches($sd3, '\$why = Get-MailAddressProblem \$addr; if \(\$why\) \{ & \$showResult ''auth'' \$why')).Count -eq 2)
+Check 'Squint: focus into a field that says only @jartrek.net puts the caret first, via Dispatcher.BeginInvoke' ($sd3.Contains('$ta.Add_GotKeyboardFocus(') -and $sd3.Contains('if ($t.Text -ceq $global:MailDomain) { [void]$t.Dispatcher.BeginInvoke([Action]{ $t.CaretIndex = 0 }.GetNewClosure()'))
+Check 'Squint: HelpText and a grey 12 px hint under the field' ($sd3.Contains("SetHelpText(`$ta, 'Type your name before @jartrek.net')") -and $sd3.Contains("`$hint.Text = 'Type your name before @jartrek.net'; `$hint.FontSize = 12; `$hint.Foreground = Brush '#B4B4BC'"))
+Check 'Kern: combo uses the D2Combo style, 32x140, no own margin (16 above the buttons comes from the row)' ($sd3.Contains("`$cbI.Width = 140; `$cbI.Height = 32") -and $sd3.Contains("`$cbI.Margin = '0'") -and $sd3.Contains("TryFindResource('D2Combo')") -and $sd3.Contains("`$row.Margin = '0,16,0,0'"))
+[xml]$mx = $global:MailDialogXaml
+$xs = $global:MailDialogXaml
+Check 'Kern: D2Combo/D2ComboItem in the dialog XAML (well-formed)' ($mx.ResourceDictionary.Style.Count -ge 4 -and $xs.Contains('x:Key="D2Combo"') -and $xs.Contains('x:Key="D2ComboItem"'))
+Check 'Kern: box = field fill #0FFFFFFF, radius 6, 40% bottom line, #22C55E 2 px on focus/open, E70D chevron #B4B4BC' ($xs.Contains('Background="#0FFFFFFF" BorderBrush="#1FFFFFFF" BorderThickness="1" CornerRadius="6"') -and $xs.Contains('Height="1" VerticalAlignment="Bottom" Background="#66FFFFFF"') -and $xs.Contains('x:Name="Focus" Height="2" VerticalAlignment="Bottom" Background="#22C55E"') -and $xs.Contains('Text="&#xE70D;"') -and $xs.Contains('Foreground="#B4B4BC"') -and $xs.Contains('Property="IsKeyboardFocusWithin"'))
+Check 'Kern: popup #2B2B30, 12% border, radius 8; items 32 tall, 9% hover, green pill when selected; disabled 0.4' ($xs.Contains('Background="#2B2B30" BorderBrush="#1FFFFFFF" BorderThickness="1" CornerRadius="8"') -and $xs.Contains('<Setter Property="Height" Value="32"/><Setter Property="FocusVisualStyle"') -and $xs.Contains('Property="IsHighlighted" Value="True"><Setter TargetName="Bd" Property="Background" Value="#17FFFFFF"') -and $xs.Contains('x:Name="Pill" Width="3" Height="16"') -and $xs.Contains('Value="0.4"'))
+Check 'keyboard kept: real ComboBox with PART_Popup + ItemsPresenter, toggle not focusable (arrows, Alt+Down, Esc stay the ComboBox''s own)' ($xs.Contains('x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}"') -and $xs.Contains('<ItemsPresenter') -and $xs.Contains('<ToggleButton x:Name="Toggle" Focusable="False"'))
+Check 'CC: interval clamp - any number over 60 -> 60 ([double]::MaxValue, 1e300, decimal, long), NaN / +-Infinity -> 3' ((Get-MailInterval ([double]::MaxValue)) -eq 60 -and (Get-MailInterval 1e300) -eq 60 -and (Get-MailInterval ([decimal]::MaxValue)) -eq 60 -and (Get-MailInterval ([long]::MaxValue)) -eq 60 -and (Get-MailInterval '1e300') -eq 60 -and (Get-MailInterval ([double]::NaN)) -eq 3 -and (Get-MailInterval ([double]::PositiveInfinity)) -eq 3 -and (Get-MailInterval ([double]::NegativeInfinity)) -eq 3 -and (Get-MailInterval ([double]::MinValue)) -eq 3)
+Check 'interval clamp still holds (hand-edited 0 / 99 / text)' ((Get-MailInterval 0) -eq 3 -and (Get-MailInterval 99) -eq 60 -and (Get-MailInterval 'abc') -eq 3 -and (ConvertTo-MailSettings @{ interval = 1 }).interval -eq 3)
+# LJ M21-I1: the More-menu statements were commented out by a mid-line comment
+$vp = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-VncPicker' }, $true)
+$mc = $vp.Find({ param($x) $x -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $x.Expression.Extent.Text -eq '$bMore' -and $x.Member.Extent.Text -eq 'Add_Click' }, $true)
+$mset = @($mc.FindAll({ param($x) $x -is [System.Management.Automation.Language.AssignmentStatementAst] -and $x.Left -is [System.Management.Automation.Language.MemberExpressionAst] }, $true) | ForEach-Object { $_.Left.Member.Value })
+Check 'LJ M21-I1: the More menu really sets PlacementTarget, Placement and VerticalOffset (code, not comment)' ($mset -contains 'PlacementTarget' -and $mset -contains 'Placement' -and $mset -contains 'VerticalOffset' -and $mset -contains 'HorizontalOffset')
+$cmt = @(); foreach ($f in @(Get-ChildItem (Join-Path $root '*.ps1')) + @(Get-ChildItem (Join-Path $PSScriptRoot '*.ps1'))) { $cmt += @(Find-CommentedOutCode $f.FullName | ForEach-Object { "$($f.Name) $_" }) }
+Check ('no statements hidden inside a comment ' + ($cmt -join '; ')) ($cmt.Count -eq 0)
+$tmpc = Join-Path ([IO.Path]::GetTempPath()) ('bl-cmt-' + [guid]::NewGuid() + '.ps1')
+[IO.File]::WriteAllText($tmpc, '$b.Add_Click({ $b = $b; $m = 1;   # note $m.PlacementTarget = $b; $m.Placement = ''Top'' })'); $caught = @(Find-CommentedOutCode $tmpc).Count; Remove-Item -LiteralPath $tmpc
+Check 'the comment lint catches the exact 6c96c6b line' ($caught -eq 1)
+# LJ M21-I2: Start-MailRun refuses a bad address itself (fail closed, nothing started, password disposed)
+$smr = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Start-MailRun' }, $true).Extent.Text
+Invoke-Expression ($smr -replace 'function global:Start-MailRun', 'function global:Start-MailRunReal')
+function global:Clear-MailDeadRuns { throw 'a check was started' }
+$global:mailRun = $null; $global:mail = $null
+foreach ($bad in @('', 'x y@example.invalid', "a@example.invalid`r`na2 LOGOUT", '@jartrek.net', 'a"b@example.invalid')) {
+    $ss = New-Object System.Security.SecureString; $ss.AppendChar('x'); $got = @{ r = $null }; $err = $null; $ret = $null
+    try { $ret = Start-MailRunReal $bad $ss { param($r) $got.r = $r }.GetNewClosure() } catch { $err = $_.Exception.Message }
+    $disposed = $false; try { $ss.AppendChar([char]120) } catch { $disposed = $true }
+    Check ("LJ M21-I2: Start-MailRun fails closed on '" + ($bad -replace "`r", '\r' -replace "`n", '\n') + "' (no check started, sign-in failure reported, password disposed)") (-not $err -and $ret -eq $true -and $got.r.kind -eq 'auth' -and $got.r.detail -cin $global:MailLogDetails -and $disposed) }
+Check 'LJ M21-I2: the address check is the first thing after the busy check' ($smr.IndexOf('Test-MailAddress $user') -gt 0 -and $smr.IndexOf('Test-MailAddress $user') -lt $smr.IndexOf('Clear-MailDeadRuns') -and $smr.IndexOf('Test-MailAddress $user') -lt $smr.IndexOf('CreateRunspace'))
 ""
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

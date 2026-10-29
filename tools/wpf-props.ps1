@@ -113,3 +113,8 @@ function global:Find-ClosureCaptureMisses($ast) {
             [void]$bad.Add(('{0}: ${1} not captured by the closure at line {2}' -f $(if ($fn) { $fn.Name } else { '<script>' }), $vp.UserPath, $sbe.Extent.StartLineNumber)) } }
     return $bad
 }
+# LJ M21-I1: a comment written in the middle of a line silently comments out the statements after it on that line.
+function global:Find-CommentedOutCode([string]$path) {
+    $t = $null; $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$t, [ref]$e)
+    return @($t | Where-Object { $_.Kind -eq 'Comment' -and $_.Text -match '\$\w+(\.\w+)+ = [^;]+;\s*\$\w+' } | ForEach-Object { 'line {0}: {1}' -f $_.Extent.StartLineNumber, $_.Text.Substring(0, [Math]::Min(80, $_.Text.Length)) })
+}

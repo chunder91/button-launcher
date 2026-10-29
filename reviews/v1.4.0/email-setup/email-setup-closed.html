@@ -10,7 +10,7 @@ h1{font-size:18px;font-weight:600;margin:0 0 16px}.lbl{font-size:13px;color:#fff
 .warn{border-radius:8px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.35);padding:8px 10px;color:#FBBF24;font-size:13px;margin:8px 0 24px;display:flex;gap:8px}
 h2{font-size:14px;font-weight:600;margin:0 0 6px}.r{display:flex;align-items:center;gap:10px;font-size:14px;margin:6px 0}
 .o{width:16px;height:16px;border-radius:50%;border:1.5px solid rgba(255,255,255,.55);display:flex;align-items:center;justify-content:center}.o.on{border-color:#22C55E}.o.on i{width:8px;height:8px;border-radius:50%;background:#22C55E}
-.combo{width:140px;height:32px;box-sizing:border-box;border-radius:6px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.3);display:flex;align-items:center;justify-content:space-between;padding:0 10px;font-size:14px;margin-top:6px}
+.combo{position:relative;width:140px;height:32px;box-sizing:border-box;border-radius:6px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 10px;font-size:14px;margin-top:6px}.combo:after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:1px;background:rgba(255,255,255,.4);border-radius:0 0 6px 6px}.combo.focus:after{height:2px;background:#22C55E}.chev{color:#B4B4BC;font-size:11px}.combo.focus .chev{color:#fff}.pop{position:absolute;left:-1px;top:34px;width:140px;box-sizing:border-box;background:#2B2B30;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:4px;box-shadow:0 2px 16px rgba(0,0,0,.4);z-index:3}.it{position:relative;height:32px;border-radius:4px;padding:0 10px;display:flex;align-items:center;font-size:14px}.it.sel{background:rgba(255,255,255,.06)}.it.sel:before{content:'';position:absolute;left:2px;width:3px;height:16px;border-radius:1.5px;background:#22C55E}.it.hov{background:rgba(255,255,255,.09)}.hint{color:#B4B4BC;font-size:12px;margin:-8px 0 16px}.ph{color:#9A9AA4}
 .res{margin:16px 0 8px;font-size:13px;color:#4ADE80;display:flex;gap:8px}
 .row{display:flex;justify-content:flex-end;gap:8px}.b{height:32px;padding:0 16px;border-radius:6px;font-size:14px;display:flex;align-items:center;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2)}.b.g{background:#16A34A;border-color:#22C55E}
 .note{color:#ddd;font:11px sans-serif;margin-top:8px;width:408px}
@@ -20,7 +20,7 @@ h2{font-size:14px;font-weight:600;margin:0 0 6px}.r{display:flex;align-items:cen
 <div class=chk><div class=box>&#10003;</div>Show unread email count on the Email button</div>
 <div class=intro>Uses your Jartrek email, the same login as webmail.</div>
 <div class=lbl>Email address</div>
-<div class="field focus"><span class=caret></span>@jartrek.net</div>
+<div class="field focus"><span class=caret></span>@jartrek.net</div><div class=hint>Type your name before @jartrek.net</div>
 <div class=lbl>Password</div>
 <div class=field><span class=dots>&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;&#9679;</span></div>
 <div class=warn><span>&#9888;</span><span>Everyone who uses this Windows login on this PC will see how many unread emails this account has.</span></div>
@@ -29,9 +29,9 @@ h2{font-size:14px;font-weight:600;margin:0 0 6px}.r{display:flex;align-items:cen
 <div class=r><div class="o on"><i></i></div>Flash the button 3 times</div>
 <div class=r><div class=o></div>Just show the number</div>
 <h2 style="margin-top:16px">Check for new email every:</h2>
-<div class=combo>3 minutes<span>&#9662;</span></div>
+<div class="combo ">3 minutes<span class=chev>&#8964;</span></div>
 <div class=res><span>&#10003;</span>Signed in. 2 unread emails in Inbox.</div>
-<div class=row><div class=b>Test</div><div class="b g">Save</div><div class=b>Cancel</div></div>
+<div class=row style="margin-top:0"><div class=b>Test</div><div class="b g">Save</div><div class=b>Cancel</div></div>
 </div>
-<div class=note>MOCKUP (box HTML at 100%, not a Windows capture): v1.4.0 email setup. Full address typed by the user (starts as editable "@jartrek.net", caret at the start; no locked suffix). New "Check for new email every" list: 2, 3, 5, 10, 15, 30 minutes, default 3. Result line shown after a good Test.</div>
+<div class=note>MOCKUP (box HTML, not a Windows capture), v1.4.0 email setup: dropdown closed (D2: field fill, 40% bottom line, chevron #B4B4BC). Address focused, caret before @jartrek.net.</div>
 </body></html>

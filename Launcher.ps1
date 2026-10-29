@@ -2688,7 +2688,9 @@ function global:Show-VncPicker($btn) {
         if ($f) { $ui.state.favorites.Remove($f) }; $ui.saveFavs.Invoke() }.GetNewClosure()
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure()); $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
     $bScan.Add_Click({ Start-VncScan $ui -Rescan }.GetNewClosure())
-    $bMore.Add_Click({ $bMore = $bMore; $m = New-VncRowMenu $ui $false;   # local copy so the Opened closure below can see it (GetNewClosure copies locals only) $m.PlacementTarget = $bMore; $m.Placement = 'Top'; $m.VerticalOffset = -4   # Kern: above the row, right edges aligned, 4 px gap
+    $bMore.Add_Click({
+        $bMore = $bMore   # local copy so the Opened closure below can see it (GetNewClosure copies locals only); LJ M21-I1: comment on its own line
+        $m = New-VncRowMenu $ui $false; $m.PlacementTarget = $bMore; $m.Placement = 'Top'; $m.VerticalOffset = -4   # Kern: above the row, right edges aligned, 4 px gap
         $m.Add_Opened({ $m.HorizontalOffset = $bMore.ActualWidth - $m.ActualWidth }.GetNewClosure()); $m.IsOpen = $true }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has }.GetNewClosure())
     $lv.Add_MouseDoubleClick({ if ($lv.SelectedItem) { $ui.go.Invoke($true) } }.GetNewClosure())
@@ -2751,7 +2753,7 @@ $global:mailFollow   = $null        # follow-up checks after the Email tile is c
 $global:MailWorkerScript = $null
 $global:MailDialogRes = $null
 $global:MailDeadRuns  = New-Object System.Collections.ArrayList   # stopped checks waiting to end (BeginStop)
-$global:MailLogDetails = @('server closed', 'no greeting', 'login has characters IMAP cannot send', 'sign-in refused', 'no continuation', 'server closed at sign-in', 'no sign-in reply',
+$global:MailLogDetails = @('address not allowed', 'server closed', 'no greeting', 'login has characters IMAP cannot send', 'sign-in refused', 'no continuation', 'server closed at sign-in', 'no sign-in reply',
                            'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result')   # the only words the log may carry
 
 # ---- IMAP protocol (pure; the worker runs these in a background runspace; tools/test-mail.ps1 drives them with a mock) ----
@@ -2964,13 +2966,21 @@ function global:Test-MailAddress([string]$a) {   # untrusted: <= 254, one '@', n
     if ([string]::IsNullOrEmpty($a) -or $a.Length -gt 254) { return $false }
     return ($a -cmatch '^[A-Za-z0-9._+-]{1,64}@[A-Za-z0-9-]{1,63}(\.[A-Za-z0-9-]{1,63})+\z' -and ($a.Split('@').Count -eq 2))
 }
+function global:Get-MailAddressProblem([string]$a) {   # $null = OK; Squint: an empty name before '@' gets its own words
+    if (Test-MailAddress $a) { return $null }
+    if (([string]$a).Trim().StartsWith('@')) { return 'Type your name before @jartrek.net.' }
+    return 'Type your full email address, like name@jartrek.net.'
+}
 function global:ConvertTo-MailFullAddress([string]$a) {   # migration: a saved user part only ('cc') becomes 'cc@jartrek.net'
     $t = ([string]$a).Trim(); if ($t -cmatch '^[A-Za-z0-9._+-]{1,64}\z') { return $t + $global:MailDomain }; return $t
 }
 $global:MailIntervals = @(2, 3, 5, 10, 15, 30)   # minutes offered in Setup; the saved value is clamped by Get-MailInterval
 function global:Get-MailInterval($v) {   # minutes: numeric 2..60 kept (hand-edited values too), above 60 -> 60, under 2 / missing / not a number -> 3
     $n = 0.0
-    if ($null -eq $v -or $v -is [bool] -or -not [double]::TryParse([string]$v, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$n) -or [double]::IsNaN($n) -or [double]::IsInfinity($n)) { return 3 }
+    if ($null -eq $v -or $v -is [bool]) { return 3 }
+    if ($v -is [double] -or $v -is [single] -or $v -is [decimal] -or $v -is [int] -or $v -is [long] -or $v -is [int16] -or $v -is [byte]) { $n = [double]$v }   # CC: numbers as they are (no string round-trip that overflows [double]::MaxValue)
+    elseif (-not [double]::TryParse([string]$v, [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$n)) { return 3 }
+    if ([double]::IsNaN($n) -or [double]::IsInfinity($n)) { return 3 }
     $n = [Math]::Floor($n); if ($n -lt 2) { return 3 }; if ($n -gt 60) { return 60 }; return [int]$n
 }
 function global:Test-MailTile($btn) { (Get-ButtonType $btn) -eq 'website' -and ([string]$btn.target).Trim() -match '^(?i)mailto:' }   # the Email tile, by what it opens
@@ -3007,6 +3017,10 @@ function global:Remove-MailLogin { foreach ($p in (Get-MailSecretPath), (Get-Mai
 # ---- one background check at a time (never on the UI thread) ----
 function global:Start-MailRun([string]$user, [System.Security.SecureString]$secure, [scriptblock]$OnDone) {   # $false when a check is already running
     if ($global:mailRun) { return $false }
+    if (-not (Test-MailAddress $user)) {   # LJ M21-I2: fail closed. Nothing is sent; the caller gets a sign-in failure (never a retry loop)
+        if ($secure) { $secure.Dispose() }
+        if ($OnDone) { & $OnDone @{ kind = 'auth'; unseen = -1; detail = 'address not allowed'; epoch = $(if ($global:mail) { $global:mail.state.epoch } else { 0 }) } }
+        return $true }
     Clear-MailDeadRuns
     $sync = [hashtable]::Synchronized(@{ tcp = $null; loginSent = $false; loginOk = $false })
     $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open()
@@ -3248,6 +3262,54 @@ $global:MailDialogXaml = @'
       </ControlTemplate.Triggers>
     </ControlTemplate></Setter.Value></Setter>
   </Style>
+  <Style x:Key="D2ComboItem" TargetType="ComboBoxItem">
+    <Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/><Setter Property="Height" Value="32"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem">
+      <Border x:Name="Bd" Background="Transparent" CornerRadius="4" Padding="10,0">
+        <Grid><Border x:Name="Pill" Width="3" Height="16" CornerRadius="1.5" Background="#22C55E" HorizontalAlignment="Left" Margin="-8,0,0,0" Visibility="Hidden"/>
+          <ContentPresenter VerticalAlignment="Center"/></Grid>
+      </Border>
+      <ControlTemplate.Triggers>
+        <Trigger Property="IsSelected" Value="True"><Setter TargetName="Pill" Property="Visibility" Value="Visible"/><Setter TargetName="Bd" Property="Background" Value="#0FFFFFFF"/></Trigger>
+        <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Bd" Property="Background" Value="#17FFFFFF"/></Trigger>
+      </ControlTemplate.Triggers>
+    </ControlTemplate></Setter.Value></Setter>
+  </Style>
+  <Style x:Key="D2Combo" TargetType="ComboBox">
+    <Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/><Setter Property="Height" Value="32"/><Setter Property="Width" Value="140"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Cursor" Value="Hand"/><Setter Property="ItemContainerStyle" Value="{StaticResource D2ComboItem}"/>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox">
+      <Grid>
+        <ToggleButton x:Name="Toggle" Focusable="False" ClickMode="Press" IsChecked="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}">
+          <ToggleButton.Template><ControlTemplate TargetType="ToggleButton">
+            <Border x:Name="Box" Background="#0FFFFFFF" BorderBrush="#1FFFFFFF" BorderThickness="1" CornerRadius="6">
+              <Grid>
+                <Border x:Name="Rest" Height="1" VerticalAlignment="Bottom" Background="#66FFFFFF"/>
+                <TextBlock x:Name="Chev" Text="&#xE70D;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="12" Foreground="#B4B4BC" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              </Grid>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Box" Property="Background" Value="#17FFFFFF"/><Setter TargetName="Chev" Property="Foreground" Value="#FFFFFF"/></Trigger>
+              <Trigger Property="IsChecked" Value="True"><Setter TargetName="Chev" Property="Foreground" Value="#FFFFFF"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate></ToggleButton.Template>
+        </ToggleButton>
+        <Border x:Name="Focus" Height="2" VerticalAlignment="Bottom" Background="#22C55E" CornerRadius="0,0,6,6" Visibility="Hidden" IsHitTestVisible="False"/>
+        <ContentPresenter IsHitTestVisible="False" Margin="10,0,28,0" VerticalAlignment="Center" HorizontalAlignment="Left" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
+        <Popup x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" VerticalOffset="2" AllowsTransparency="True" Focusable="False" PopupAnimation="None">
+          <Grid Margin="0,0,4,6"><Border Margin="1,3,-3,-5" CornerRadius="10" Background="#40000000" IsHitTestVisible="False"/><!-- a static shadow: the launcher never uses bitmap effects -->
+            <Border MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" Background="#2B2B30" BorderBrush="#1FFFFFFF" BorderThickness="1" CornerRadius="8" Padding="4">
+            <ScrollViewer MaxHeight="{TemplateBinding MaxDropDownHeight}" VerticalScrollBarVisibility="Auto"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Contained"/></ScrollViewer>
+          </Border></Grid>
+        </Popup>
+      </Grid>
+      <ControlTemplate.Triggers>
+        <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="Focus" Property="Visibility" Value="Visible"/></Trigger>
+        <Trigger Property="IsDropDownOpen" Value="True"><Setter TargetName="Focus" Property="Visibility" Value="Visible"/></Trigger>
+        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+      </ControlTemplate.Triggers>
+    </ControlTemplate></Setter.Value></Setter>
+  </Style>
 </ResourceDictionary>
 '@
 function global:Show-MailConfirmOff($owner) {   # Squint: 'Turn off the email count and forget this login on this PC?' Default No.
@@ -3279,7 +3341,12 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
     $ta = New-Object System.Windows.Controls.TextBox; $ta.MaxLength = 254
     $ta.Text = if ($was.address) { [string]$was.address } else { $global:MailDomain }   # Charles types the whole address; '@jartrek.net' is only an editable start
     [System.Windows.Automation.AutomationProperties]::SetName($ta, 'Email address')
-    $fa = New-D2Field $ta; [void]$acct.Children.Add($fa)
+    [System.Windows.Automation.AutomationProperties]::SetHelpText($ta, 'Type your name before @jartrek.net')   # Squint: Narrator hears where the name goes
+    $fa = New-D2Field $ta; $fa.Margin = '0,0,0,4'; [void]$acct.Children.Add($fa)
+    $hint = New-Object System.Windows.Controls.TextBlock; $hint.Text = 'Type your name before @jartrek.net'; $hint.FontSize = 12; $hint.Foreground = Brush '#B4B4BC'; $hint.Margin = '0,0,0,16'   # Kern caption: 12 px #B4B4BC
+    [void]$acct.Children.Add($hint)
+    $ta.Add_GotKeyboardFocus({   # Squint: click or Tab into a field that still says only '@jartrek.net' -> caret before the @ (after WPF places it)
+        $t = $ta; if ($t.Text -ceq $global:MailDomain) { [void]$t.Dispatcher.BeginInvoke([Action]{ $t.CaretIndex = 0 }.GetNewClosure(), [System.Windows.Threading.DispatcherPriority]::Input) } }.GetNewClosure())
     $ph = New-Object System.Windows.Controls.TextBlock; $ph.Text = 'name@jartrek.net'; $ph.FontSize = 14; $ph.Foreground = Brush '#9A9AA4'; $ph.VerticalAlignment = 'Center'; $ph.Margin = '10,0,0,0'; $ph.IsHitTestVisible = $false
     [void]$fa.Child.Children.Add($ph)
     [void]$acct.Children.Add((New-D2Label 'Password'))
@@ -3304,7 +3371,8 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $rb.IsChecked = ([string]$was.style -eq $o[0]); $radios[$o[0]] = $rb; [void]$acct.Children.Add($rb) }
     if (-not ($radios.Values | Where-Object { $_.IsChecked })) { $radios['flash'].IsChecked = $true }   # Charles: Flash by default
     $h3 = New-D2Label 'Check for new email every:' '#FFFFFF' 14; $h3.FontWeight = [System.Windows.FontWeights]::SemiBold; $h3.Margin = '0,16,0,6'; [void]$acct.Children.Add($h3)
-    $cbI = New-Object System.Windows.Controls.ComboBox; $cbI.Width = 140; $cbI.HorizontalAlignment = 'Left'; $cbI.FontSize = 14
+    $cbI = New-Object System.Windows.Controls.ComboBox; $cbI.Width = 140; $cbI.Height = 32; $cbI.HorizontalAlignment = 'Left'; $cbI.FontSize = 14; $cbI.Margin = '0'   # Kern: 16 to the buttons comes from the row
+    $s3 = $d.TryFindResource('D2Combo'); if ($s3) { $cbI.Style = $s3 }
     [System.Windows.Automation.AutomationProperties]::SetName($cbI, 'Check for new email every')
     $curI = Get-MailInterval $was.interval; $ivals = @($global:MailIntervals); if ($ivals -notcontains $curI) { $ivals = @($ivals + $curI | Sort-Object) }   # a hand-edited value (e.g. 7) still shows
     foreach ($mi in $ivals) { [void]$cbI.Items.Add(('{0} minutes' -f $mi)) }
@@ -3346,7 +3414,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         # never saw $ds/$showResult/$refresh and hit "$null.busy = ...". Re-bind them as locals of this handler first.
         $ds = $ds; $showResult = $showResult; $refresh = $refresh
         $addr = Get-MailAddress $ta.Text
-        if (-not (Test-MailAddress $addr)) { & $showResult 'auth' 'Type your full email address, like name@jartrek.net.'; [void]$ta.Focus(); return }
+        $why = Get-MailAddressProblem $addr; if ($why) { & $showResult 'auth' $why; [void]$ta.Focus(); return }
         $sec = $null
         if ($pb.SecurePassword.Length -gt 0) { $sec = $pb.SecurePassword }                       # a copy; disposed when the check ends
         elseif ([bool]$was.enabled -and $addr -eq $origAddr) { $sec = Read-MailSecret }
@@ -3366,6 +3434,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
             if ([bool]$was.enabled -and (Show-MailConfirmOff $d)) { Disable-Mail; $pb.Clear(); $d.Close() }
             return }
         $addr = Get-MailAddress $ta.Text
+        $why = Get-MailAddressProblem $addr; if ($why) { & $showResult 'auth' $why; [void]$ta.Focus(); return }   # Squint: Save says it too
         $style = 'flash'; foreach ($k in @($radios.Keys)) { if ($radios[$k].IsChecked) { $style = $k } }
         if ($pb.SecurePassword.Length -gt 0) { $ss = $pb.SecurePassword; try { Save-MailSecret $ss } finally { $ss.Dispose() } }
         $iv = Get-MailInterval $(if ($cbI.SelectedIndex -ge 0) { $ds.ivals[$cbI.SelectedIndex] } else { 3 })
