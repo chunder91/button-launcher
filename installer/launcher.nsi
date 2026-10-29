@@ -14,7 +14,7 @@ SetCompressor /SOLID lzma
 !define KEYNAME "ButtonLauncher"
 !define UNKEY "Software\Microsoft\Windows\CurrentVersion\Uninstall"
 !define RUNKEY "Software\Microsoft\Windows\CurrentVersion\Run"
-!define PS `powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command`
+!define PS `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command`
 
 Name "${APPNAME}"
 OutFile "${OUTFILE}"
@@ -34,6 +34,98 @@ VIAddVersionKey "LegalCopyright" "Charles Cipolla"
 Page instfiles
 UninstPage instfiles
 
+
+; NSIS RMDir /r recurses into every directory entry without checking FILE_ATTRIBUTE_REPARSE_POINT (Source/exehead/util.c
+; myDelete), and CopyFiles is SHFileOperation, which copies through links. So: never copy an install that has links,
+; and unlink every link (the link only) before any RMDir /r. $R7 = "count" or "unlink"; $R8 += links found.
+!macro WALKLINKS un
+Function ${un}WalkLinks
+  Exch $0
+  Push $1
+  Push $2
+  Push $3
+  Push $4
+  ClearErrors
+  FindFirst $1 $2 "$0\*.*"
+  loop:
+    StrCmp $2 "" done
+    StrCmp $2 "." next
+    StrCmp $2 ".." next
+    System::Call 'kernel32::GetFileAttributesW(w "$0\$2")i.r3'
+    ${If} $3 = -1
+      IntOp $R8 $R8 + 1          ; unreadable entry: treat as unsafe
+      Goto next
+    ${EndIf}
+    IntOp $4 $3 & 0x400
+    ${If} $4 <> 0
+      IntOp $R8 $R8 + 1
+      ${If} $R7 == "unlink"
+        IntOp $4 $3 & 0x10
+        ${If} $4 <> 0
+          RMDir "$0\$2"            ; RemoveDirectory on a junction/dir symlink removes the link, not the target
+        ${Else}
+          Delete "$0\$2"           ; a file symlink is deleted as-is
+        ${EndIf}
+      ${EndIf}
+    ${Else}
+      IntOp $4 $3 & 0x10
+      ${If} $4 <> 0
+        Push "$0\$2"
+        Call ${un}WalkLinks
+      ${EndIf}
+    ${EndIf}
+  next:
+    FindNext $1 $2
+    Goto loop
+  done:
+  FindClose $1
+  Pop $4
+  Pop $3
+  Pop $2
+  Pop $1
+  Pop $0
+FunctionEnd
+; $R6 = dir. Sets $R5 = 1 if the dir itself is a link.
+Function ${un}IsLink
+  StrCpy $R5 0
+  System::Call 'kernel32::GetFileAttributesW(w "$R6")i.r9'
+  ${If} $9 <> -1
+    IntOp $9 $9 & 0x400
+    ${If} $9 <> 0
+      StrCpy $R5 1
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+!macroend
+!insertmacro WALKLINKS ""
+!insertmacro WALKLINKS "un."
+
+; Remove a folder tree without following links: refuse a link root, unlink inner links, re-check, then RMDir /r.
+!macro SAFE_RMDIR un dir
+  StrCpy $R6 "${dir}"
+  Call ${un}IsLink
+  ${If} $R5 = 1
+    RMDir "${dir}"
+  ${Else}
+    StrCpy $R7 "unlink"
+    StrCpy $R8 0
+    Push "${dir}"
+    Call ${un}WalkLinks
+    StrCpy $R7 "count"
+    StrCpy $R8 0
+    Push "${dir}"
+    Call ${un}WalkLinks
+    StrCpy $R6 "${dir}"
+    Call ${un}IsLink                 ; R13-L1: re-check the root right before RMDir /r
+    ${If} $R8 = 0
+    ${AndIf} $R5 = 0
+      RMDir /r "${dir}"
+    ${Else}
+      DetailPrint "Not removed (links left inside): ${dir}"
+    ${EndIf}
+  ${EndIf}
+!macroend
+
 Var Stage
 Var Old
 Var Keep
@@ -41,7 +133,41 @@ Var WantDesk
 
 Function .onInit
   SetShellVarContext current
+  ${If} "$LOCALAPPDATA" == ""
+    MessageBox MB_OK|MB_ICONSTOP "Setup stopped: this account has no local application data folder." /SD IDOK
+    SetErrorLevel 1
+    Quit
+  ${EndIf}
   StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APPNAME}"   ; fixed location (no /D override)
+  ; N4: an EMPTY leftover Programs\Launcher (no files, no links, not itself a link) counts as a fresh install
+  ${If} ${FileExists} "$INSTDIR\*.*"
+  ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
+  ${AndIfNot} ${FileExists} "$INSTDIR\.buttonlauncher"
+    StrCpy $R6 "$INSTDIR"
+    Call IsLink
+    StrCpy $3 0
+    FindFirst $1 $2 "$INSTDIR\*.*"
+    ${DoWhile} $2 != ""
+      ${If} $2 != "."
+      ${AndIf} $2 != ".."
+        IntOp $3 $3 + 1
+      ${EndIf}
+      FindNext $1 $2
+    ${Loop}
+    FindClose $1
+    ${If} $R5 = 0
+    ${AndIf} $3 = 0
+      RMDir "$INSTDIR"                          ; non-recursive: only an empty folder can go
+    ${EndIf}
+  ${EndIf}
+  ; R14-L3: never merge into some other app's Programs\Launcher
+  ${If} ${FileExists} "$INSTDIR\*.*"
+  ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
+  ${AndIfNot} ${FileExists} "$INSTDIR\.buttonlauncher"
+    MessageBox MB_OK|MB_ICONSTOP "Setup stopped: $INSTDIR already exists but has no Launcher.ps1 or .buttonlauncher marker, so it may belong to another program (or it is a link). Nothing was changed." /SD IDOK
+    SetErrorLevel 1
+    Quit
+  ${EndIf}
   ${IfNot} ${Silent}
     MessageBox MB_OKCANCEL|MB_ICONQUESTION "Install ${APPNAME} for this user?$\n$\nIt goes in the Start menu and starts with Windows (you can turn that off: unlock, right-click a panel > Start with Windows)." IDOK +2
     Abort
@@ -55,6 +181,24 @@ Function .onInit
   ${ElseIfNot} ${Silent}
     MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Also put a shortcut on the desktop?" IDNO +2
     StrCpy $WantDesk 1
+  ${EndIf}
+FunctionEnd
+
+;; R15-L1: after a failure that left the install untouched, drop the new pictures backup if the install's pictures are there;
+;; otherwise keep it and say where. KeepNote only appends the location.
+Function DropKeep
+  ${If} $5 = 1
+    ${If} ${FileExists} "$INSTDIR\images\*.*"
+      !insertmacro SAFE_RMDIR "" "$Keep"
+    ${Else}
+      Call KeepNote
+    ${EndIf}
+  ${EndIf}
+FunctionEnd
+Function KeepNote
+  ${If} $5 = 1
+  ${AndIf} ${FileExists} "$Keep\*.*"
+    StrCpy $R9 "$R9$\n$\nA copy of your changed pictures is kept in:$\n$Keep"
   ${EndIf}
 FunctionEnd
 
@@ -79,17 +223,58 @@ Section "Install"
   Pop $0
   Sleep 500
   ; Staged swap (R6-L1): copy the current install beside it, add the new files there, check, then swap folders.
-  System::Call 'kernel32::GetTickCount()i.r1'
+  ; N2/R14-I1: folder suffix = local time + 4 hex digits (tick xor pid); refuse if any of the three names exists
+  ${GetTime} "" "L" $R0 $R1 $R2 $R3 $R4 $R5 $R6
+  System::Call 'kernel32::GetTickCount()i.r6'
+  System::Call 'kernel32::GetCurrentProcessId()i.r7'
+  IntOp $6 $6 ^ $7
+  IntOp $6 $6 & 0xFFFF
+  IntFmt $6 "%04x" $6
+  StrCpy $1 "$R2$R1$R0-$R4$R5$R6-$6"
   StrCpy $Stage "$INSTDIR.new-$1"
   StrCpy $Old "$INSTDIR.old-$1"
-  StrCpy $Keep "$PLUGINSDIR\keep"
+  StrCpy $Keep "$INSTDIR.pictures-backup-$1"   ; beside the install, so a failed restore never loses pictures (R14-M1)
+  StrCpy $5 0                                 ; 1 = pictures were set aside in $Keep
   CreateDirectory "$LOCALAPPDATA\Programs"
+  ${If} ${FileExists} "$Stage\*.*"
+  ${OrIf} ${FileExists} "$Old\*.*"
+  ${OrIf} ${FileExists} "$Keep\*.*"
+    StrCpy $R9 "${APPNAME} could not be installed: a working folder name is already taken ($1). Nothing was changed. Run Setup again."
+    Call Fail
+  ${EndIf}
+  ; R15-H1: never auto-delete Launcher.old-*/.new-*. If the install is missing but one exists, it may be the user's only copy.
+  ${IfNot} ${FileExists} "$INSTDIR\*.*"
+    FindFirst $3 $4 "$INSTDIR.old-*"
+    ${If} $4 == ""
+      FindClose $3
+      FindFirst $3 $4 "$INSTDIR.new-*"
+    ${EndIf}
+    FindClose $3
+    ${If} $4 != ""
+      StrCpy $R9 "Setup stopped: $INSTDIR is missing, but $LOCALAPPDATA\Programs\$4 exists. It may be your previous install.$\n$\nRename the Launcher.old-... folder back to Launcher (or contact support), then run Setup again. Nothing was changed."
+      Call Fail
+    ${EndIf}
+  ${EndIf}
   CreateDirectory "$Stage"
   ${If} ${FileExists} "$INSTDIR\*.*"
+    StrCpy $R6 "$INSTDIR"
+    Call IsLink
+    StrCpy $R7 "count"
+    StrCpy $R8 0
+    ${If} $R5 = 0
+      Push "$INSTDIR"
+      Call WalkLinks
+    ${EndIf}
+    ${If} $R5 = 1
+    ${OrIf} $R8 > 0
+      RMDir "$Stage"
+      StrCpy $R9 "${APPNAME} could not be updated: the install folder is, or contains, a folder or file link (junction or symlink), and links are never copied or followed.$\n$INSTDIR$\n$\nYour current install was not changed. Remove the link and run Setup again."
+      Call Fail
+    ${EndIf}
     ClearErrors
     CopyFiles /SILENT "$INSTDIR\*.*" "$Stage"
     ${If} ${Errors}
-      RMDir /r "$Stage"
+      !insertmacro SAFE_RMDIR "" "$Stage"
       StrCpy $R9 "${APPNAME} could not be updated: copying the current install failed.$\n$\nYour current install was not changed."
       Call Fail
     ${EndIf}
@@ -98,9 +283,26 @@ Section "Install"
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$Stage")i'
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_KEEP", t "$Keep")i'
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_KNOWN", t "$PLUGINSDIR\known-pictures.txt")i'
+    System::Call 'kernel32::SetEnvironmentVariable(t "BL_OK", t "$PLUGINSDIR\saved.ok")i'
     SetOutPath "$TEMP"
     nsExec::ExecToLog `${PS} "& {${PICS_SAVE}}"`
     Pop $0
+    ; R14-M1: proceed only on exit 0 AND the success file the script writes last (a stub or blocked PowerShell writes neither)
+    ${If} $0 S!= "0"                            ; N1: "error"/"timeout" are failures too
+    ${OrIfNot} ${FileExists} "$PLUGINSDIR\saved.ok"
+      !insertmacro SAFE_RMDIR "" "$Stage"
+      !insertmacro SAFE_RMDIR "" "$Keep"
+      StrCpy $R9 "${APPNAME} could not be updated: Setup could not check your pictures (PowerShell did not run: $0).$\n$\nYour current install was not changed, so no pictures were lost."
+      Call Fail
+    ${EndIf}
+    StrCpy $5 1
+    StrCpy $R6 "$Keep"
+    Call IsLink
+    ${If} $R5 = 1
+      !insertmacro SAFE_RMDIR "" "$Stage"
+      StrCpy $R9 "${APPNAME} could not be updated: the pictures backup folder is a link.$\n$Keep$\n$\nYour current install was not changed."
+      Call Fail
+    ${EndIf}
   ${EndIf}
   Delete "$Stage\Uninstall.ps1"                 ; older IExpress uninstaller; Uninstall.exe replaces it
   ClearErrors
@@ -109,14 +311,27 @@ Section "Install"
   !insertmacro PAYLOAD_FILES
   ${If} ${Errors}
     SetOutPath "$TEMP"
-    RMDir /r "$Stage"
+    !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be installed: unpacking the files failed.$\n$\nNothing was added to the Start menu or the registry. Your current install was not changed."
+    Call DropKeep
     Call Fail
   ${EndIf}
-  System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$Stage")i'
-  SetOutPath "$TEMP"                            ; child cwd must not be the stage, or the swap rename fails
-  nsExec::ExecToLog `${PS} "& {${PICS_RESTORE}}"`
-  Pop $0
+  FileOpen $9 "$Stage\.buttonlauncher" w     ; R14-L3 marker
+  FileWrite $9 "Button Launcher ${VERSION}$\r$\n"
+  FileClose $9
+  ${If} $5 = 1
+    System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$Stage")i'
+    System::Call 'kernel32::SetEnvironmentVariable(t "BL_OK", t "$PLUGINSDIR\restored.ok")i'
+    SetOutPath "$TEMP"                          ; child cwd must not be the stage, or the swap rename fails
+    nsExec::ExecToLog `${PS} "& {${PICS_RESTORE}}"`
+    Pop $0
+    ${If} $0 S!= "0"
+    ${OrIfNot} ${FileExists} "$PLUGINSDIR\restored.ok"
+      !insertmacro SAFE_RMDIR "" "$Stage"
+      StrCpy $R9 "${APPNAME} could not be updated: putting your pictures back failed ($0).$\n$\nYour current install was not changed. A copy of your changed pictures is kept in:$\n$Keep"
+      Call Fail
+    ${EndIf}
+  ${EndIf}
   ${IfNot} ${FileExists} "$Stage\buttons.json"
     CopyFiles /SILENT "$Stage\buttons.default.json" "$Stage\buttons.json"   ; first install only (R-M2)
   ${EndIf}
@@ -126,8 +341,9 @@ Section "Install"
   ${OrIfNot} ${FileExists} "$Stage\buttons.default.json"
   ${OrIfNot} ${FileExists} "$Stage\Uninstall.exe"
     SetOutPath "$TEMP"
-    RMDir /r "$Stage"
+    !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be installed: core files are missing after unpacking.$\n$\nNothing was added to the Start menu or the registry. Your current install was not changed."
+    Call DropKeep
     Call Fail
   ${EndIf}
   SetOutPath "$TEMP"
@@ -136,8 +352,9 @@ Section "Install"
     ClearErrors
     Rename "$INSTDIR" "$Old"
     ${If} ${Errors}
-      RMDir /r "$Stage"
+      !insertmacro SAFE_RMDIR "" "$Stage"
       StrCpy $R9 "${APPNAME} could not be updated (a file may be in use). Your current install was not changed."
+      Call DropKeep
       Call Fail
     ${EndIf}
     StrCpy $2 1
@@ -149,16 +366,21 @@ Section "Install"
       ClearErrors
       Rename "$Old" "$INSTDIR"
       ${If} ${Errors}   ; both failed: delete nothing, say where everything is (R7-L2)
-        StrCpy $R9 "${APPNAME} could not be updated, and the old install could not be put back automatically.$\n$\nNothing was deleted:$\nOld install: $Old$\nNew files: $Stage$\n$\nRename the old folder back to:$\n$INSTDIR$\nor run this installer again."
+        StrCpy $R9 "${APPNAME} could not be updated, and the old install could not be put back automatically.$\n$\nNothing was deleted:$\nOld install: $Old$\nNew files: $Stage$\n$\nRename the old folder back to:$\n$INSTDIR$\nbefore running Setup again (Setup will refuse until you do)."
+        Call KeepNote
         Call Fail
       ${EndIf}
     ${EndIf}
-    RMDir /r "$Stage"
+    !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be updated (a file may be in use). Your current install was not changed."
+    Call DropKeep
     Call Fail
   ${EndIf}
   ${If} $2 = 1
-    RMDir /r "$Old"
+    !insertmacro SAFE_RMDIR "" "$Old"
+  ${EndIf}
+  ${If} $5 = 1
+    !insertmacro SAFE_RMDIR "" "$Keep"          ; pictures are in the new install now
   ${EndIf}
   SetOutPath "$INSTDIR"
 
@@ -213,14 +435,27 @@ SectionEnd
 Function un.onInit
   SetShellVarContext current
   ; Refuse unless this is exactly %LOCALAPPDATA%\Programs\Launcher with Launcher.ps1 in it (same guard as Uninstall.ps1)
-  ${If} "$INSTDIR" != "$LOCALAPPDATA\Programs\${APPNAME}"
-  ${OrIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
+  StrCpy $0 0
+  ${If} ${FileExists} "$INSTDIR\Launcher.ps1"
+  ${OrIf} ${FileExists} "$INSTDIR\.buttonlauncher"
+    StrCpy $0 1
+  ${EndIf}
+  ${If} "$LOCALAPPDATA" == ""
+  ${OrIf} "$INSTDIR" != "$LOCALAPPDATA\Programs\${APPNAME}"
+  ${OrIf} $0 = 0
     MessageBox MB_OK "Uninstall stopped: this doesn't look like the ${APPNAME} install folder.$\n$INSTDIR" /SD IDOK
     SetErrorLevel 1
     Quit
   ${EndIf}
+  StrCpy $R6 "$INSTDIR"
+  Call un.IsLink
+  ${If} $R5 = 1
+    MessageBox MB_OK "Uninstall stopped: the install folder is a link (junction or symlink), so nothing was removed.$\n$INSTDIR" /SD IDOK
+    SetErrorLevel 1
+    Quit
+  ${EndIf}
   ${IfNot} ${Silent}
-    MessageBox MB_YESNO "Remove ${APPNAME}?" IDYES +2
+    MessageBox MB_YESNO "Remove ${APPNAME}?$\n$\nThis deletes the whole install folder, including your buttons (buttons.json) and any pictures you added." IDYES +2
     Quit
   ${EndIf}
 FunctionEnd
@@ -231,6 +466,20 @@ Section "Uninstall"
   nsExec::ExecToLog `${PS} "& {${STOP_LAUNCHER}}"`
   Pop $0
   Sleep 500
+  ; Links first: unlink them, and if any is left, stop before touching shortcuts, registry or files.
+  StrCpy $R7 "unlink"
+  StrCpy $R8 0
+  Push "$INSTDIR"
+  Call un.WalkLinks
+  StrCpy $R7 "count"
+  StrCpy $R8 0
+  Push "$INSTDIR"
+  Call un.WalkLinks
+  ${If} $R8 > 0
+    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: the install folder contains a folder or file link (junction or symlink) that could not be removed safely, so nothing was removed.$\n$INSTDIR" /SD IDOK
+    SetErrorLevel 2
+    Quit
+  ${EndIf}
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
   Delete "$DESKTOP\${APPNAME}.lnk"
   Delete "$SMSTARTUP\${APPNAME}.lnk"
@@ -249,5 +498,5 @@ Section "Uninstall"
   ${EndIf}
   ; Same as the IExpress uninstaller: the whole folder goes, including buttons.json and pictures.
   SetOutPath "$TEMP"
-  RMDir /r "$INSTDIR"
+  !insertmacro SAFE_RMDIR "un." "$INSTDIR"
 SectionEnd

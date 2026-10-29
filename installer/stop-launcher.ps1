@@ -1,1 +1,1 @@
-$p='*'+$env:BL_DIR+'\Launcher.ps1*';Get-CimInstance Win32_Process|?{$_.Name -eq 'powershell.exe' -and $_.CommandLine -like $p}|%{Stop-Process -Id $_.ProcessId -Force}
+$p='*'+[WildcardPattern]::Escape($env:BL_DIR)+'\Launcher.ps1*';$l=@(Get-CimInstance Win32_Process|?{$_.Name -eq 'powershell.exe' -and $_.CommandLine -like $p}|%{Get-Process -Id $_.ProcessId -EA 0});$l|%{$null=$_.CloseMainWindow()};$l|%{if(-not $_.WaitForExit(3000)){Stop-Process -Id $_.Id -Force}};exit 0
