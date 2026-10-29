@@ -5,10 +5,11 @@ $fail = 0
 function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"; $script:fail++ } }
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
-foreach ($n in 'Get-ButtonType', 'Set-Prop', 'Get-Color', 'Mix-Color', 'Get-TileColors', 'Test-DangerButton', 'Get-DisplayLabel', 'Update-OldDefaultOrder', 'ConvertTo-Hex', 'Get-D2Fill') {
+foreach ($n in 'Get-ButtonType', 'Set-Prop', 'Get-Color', 'Mix-Color', 'Get-TileColors', 'Test-DangerButton', 'Get-DisplayLabel', 'Update-OldDefaultOrder', 'ConvertTo-Hex', 'Get-D2Fill',
+         'Get-SafeUrl', 'Is-Todo', 'Test-CustomSlot', 'Test-SlotEmpty', 'New-EmptySlot', 'Clear-CustomSlot', 'Test-CustomSlotTarget', 'ConvertTo-CustomSlot', 'Remove-CustomRow', 'Add-CustomRow', 'Test-StockSecurityTile') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
-foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(ModernFill|Acronyms|Theme|D2Fill)\s*=') { Invoke-Expression $l.Extent.Text } }
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(ModernFill|Acronyms|Theme|D2Fill|CustomSlotTypes|CustomSlotBadExt)\s*=') { Invoke-Expression $l.Extent.Text } }
 function L($label, $extra) { $o = [pscustomobject]@{ label = $label; type = 'website'; action = '' }; if ($extra) { foreach ($k in $extra.Keys) { $o | Add-Member $k $extra[$k] -Force } }; $o }
 $cases = @(
     @((L "RED DOG`nBACK`nOFFICE"), 'Red Dog Back Office', $null),
@@ -60,28 +61,82 @@ Check 'D2: restart icons are no longer red masks' ($src -notmatch 'OpacityMask =
 # Default order + migration
 $def = Get-Content (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
 $bl = @($def.panels[1].buttons | ForEach-Object { ([string]$_.label) -replace "`n", ' ' })
-Check 'default: Start Jartrek Security above the Restarts' ($bl.IndexOf('START JARTREK SECURITY') -lt $bl.IndexOf('RESTART SCREEN CONNECT') -and $bl[-1] -eq 'RESTART COMPUTER')
+Check 'v1.4.0 default: Start Jartrek Security removed' ($bl -notcontains 'START JARTREK SECURITY' -and -not ($src -match '(?m)^\s*"label": "START\\nJARTREK'))
+$db = @($def.panels[1].buttons)
+Check 'v1.4.0 default: 2 empty custom slots, half width, just above the Restarts' ((Test-SlotEmpty $db[4]) -and (Test-SlotEmpty $db[5]) -and $db[4].width -eq 'half' -and $db[5].width -eq 'half' -and (Test-DangerButton $db[6]) -and $bl[-1] -eq 'RESTART COMPUTER' -and $def.layoutVersion -eq 3)
+Check 'v1.4.0 default: slots same size as the Revenue half tile' ($db[4].height -eq $db[3].height -and $db[4].fontSize -eq $db[3].fontSize)
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ('bl-mig-' + [guid]::NewGuid()); New-Item -ItemType Directory $tmp | Out-Null
 $global:cfgPath = Join-Path $tmp 'buttons.json'; $global:logPath = Join-Path $tmp 'log.txt'
 $oldJson = git -C $root show 772f83a:buttons.json | Out-String
 $global:cfg = $oldJson | ConvertFrom-Json; Update-OldDefaultOrder
 $ml = @($global:cfg.panels[1].buttons | ForEach-Object { ([string]$_.label) -replace "`n", ' ' })
-Check 'migration: old default order moved' ($ml -join '|') -eq 'BACK OFFICE USER GUIDE VERSION 11|REGISTER USER GUIDE VERSION 11|PLCE|DEPARTMENT OF REVENUE|START JARTREK SECURITY|RESTART SCREEN CONNECT|RESTART COMPUTER'
+Check 'migration: old default order moved, then Security replaced by 2 empty slots' ($ml -join '|') -eq 'BACK OFFICE USER GUIDE VERSION 11|REGISTER USER GUIDE VERSION 11|PLCE|DEPARTMENT OF REVENUE|||RESTART SCREEN CONNECT|RESTART COMPUTER' -and (Test-SlotEmpty $global:cfg.panels[1].buttons[4]) -and (Test-SlotEmpty $global:cfg.panels[1].buttons[5])
 $saved = Get-Content $global:cfgPath -Raw | ConvertFrom-Json
-Check 'migration: saved with both panels and layoutVersion 2' (@($saved.panels).Count -eq 2 -and $saved.layoutVersion -eq 2 -and @($saved.panels[0].buttons).Count -eq 4)
+Check 'migration: saved with both panels and layoutVersion 3' (@($saved.panels).Count -eq 2 -and $saved.layoutVersion -eq 3 -and @($saved.panels[0].buttons).Count -eq 4)
 $global:cfg = $oldJson | ConvertFrom-Json
 $b = @($global:cfg.panels[1].buttons); $global:cfg.panels[1].buttons = @($b[1], $b[0]) + $b[2..6]; Update-OldDefaultOrder
-Check 'migration: a rearranged panel is left alone' ((([string]$global:cfg.panels[1].buttons[0].label) -replace "`n", ' ') -eq 'REGISTER USER GUIDE VERSION 11' -and (([string]$global:cfg.panels[1].buttons[4].label) -replace "`n", ' ') -eq 'RESTART SCREEN CONNECT')
+Check 'migration: a rearranged panel keeps its order (only Security becomes the 2 slots, in place)' ((([string]$global:cfg.panels[1].buttons[0].label) -replace "`n", ' ') -eq 'REGISTER USER GUIDE VERSION 11' -and (([string]$global:cfg.panels[1].buttons[4].label) -replace "`n", ' ') -eq 'RESTART SCREEN CONNECT' -and (Test-SlotEmpty $global:cfg.panels[1].buttons[5]) -and (Test-SlotEmpty $global:cfg.panels[1].buttons[6]) -and @($global:cfg.panels[1].buttons).Count -eq 8)
 foreach ($bad in 'abc', '2.5x', '') { $global:cfg = $oldJson | ConvertFrom-Json; $global:cfg | Add-Member layoutVersion $bad -Force; $e = $null
     try { Update-OldDefaultOrder } catch { $e = $_ }
-    Check "MB-L1: layoutVersion '$bad' treated as 1 (migrates, no error)" (-not $e -and $global:cfg.layoutVersion -eq 2 -and (([string]$global:cfg.panels[1].buttons[4].label) -replace "`n", ' ') -eq 'START JARTREK SECURITY') }
+    Check "MB-L1: layoutVersion '$bad' treated as 1 (migrates, no error)" (-not $e -and $global:cfg.layoutVersion -eq 3 -and (Test-SlotEmpty $global:cfg.panels[1].buttons[4])) }
 $global:cfgPath = Join-Path $tmp 'no-such-dir/buttons.json'; $global:cfg = $oldJson | ConvertFrom-Json; $e = $null
 try { Update-OldDefaultOrder } catch { $e = $_ }
-Check 'MB-L2: failed migration write is logged, no error, config migrated in memory' (-not $e -and $global:cfg.layoutVersion -eq 2 -and ((Get-Content $global:logPath -Raw) -match "couldn't save the migrated"))
+Check 'MB-L2: failed migration write is logged, no error, config migrated in memory' (-not $e -and $global:cfg.layoutVersion -eq 3 -and ((Get-Content $global:logPath -Raw) -match "couldn't save the migrated"))
 $global:cfgPath = Join-Path $tmp 'buttons.json'; $global:cfg = $oldJson | ConvertFrom-Json
 $sb = $global:cfg.panels[1].buttons; $sb[5].height = 99; $sb[5].fontSize = 15; $sb[4].width = 'full'; $sb[4].height = 70; $sb[6].fontSize = 14
 Update-OldDefaultOrder; $mb = $global:cfg.panels[1].buttons
-Check 'MB-L3: moved tiles keep their sizes' ($mb[4].height -eq 99 -and $mb[4].fontSize -eq 15 -and $mb[4].width -eq 'half' -and $mb[5].width -eq 'full' -and $mb[5].height -eq 70 -and $mb[6].fontSize -eq 14 -and $mb[6].height -eq 85)
+Check 'MB-L3: moved tiles keep their sizes (Security gone, Restarts untouched)' ((Test-SlotEmpty $mb[4]) -and (Test-SlotEmpty $mb[5]) -and $mb[6].width -eq 'full' -and $mb[6].height -eq 70 -and $mb[7].fontSize -eq 14 -and $mb[7].height -eq 85)
+# --- v1.4.0 custom row: migration keeps data and backs up ---
+$global:cfgPath = Join-Path $tmp 'buttons.json'; $v2 = $def | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+$sb = @($v2.panels[1].buttons); $sec = [pscustomobject]@{ label = "START`nJARTREK`nSECURITY"; bg = '#8A6100'; width = 'full'; height = 80; type = 'program'; target = 'C:\JT\sec.exe' }
+$v2.panels[1].buttons = @($sb[0..3]) + $sec + @($sb[6..7]); $v2.layoutVersion = 2; $v2.panels[0].buttons[0].label = 'MY RENAMED TILE'
+$before = $v2 | ConvertTo-Json -Depth 12; [IO.File]::WriteAllText($global:cfgPath, $before)
+Remove-Item -LiteralPath ($global:cfgPath + '.pre-v1.4.bak') -ErrorAction SilentlyContinue
+$global:cfg = $before | ConvertFrom-Json; Update-OldDefaultOrder
+$after = Get-Content $global:cfgPath -Raw | ConvertFrom-Json; $al = @($after.panels[1].buttons)
+Check 'v3 migration: a configured Security tile is dropped, 2 empty slots in its place' ($al.Count -eq 8 -and (Test-SlotEmpty $al[4]) -and (Test-SlotEmpty $al[5]) -and -not (@($al | Where-Object { Test-StockSecurityTile $_ }).Count) -and $after.layoutVersion -eq 3)
+Check 'v3 migration: every other tile kept as is (no data loss)' ($after.panels[0].buttons[0].label -eq 'MY RENAMED TILE' -and @($after.panels[0].buttons).Count -eq @($v2.panels[0].buttons).Count -and (($al[0..3] | ConvertTo-Json -Depth 8) -eq (@($sb[0..3]) | ConvertTo-Json -Depth 8)) -and (($al[6..7] | ConvertTo-Json -Depth 8) -eq (@($sb[6..7]) | ConvertTo-Json -Depth 8)))
+Check 'v3 migration: one-time backup buttons.json.pre-v1.4.bak is the old file byte for byte' ((Get-Content ($global:cfgPath + '.pre-v1.4.bak') -Raw) -ceq $before -and (Test-Path ($global:cfgPath + '.bak')))
+$global:cfg = Get-Content $global:cfgPath -Raw | ConvertFrom-Json; $mt = (Get-Item $global:cfgPath).LastWriteTimeUtc; Start-Sleep -Milliseconds 30; Update-OldDefaultOrder
+Check 'v3 migration: runs once (a v3 file is not touched again)' ((Get-Item $global:cfgPath).LastWriteTimeUtc -eq $mt)
+$c3 = $before | ConvertFrom-Json; $c3.panels[1].buttons[4].label = "START`nJARTREK`nSECURITY 2"; $global:cfg = $c3; Update-OldDefaultOrder
+Check 'v3 migration: a user tile with a different label is kept' (@($global:cfg.panels[1].buttons | Where-Object { ([string]$_.label) -like '*SECURITY 2' }).Count -eq 1)
+# --- custom row model ---
+$items = New-Object System.Collections.ArrayList; foreach ($x in $al) { [void]$items.Add(($x | ConvertTo-Json -Depth 8 | ConvertFrom-Json)) }
+Check 'row: renders as 2 +Add slots (both empty, adjacent, half)' (@($items | Where-Object { Test-SlotEmpty $_ }).Count -eq 2 -and $items.IndexOf(@($items | Where-Object { Test-SlotEmpty $_ })[0]) -eq 4)
+$s0 = $items[4]; Set-Prop $s0 'label' 'Schedule'; Set-Prop $s0 'type' 'website'; Set-Prop $s0 'target' 'https://example.invalid/s'; Set-Prop $s0 'args' 'x'; Set-Prop $s0 'runAsAdmin' $true; Set-Prop $s0 'width' 'full'; ConvertTo-CustomSlot $s0
+Check 'add: a filled slot is not empty, forced half, no args, never elevated' (-not (Test-SlotEmpty $s0) -and (Test-CustomSlot $s0) -and $s0.width -eq 'half' -and $s0.args -eq '' -and $s0.runAsAdmin -eq $false)
+Set-Prop $s0 'label' 'Schedule 2'; ConvertTo-CustomSlot $s0; Check 'edit: label changes, still a slot' ($s0.label -eq 'Schedule 2' -and (Test-CustomSlot $s0))
+Check 'remove row refused while a slot is filled' (-not (Remove-CustomRow $items) -and $items.Count -eq 8)
+Clear-CustomSlot $s0; Check 'remove button: the slot goes back to +Add, row keeps its shape' ((Test-SlotEmpty $s0) -and $s0.target -eq '' -and $s0.label -eq '' -and $items.Count -eq 8)
+Check 'remove row: both empty -> row collapses (no slots, nothing else lost)' ((Remove-CustomRow $items) -and $items.Count -eq 6 -and -not @($items | Where-Object { Test-CustomSlot $_ }).Count -and (Test-DangerButton $items[4]))
+Check 'restore row: Setup brings 2 empty slots back just above the Restarts' ((Add-CustomRow $items) -and (Test-SlotEmpty $items[4]) -and (Test-SlotEmpty $items[5]) -and (Test-DangerButton $items[6]) -and $items.Count -eq 8)
+Check 'restore row: only once' (-not (Add-CustomRow $items) -and $items.Count -eq 8)
+$e2 = New-Object System.Collections.ArrayList; Check 'restore row on a panel with no Restarts: at the end' ((Add-CustomRow $e2) -and $e2.Count -eq 2)
+# --- untrusted targets ---
+foreach ($ok in @(@('website', 'https://example.invalid/a?b=1'), @('website', 'http://example.invalid'), @('website', 'example.invalid/x'), @('program', 'C:\Program Files\App\app.exe'), @('program', '%ProgramFiles%\App\app.exe'), @('file', 'C:\Docs\a.pdf'), @('file', '\\server\share\a.xlsx'))) {
+    Check ("target ok: {0} {1}" -f $ok[0], $ok[1]) ($null -eq (Test-CustomSlotTarget $ok[0] $ok[1])) }
+foreach ($bad in @(@('script', 'C:\x.ps1'), @('builtin', ''), @('website', 'javascript:alert(1)'), @('website', 'file:///C:/x.exe'), @('website', 'mailto:a@example.invalid'), @('website', 'ms-settings:'), @('website', 'C:\x.exe'), @('website', '\\srv\x'),
+                      @('website', "https://a.invalid/`r`nx"), @('website', ''), @('program', 'C:\x.bat'), @('program', 'C:\x.cmd'), @('program', 'C:\x.lnk'), @('program', 'notepad.exe'), @('program', 'C:\a.exe" /c calc'), @('program', 'C:\a.exe & calc'),
+                      @('program', 'C:\a.pdf'), @('file', 'C:\x.vbs'), @('file', 'C:\x.hta'), @('file', 'C:\x.url'), @('file', 'shell:startup'), @('file', 'TODO: x'), @('file', 'relative\a.pdf'), @('program', "C:\a`0.exe"))) {
+    Check ("target refused: {0} {1}" -f $bad[0], ($bad[1] -replace "`r", '\r' -replace "`n", '\n' -replace [char]0, '\0')) ([bool](Test-CustomSlotTarget $bad[0] $bad[1])) }
+$ib = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Invoke-Button' }, $true).Extent.Text
+Check 'click re-checks the target and drops args/admin for slots' ($ib -match 'Test-CustomSlotTarget \$kind' -and $ib -match "args = ''; runAsAdmin = .false" -and $ib.IndexOf('Test-CustomSlot $btn') -lt $ib.IndexOf('$verb ='))
+$eb = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Edit-Button' }, $true).Extent.Text
+Check 'edit dialog: custom offers only Program, Website, File; Save refuses a bad target' ($eb.Contains("if (`$Custom) { `$types = [ordered]@{ program = 'Program'; website = 'Website'; file = 'File / PDF' }") -and $eb.Contains('Test-CustomSlotTarget $kk') -and $eb.Contains('ConvertTo-CustomSlot $btn'))
+$as = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-AddSlot' }, $true).Extent.Text
+Check '+Add: focusable, screen-reader name, click and Enter add' ($as.Contains('Focusable = $true') -and $as.Contains("SetName(`$tile, 'Add a button')") -and $as.Contains('Add_MouseLeftButtonUp') -and $as.Contains("Key -eq 'Enter'") -and $as.Contains("Tag = 'half'"))
+Check 'layout: empty slots render as +Add, others as tiles' ($src -match 'if \(Test-SlotEmpty \$btn\) \{ New-AddSlot \$p \$btn \} else \{ New-Tile \$p \$btn \}')
+Check 'Set up this PC never lists an empty slot as missing' ($src -match 'function global:Test-ButtonReady\(\$btn\) \{\s+if \(Test-SlotEmpty \$btn\) \{ return \$true \}')
+$os = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Open-Single' }, $true).Extent.Text
+$op = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Open-Panel' }, $true).Extent.Text
+$bp = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Build-Panel' }, $true).Extent.Text
+Check 'layout: one-panel and two-panel both draw tiles through Build-Panel -> Add-TileRows (one code path for the row)' ($os.Contains('foreach ($p in $groups) { Build-Panel $p }') -and $op.Contains('Build-Panel $p') -and $bp.Contains('Add-TileRows $p $stack $normal'))
+Check 'layout: a collapsed row leaves no element (only items are drawn; no spacer or placeholder for a removed row)' ($bp -notmatch 'slot' -and $src -notmatch 'New-Object System.Windows.Controls.Border; \$gap')
+Check 'layout: the 2 slots are half width, so Add-TileRows puts them side by side in one row' ((New-EmptySlot).width -eq 'half' -and $src.Contains("if (`$btn.width -eq 'half') {"))
+$sm = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Slot-Menu' }, $true).Extent.Text
+Check 'menus: slot menu has Add/Edit/Remove this button/Remove this row (disabled while filled); Setup restores the row' ($sm.Contains("'Add a button here...'") -and $sm.Contains("'Edit this button...'") -and $sm.Contains("'Remove this button'") -and $sm.Contains("'Remove this row'") -and $sm.Contains('$rr.IsEnabled = -not') -and $src.Contains("'Add the row of 2 custom buttons'"))
+Check 'restarts unchanged: ScreenConnect elevation and force-restart confirmation' ($ib.Contains("'restart-screenconnect' { return (Restart-ScreenConnect) }") -and $ib.Contains("CC-M4/LJ-L3: force restart ALWAYS asks") -and $ib.Contains("'YesNo', 'Warning', 'No'"))
 Remove-Item -LiteralPath $tmp -Recurse -Force
 # LJ: setup check at draw time touches only local fixed-drive paths (drive types mocked: C fixed, Z mapped network)
 foreach ($n in 'Expand', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Resolve-IconTarget', 'Get-SetupState', 'Test-ButtonSetUpQuick') {

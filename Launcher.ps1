@@ -217,6 +217,12 @@ Set-Content -LiteralPath '$resQ' -Value `$out -Encoding UTF8
 
 function global:Invoke-Button($btn) {
     $kind = Get-ButtonType $btn
+    if (Test-CustomSlot $btn) {   # untrusted target: re-checked on every click; no args, never elevated
+        if (Test-SlotEmpty $btn) { return $false }
+        $why = Test-CustomSlotTarget $kind ([string]$btn.target)
+        if ($why) { [System.Windows.MessageBox]::Show("This button can't open its target.`n$why`nRight-click it > Edit this button to fix it.", 'Launcher') | Out-Null; return $false }
+        $btn = [pscustomobject]@{ type = $kind; target = [string]$btn.target; args = ''; runAsAdmin = $false; label = [string]$btn.label; image = [string]$btn.image }
+    }
     $cText = [string]$btn.confirm
     if (-not $cText.Trim() -and $kind -eq 'builtin' -and [string]$btn.action -eq 'restart-computer') {
         $cText = 'Restart this computer now? Unsaved work in open programs will be lost.'   # CC-M4/LJ-L3: force restart ALWAYS asks
@@ -364,6 +370,52 @@ function global:Set-D2Panel($edge, [string]$corners) {   # panel: dark glass gra
 function global:Test-DangerButton($btn) {
     if ([string]$btn.group -eq 'danger') { return $true }
     return ((Get-ButtonType $btn) -eq 'builtin' -and [string]$btn.action -in 'restart-screenconnect', 'restart-computer')
+}
+# v1.4.0 custom row: two user tiles (slot = 'custom') where Start Jartrek Security was. A slot is empty (+ Add) or filled.
+# Only Program, Website (http/https) or File; never a script, never arguments, never elevated. Targets are untrusted input.
+$global:CustomSlotTypes = @('program', 'website', 'file')
+$global:CustomSlotBadExt = '(?i)\.(ps1|psm1|psd1|bat|cmd|vbs|vbe|js|jse|wsf|wsh|hta|msc|scr|pif|com|cpl|reg|inf|msi|msp|application|appref-ms|url|scf|lnk)$'
+function global:Test-CustomSlot($btn) { return ($null -ne $btn -and [string]$btn.slot -eq 'custom') }
+function global:Test-SlotEmpty($btn) { return ((Test-CustomSlot $btn) -and [bool]$btn.empty) }
+function global:New-EmptySlot {
+    [pscustomobject]@{ slot = 'custom'; empty = $true; label = ''; bg = '#3A3A44'; fg = '#FFFFFF'; width = 'half'; height = 82; fontSize = 13
+                       type = 'program'; target = ''; args = ''; image = ''; imageMode = 'above'; runAsAdmin = $false }
+}
+function global:Clear-CustomSlot($btn) {   # "Remove this button": the slot stays, empty, so the row keeps its shape
+    $e = New-EmptySlot; foreach ($pr in $e.PSObject.Properties) { Set-Prop $btn $pr.Name $pr.Value }
+    foreach ($n in 'action', 'confirm', 'group', 'detect', 'askTitle', 'askFilter', 'vncPicker', 'email') { if ($btn.PSObject.Properties[$n]) { $btn.PSObject.Properties.Remove($n) } }
+}
+function global:Test-CustomSlotTarget([string]$type, [string]$target) {   # $null = OK, else a fixed message
+    if ($type -notin $global:CustomSlotTypes) { return 'Custom buttons can only open a Program, a Website or a File.' }
+    $t = ([string]$target).Trim()
+    if (-not $t -or (Is-Todo $t)) { return $(if ($type -eq 'website') { 'Type a web address.' } else { 'Pick the program or file.' }) }
+    if ($t -match '[\x00-\x1F"<>|]') { return "That target has characters that aren't allowed." }
+    if ($type -eq 'website') {
+        $u = Get-SafeUrl $t
+        if (-not $u -or $u -notmatch '^(?i)https?://[^\s/?#]+') { return 'Web addresses must start with http:// or https://.' }
+        return $null }
+    if ($t -match '^[a-z][a-z0-9+.-]*:(?![\\/])' -and $t -notmatch '^[a-zA-Z]:\\') { return 'Pick a file on this PC or the network, not a link.' }
+    if ($t -notmatch '^([a-zA-Z]:\\|\\\\|%[A-Za-z_()0-9]+%\\)') { return 'Use the full path (Browse...).' }
+    if ($t -match $global:CustomSlotBadExt) { return "Scripts and shortcuts can't be custom buttons. Pick the program or file itself." }
+    if ($type -eq 'program' -and $t -notmatch '(?i)\.exe$') { return 'A program must be an .exe file.' }
+    return $null
+}
+function global:ConvertTo-CustomSlot($btn) {   # after a good edit: always half width, no args, never elevated
+    Set-Prop $btn 'slot' 'custom'; Set-Prop $btn 'empty' $false; Set-Prop $btn 'width' 'half'; Set-Prop $btn 'args' ''; Set-Prop $btn 'runAsAdmin' $false
+    foreach ($n in 'action', 'confirm', 'group', 'detect', 'vncPicker', 'email') { if ($btn.PSObject.Properties[$n]) { $btn.PSObject.Properties.Remove($n) } }
+}
+function global:Remove-CustomRow($items) {   # only when every slot is empty; returns $true when the row went
+    $slots = @($items | Where-Object { Test-CustomSlot $_ }); if (-not $slots.Count) { return $false }
+    if (@($slots | Where-Object { -not (Test-SlotEmpty $_) }).Count) { return $false }
+    foreach ($x in $slots) { [void]$items.Remove($x) }; return $true
+}
+function global:Add-CustomRow($items) {   # puts 2 empty slots back just above the Restarts; $false if the panel already has the row
+    if (@($items | Where-Object { Test-CustomSlot $_ }).Count) { return $false }
+    $at = $items.Count; for ($i = 0; $i -lt $items.Count; $i++) { if (Test-DangerButton $items[$i]) { $at = $i; break } }
+    $items.Insert($at, (New-EmptySlot)); $items.Insert($at + 1, (New-EmptySlot)); return $true
+}
+function global:Test-StockSecurityTile($btn) {
+    return (-not (Test-CustomSlot $btn) -and ((([string]$btn.label) -replace '\r', '' -replace '\\n', "`n").Trim() -ceq "START`nJARTREK`nSECURITY"))
 }
 # Title Case for display only. Stored labels are never rewritten; only ALL-CAPS labels are converted.
 function global:Get-DisplayLabel($btn) {
@@ -692,7 +744,7 @@ function global:Set-Prop($o, $name, $val) {
 }
 
 # ---------- edit dialog ----------
-function global:Edit-Button($btn) {
+function global:Edit-Button($btn, [switch]$Custom) {
     $d = New-Object System.Windows.Window
     $d.Title = 'Edit button'; $d.Width = 520; $d.SizeToContent = 'Height'; $d.WindowStartupLocation = 'CenterScreen'; $d.Topmost = $true
     $g = New-Object System.Windows.Controls.Grid; $g.Margin = '10'
@@ -716,7 +768,9 @@ function global:Edit-Button($btn) {
 
     # --- What it does (Type first) ---
     $types = [ordered]@{ program = 'Program'; website = 'Website'; file = 'File / PDF'; script = 'Script'; builtin = 'Built-in action' }
-    $cType = Combo @($types.Values) $types[(Get-ButtonType $btn)]; $cType.FontWeight = 'Bold'
+    if ($Custom) { $types = [ordered]@{ program = 'Program'; website = 'Website'; file = 'File / PDF' }; $d.Title = $(if (Test-SlotEmpty $btn) { 'Add a button' } else { 'Edit button' }) }
+    $selType = $types[(Get-ButtonType $btn)]; if (-not $selType) { $selType = $types['program'] }
+    $cType = Combo @($types.Values) $selType; $cType.FontWeight = 'Bold'
     [void](AddRow 'type' 'Type' $cType $null)
     $tT = TB $btn.target; $bBrowse = Btn 'Browse...'; $bTest = Btn 'Test'
     $tLbl = AddRow 'target' 'Path' $tT $bBrowse
@@ -738,7 +792,8 @@ function global:Edit-Button($btn) {
     $show = {
         $k = ($types.GetEnumerator() | Where-Object { $_.Value -eq $cType.SelectedItem }).Key
         $vis = @{ target = $k -in 'program','file','script'; url = $k -eq 'website'; args = $k -in 'program','script'; admin = $k -in 'program','script'; action = $k -eq 'builtin' }
-        foreach ($r in $vis.Keys) { foreach ($c in $rows[$r]) { $c.Visibility = $(if ($vis[$r]) { 'Visible' } else { 'Collapsed' }) } }
+        if ($Custom) { $vis.args = $false; $vis.admin = $false; $vis.action = $false; $vis.confirm = $false; $vis.w = $false }
+        foreach ($r in $vis.Keys) { if (-not $rows.ContainsKey($r)) { continue }; foreach ($c in $rows[$r]) { $c.Visibility = $(if ($vis[$r]) { 'Visible' } else { 'Collapsed' }) } }
         $tLbl.Content = switch ($k) { 'program' { 'Program' } 'file' { 'File' } 'script' { 'Script' } default { 'Path' } }
     }.GetNewClosure()
     $cType.Add_SelectionChanged($show)
@@ -777,7 +832,12 @@ function global:Edit-Button($btn) {
     $bar.Children.Add($ok) | Out-Null; $bar.Children.Add($cancel) | Out-Null
     $outer = New-Object System.Windows.Controls.StackPanel; $outer.Children.Add($g) | Out-Null; $outer.Children.Add($bar) | Out-Null
     $d.Content = $outer
-    $ok.Add_Click({ $d.DialogResult = $true }.GetNewClosure())
+    $ok.Add_Click({
+        if ($Custom) {   # untrusted target: refuse to save a bad one, keep the dialog open
+            $kk = 'program'; foreach ($e in $types.GetEnumerator()) { if ($e.Value -eq $cType.SelectedItem) { $kk = $e.Key } }
+            $why = Test-CustomSlotTarget $kk $(if ($kk -eq 'website') { $tUrl.Text } else { $tT.Text })
+            if ($why) { [System.Windows.MessageBox]::Show($why, 'Custom button') | Out-Null; return } }
+        $d.DialogResult = $true }.GetNewClosure())
     if (-not $d.ShowDialog()) { return $false }
 
     $k = 'program'; foreach ($e in $types.GetEnumerator()) { if ($e.Value -eq $cType.SelectedItem) { $k = $e.Key } }
@@ -791,11 +851,13 @@ function global:Edit-Button($btn) {
     $n = 0; if ([double]::TryParse($tH.Text, [ref]$n)) { Set-Prop $btn 'height' $n }
     if ([double]::TryParse($tFs.Text, [ref]$n)) { Set-Prop $btn 'fontSize' $n }
     Set-Prop $btn 'width' $cW.SelectedItem; Set-Prop $btn 'image' $tI.Text; Set-Prop $btn 'imageMode' $cM.SelectedItem
+    if ($Custom) { ConvertTo-CustomSlot $btn; if (-not ([string]$btn.label).Trim()) { Set-Prop $btn 'label' ([IO.Path]::GetFileNameWithoutExtension(([string]$btn.target).TrimEnd('/'))) } }
     return $true
 }
 
 # ---------- UX-2a: "Set up this PC" - pick every missing program/file once, right after install ----------
 function global:Test-ButtonReady($btn) {
+    if (Test-SlotEmpty $btn) { return $true }
     $kind = Get-ButtonType $btn
     if ($kind -notin 'program', 'file', 'script') { return $true }
     $t = Expand $btn.target
@@ -1047,6 +1109,8 @@ function global:Panel-Menu($p, $menu) {
     if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" }) }   # installed copies ship without the builder
     [void](Add-MenuItem $setup 'View-only password (for viewing computers)...' { [void](Show-VncPasswordDialog $null) })
     [void](Add-MenuItem $setup 'Unread email count...' { [void](Show-MailSetupDialog $null) })   # v1.4.0, opt-in
+    if (-not @($p.items | Where-Object { Test-CustomSlot $_ }).Count) {
+        [void](Add-MenuItem $setup 'Add the row of 2 custom buttons' { if (Add-CustomRow $p.items) { Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure()) }
     [void](Add-MenuItem $setup 'Edit buttons.json in Notepad' { Start-Process notepad.exe "`"$global:cfgPath`"" })
     $lay = New-Object System.Windows.Controls.MenuItem; $lay.Header = 'Layout'
     foreach ($opt in @(@('two', 'Two panels'), @('single', 'One panel, docked to the edge'))) { $val = $opt[0]
@@ -1070,6 +1134,7 @@ function global:Panel-Menu($p, $menu) {
 function global:Button-Menu($p, $btn) {
     $m = New-Object System.Windows.Controls.ContextMenu
     if ([bool]$global:cfg.locked) { Locked-Menu $p $m; return $m }
+    if (Test-CustomSlot $btn) { Slot-Menu $p $btn $m; return $m }
     [void](Add-MenuItem $m 'Edit this button...' { if (Edit-Button $btn) { Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
     [void](Add-MenuItem $m 'Move up' { $i = $p.items.IndexOf($btn); if ($i -gt 0) { $p.items.RemoveAt($i); $p.items.Insert($i - 1, $btn); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
     [void](Add-MenuItem $m 'Move down' { $i = $p.items.IndexOf($btn); if ($i -lt $p.items.Count - 1) { $p.items.RemoveAt($i); $p.items.Insert($i + 1, $btn); Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure())
@@ -1087,10 +1152,52 @@ function global:Button-Menu($p, $btn) {
     return $m
 }
 
+function global:Slot-Menu($p, $btn, $m) {   # custom row: Add/Edit, Remove this button (empties the slot), Remove this row (only when both are empty)
+    if (Test-SlotEmpty $btn) { [void](Add-MenuItem $m 'Add a button here...' { Edit-CustomSlot $p $btn }.GetNewClosure()) }
+    else {
+        [void](Add-MenuItem $m 'Edit this button...' { Edit-CustomSlot $p $btn }.GetNewClosure())
+        [void](Add-MenuItem $m 'Remove this button' { Clear-CustomSlot $btn; Save-Config; Build-Panel $p; Layout-Panel $p }.GetNewClosure()) }
+    $rr = Add-MenuItem $m 'Remove this row' { if (Remove-CustomRow $p.items) { Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure()
+    $rr.IsEnabled = -not @($p.items | Where-Object { (Test-CustomSlot $_) -and -not (Test-SlotEmpty $_) }).Count
+    if (-not $rr.IsEnabled) { $rr.ToolTip = 'Remove both buttons first.' }
+    [void]$m.Items.Add((New-Object System.Windows.Controls.Separator))
+    Panel-Menu $p $m
+}
+function global:Edit-CustomSlot($p, $btn) {   # edits a copy, so Cancel or a refused target leaves the slot as it was
+    $tmp = $btn | ConvertTo-Json -Depth 6 | ConvertFrom-Json
+    if (Test-SlotEmpty $tmp) { Set-Prop $tmp 'label' '' }
+    if (-not (Edit-Button $tmp -Custom)) { return }
+    foreach ($pr in $tmp.PSObject.Properties) { Set-Prop $btn $pr.Name $pr.Value }
+    Save-Config; Build-Panel $p; Layout-Panel $p
+}
+function global:New-AddSlot($p, $btn) {   # empty slot: subtle dashed "+ Add", same size as a half tile; click or Enter adds
+    $h = if ($btn.height) { [Math]::Max(44, [double]$btn.height) } else { 82 }
+    $wrap = New-Object System.Windows.Controls.Grid; $wrap.Margin = '3'; $wrap.Tag = 'half'
+    $tile = New-Object System.Windows.Controls.Border; $tile.Height = $h; $tile.CornerRadius = '12'; $tile.Background = Brush '#0AFFFFFF'
+    $tile.Focusable = $true; $tile.FocusVisualStyle = $null; $tile.Cursor = [System.Windows.Input.Cursors]::Hand; $tile.ToolTip = 'Add a button'
+    [System.Windows.Automation.AutomationProperties]::SetName($tile, 'Add a button')
+    $g = New-Object System.Windows.Controls.Grid; $g.Background = [System.Windows.Media.Brushes]::Transparent
+    $dash = New-Object System.Windows.Shapes.Rectangle; $dash.IsHitTestVisible = $false; $dash.Stroke = Brush '#73FFFFFF'; $dash.StrokeThickness = 1.5
+    $dash.StrokeDashArray = New-Object System.Windows.Media.DoubleCollection (,[double[]](4, 3)); $dash.RadiusX = 11; $dash.RadiusY = 11
+    $txt = New-Label ('+  Add') '#C8C8D0' 14; $txt.HorizontalAlignment = 'Center'; $txt.VerticalAlignment = 'Center'; $txt.IsHitTestVisible = $false
+    [void]$g.Children.Add($dash); [void]$g.Children.Add($txt); $tile.Child = $g
+    $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-4'; $ring.CornerRadius = '16'
+    $ring.BorderThickness = '2'; $ring.BorderBrush = [System.Windows.Media.Brushes]::White; $ring.Visibility = 'Hidden'
+    [void]$wrap.Children.Add($tile); [void]$wrap.Children.Add($ring)
+    $tile.Add_MouseEnter({ $tile.Background = Brush '#17FFFFFF' }.GetNewClosure())
+    $tile.Add_MouseLeave({ $tile.Background = Brush '#0AFFFFFF' }.GetNewClosure())
+    $tile.Add_MouseLeftButtonUp({ $_.Handled = $true; Edit-CustomSlot $p $btn }.GetNewClosure())
+    $tile.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; Edit-CustomSlot $p $btn } }.GetNewClosure())
+    $tile.Add_IsKeyboardFocusedChanged({ $ring.Visibility = if ($tile.IsKeyboardFocused) { 'Visible' } else { 'Hidden' } }.GetNewClosure())
+    $tile.Add_MouseRightButtonDown({ [void]$tile.Focus() }.GetNewClosure())
+    $tile.ContextMenu = Button-Menu $p $btn
+    return $wrap
+}
+
 function global:Add-TileRows($p, $target, $list) {
     $pendingHalf = $null
     foreach ($btn in $list) {
-        $el = New-Tile $p $btn
+        $el = if (Test-SlotEmpty $btn) { New-AddSlot $p $btn } else { New-Tile $p $btn }
         if ($btn.width -eq 'half') {
             if ($pendingHalf) { [System.Windows.Controls.Grid]::SetColumn($el, 1); [void]$pendingHalf.Children.Add($el); $pendingHalf = $null }
             else {
@@ -1193,10 +1300,11 @@ function global:Open-Panel($pc) {
 function global:Update-OldDefaultOrder {
     $lv = 0   # MB-L1: a missing or bad layoutVersion counts as 1
     if (-not [int]::TryParse([string]$global:cfg.layoutVersion, [ref]$lv)) { $lv = 1 }
-    if ($lv -ge 2) { return }
+    if ($lv -ge 3) { return }
+    $changed = $false; $dropped = $false
+    if ($lv -lt 2) {
     $old = @("BACK OFFICE`nUSER GUIDE`nVERSION 11", "REGISTER`nUSER GUIDE`nVERSION 11", 'PLCE', "DEPARTMENT`nOF`nREVENUE",
              "RESTART`nSCREEN CONNECT", "START`nJARTREK`nSECURITY", "RESTART`nCOMPUTER")
-    $changed = $false
     foreach ($pc in @($global:cfg.panels)) {
         $bs = @($pc.buttons); $labels = @($bs | ForEach-Object { ([string]$_.label) -replace '\r', '' })
         if ($labels.Count -ne $old.Count) { continue }
@@ -1205,8 +1313,18 @@ function global:Update-OldDefaultOrder {
         $sec = $bs[5]   # MB-L3: move only. Width, height and font size stay exactly as the user has them.
         $pc.buttons = @($bs[0], $bs[1], $bs[2], $bs[3], $sec, $bs[4], $bs[6]); $changed = $true
     }
-    Set-Prop $global:cfg 'layoutVersion' 2
     if ($changed) { Add-Content -LiteralPath $global:logPath -Value ("{0}  moved Start Jartrek Security above the Restarts (old default order)" -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
+    }
+    # v1.4.0 (layoutVersion 3): the stock Start Jartrek Security tile goes; 2 empty custom slots take its spot. Nothing else moves.
+    foreach ($pc in @($global:cfg.panels)) {
+        $bs = @($pc.buttons); $i = -1; for ($j = 0; $j -lt $bs.Count; $j++) { if (Test-StockSecurityTile $bs[$j]) { $i = $j; break } }
+        if ($i -lt 0) { continue }
+        $nb = @(); if ($i -gt 0) { $nb += $bs[0..($i - 1)] }; $nb += (New-EmptySlot); $nb += (New-EmptySlot); if ($i -lt $bs.Count - 1) { $nb += $bs[($i + 1)..($bs.Count - 1)] }
+        $pc.buttons = $nb; $dropped = $true }
+    if ($dropped) { Add-Content -LiteralPath $global:logPath -Value ("{0}  removed Start Jartrek Security; added the custom row" -f (Get-Date -Format s)) -ErrorAction SilentlyContinue }
+    $keep = $global:cfgPath + '.pre-v1.4.bak'   # a one-time copy of the old file, never overwritten
+    if (($changed -or $dropped) -and (Test-Path -LiteralPath $global:cfgPath) -and -not (Test-Path -LiteralPath $keep)) { try { Copy-Item -LiteralPath $global:cfgPath -Destination $keep -ErrorAction Stop } catch {} }
+    Set-Prop $global:cfg 'layoutVersion' 3
     # No panels are open yet, so Save-Config (which rebuilds the list from open panels) can't be used here.
     try {   # MB-L2: if the write fails, log it and keep going with the migrated config in memory
         $tmp = $global:cfgPath + '.tmp'
@@ -2036,15 +2154,15 @@ function global:New-D2Dialog([string]$title, $owner, [int]$width) {
 function global:New-D2Label([string]$text, [string]$fg = '#FFFFFF', [int]$size = 14) {
     $t = New-Object System.Windows.Controls.TextBlock; $t.Text = $text; $t.TextWrapping = 'Wrap'; $t.Foreground = Brush $fg; $t.FontSize = $size; $t.Margin = '0,0,0,8'; return $t
 }
-function global:New-D2Field($input) {   # wraps a TextBox or PasswordBox in the D2 field look
+function global:New-D2Field($field) {   # wraps a TextBox or PasswordBox in the D2 field look
     $b = New-Object System.Windows.Controls.Border; $b.Height = 32; $b.CornerRadius = '6'; $b.Background = Brush '#0FFFFFFF'
     $b.BorderBrush = Brush '#1FFFFFFF'; $b.BorderThickness = '1'; $b.Margin = '0,0,0,16'
-    $input.Background = [System.Windows.Media.Brushes]::Transparent; $input.BorderThickness = '0'; $input.Foreground = Brush '#FFFFFF'
-    $input.CaretBrush = Brush '#FFFFFF'; $input.FontSize = 14; $input.VerticalContentAlignment = 'Center'; $input.Padding = '8,0'
+    $field.Background = [System.Windows.Media.Brushes]::Transparent; $field.BorderThickness = '0'; $field.Foreground = Brush '#FFFFFF'
+    $field.CaretBrush = Brush '#FFFFFF'; $field.FontSize = 14; $field.VerticalContentAlignment = 'Center'; $field.Padding = '8,0'
     $line = New-Object System.Windows.Controls.Border; $line.Height = 2; $line.VerticalAlignment = 'Bottom'; $line.Background = Brush '#22C55E'; $line.Visibility = 'Hidden'
     $line.CornerRadius = '0,0,6,6'; $line.IsHitTestVisible = $false
-    $g = New-Object System.Windows.Controls.Grid; [void]$g.Children.Add($input); [void]$g.Children.Add($line); $b.Child = $g
-    $input.Add_GotKeyboardFocus({ $line.Visibility = 'Visible' }.GetNewClosure()); $input.Add_LostKeyboardFocus({ $line.Visibility = 'Hidden' }.GetNewClosure())
+    $g = New-Object System.Windows.Controls.Grid; [void]$g.Children.Add($field); [void]$g.Children.Add($line); $b.Child = $g
+    $field.Add_GotKeyboardFocus({ $line.Visibility = 'Visible' }.GetNewClosure()); $field.Add_LostKeyboardFocus({ $line.Visibility = 'Hidden' }.GetNewClosure())
     return $b
 }
 function global:New-D2Button([string]$text, [string]$style, $dlg) {

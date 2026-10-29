@@ -31,10 +31,13 @@ WHAT EACH BUTTON DOES
                        just opens it.
   PLCE                 PA State Police Liquor Control Enforcement page.
   DEPARTMENT OF REVENUE  PA Department of Revenue page.
+  + Add (2 slots)      Your own buttons: click + Add, pick a Program,
+                       Website (http/https) or File, a name and a picture.
+                       Right-click to edit or remove. With both empty,
+                       right-click > Remove this row; Setup brings it back.
   RESTART SCREEN CONNECT  Restarts the ScreenConnect service. Windows asks for
                        admin permission (click Yes), then a message says
                        whether it worked.
-  START JARTREK SECURITY  Not set yet. Edit it to choose the program.
   RESTART COMPUTER     Always asks first (No is the default), then
                        force-restarts. It asks even if "Ask first" is blank.
   If a saved program or PDF isn't on this PC (like after installing on a

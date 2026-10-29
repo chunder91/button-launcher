@@ -200,7 +200,7 @@ Check "I3: turn off deletes json, dat and both .tmp, nothing else ($($left -join
 Remove-Item -LiteralPath $tmpd -Recurse -Force
 # Kern / Squint
 Check 'Kern: focus ring grid 26 for checkbox and radio, ring radius 8' (([regex]::Matches($src, '<Grid Width="26" Height="26"')).Count -eq 2 -and $src -match '<Border x:Name="Ring" CornerRadius="8"')
-Check 'Kern: input padding 8,0 and 8,0,96,0' ($src -match "\`$input\.Padding = '8,0'" -and $src -match "\`$ta\.Padding = '8,0,96,0'")
+Check 'Kern: input padding 8,0 and 8,0,96,0' ($src -match "\`$field\.Padding = '8,0'" -and $src -match "\`$ta\.Padding = '8,0,96,0'")
 Check 'Kern: buttons MinWidth 88, padding 16,0' ($src -match '\$b\.MinWidth = 88' -and $src -match "\`$b\.Padding = '16,0'")
 Check 'Kern: red line on the password after a failed sign-in, cleared on typing' ($sv -match "\`$pErr\.Background = Brush '#F87171'" -and $sv -match "if \(\`$kind -eq 'auth'\) \{ 'Visible' \}" -and $sv -match "Add_PasswordChanged\(\{ \`$ds\.tested = \`$false; \`$pErr\.Visibility = 'Hidden'")
 Check 'Kern: 8 between the result line and the buttons' ($sv -match "\`$rline\.Margin = '0,16,0,8'" -and $sv -match "\`$row\.Margin = '0'")
@@ -283,5 +283,43 @@ foreach ($c in @(@('NO', 'a1 NO [AUTHENTICATIONFAILED] bad'), @('BAD', 'a1 BAD s
 Check 'CC L1: Start-MailRun starts loginOk false' ($sr2 -match 'loginOk = \$false')
 $capLine = @($sr2 -split "`n" | Where-Object { $_ -match "'timed out'" })
 Check 'LJ M16-I1: on the cap tick Stop-MailRunObjects runs before Get-MailLostResult' ($capLine.Count -eq 1 -and $capLine[0].IndexOf('Stop-MailRunObjects $run') -ge 0 -and $capLine[0].IndexOf('Stop-MailRunObjects $run') -lt $capLine[0].IndexOf('Get-MailLostResult $run.sync'))
+# --- v1.4.0 laptop bug (2:41 PM): "The property 'Background' cannot be found on this object" on Setup > Unread email count...
+# Root cause: New-D2Field($input). $input is PowerShell's pipeline enumerator, so the TextBox/PasswordBox never arrived and
+# $input.Background = ... hit the enumerator. These run without Windows: a lint, a WPF property table, and a stand-in run.
+. (Join-Path $PSScriptRoot 'wpf-props.ps1')
+$autoBad = @(); foreach ($f in @(Get-ChildItem (Join-Path $root '*.ps1')) + @(Get-ChildItem (Join-Path $PSScriptRoot '*.ps1'))) {
+    $fa2 = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$null); $autoBad += @(Find-AutomaticVarMisuse $fa2 | ForEach-Object { "$($f.Name): $_" }) }
+Check ('no parameter or assignment named after an automatic variable ($input, $args, $this, ...) ' + ($autoBad -join '; ')) ($autoBad.Count -eq 0)
+$propBad = @(Find-WpfPropMisuse $ast)
+Check ('every WPF property the launcher sets exists on that element type ' + ($propBad -join '; ')) ($propBad.Count -eq 0)
+$oldBug = [System.Management.Automation.Language.Parser]::ParseInput("function global:New-D2Field(`$input) { `$input.Background = 1 }", [ref]$null, [ref]$null)
+Check 'the lint catches the exact 349e026 bug (New-D2Field($input))' (@(Find-AutomaticVarMisuse $oldBug).Count -eq 1)
+$probe = [System.Management.Automation.Language.Parser]::ParseInput("function global:P { `$r = New-Object System.Windows.Shapes.Rectangle; `$r.Background = 1; `$t = New-Object System.Windows.Controls.Primitives.Popup; `$t.Background = 1 }", [ref]$null, [ref]$null)
+Check 'the property table catches Background on a Rectangle and a Popup' (@(Find-WpfPropMisuse $probe).Count -eq 2)
+# stand-in run of the real New-D2Field: strict objects throw the same error the laptop showed on any unknown property
+function New-Strict([string]$t) {
+    $o = New-Object psobject; foreach ($pn in $global:WpfProps[$t]) { $o | Add-Member NoteProperty $pn $null }
+    $o | Add-Member NoteProperty WpfType $t; $o | Add-Member NoteProperty Handlers @{}
+    if ($t -match 'Grid|StackPanel|DockPanel') { $o | Add-Member NoteProperty Children (New-Object System.Collections.ArrayList) -Force }
+    foreach ($ev in 'GotKeyboardFocus', 'LostKeyboardFocus', 'Click', 'TextChanged', 'PasswordChanged') { $o | Add-Member ScriptMethod ("Add_" + $ev) ([scriptblock]::Create("param(`$h) `$this.Handlers['$ev'] = `$h")) }
+    return $o }
+$d2 = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-D2Field' }, $true).Extent.Text
+$d2 = $d2 -replace 'New-Object (System\.Windows\.[\w.]+)', 'New-Strict ''$1''' -replace '\[System\.Windows\.Media\.Brushes\]::Transparent', '''transparent''' -replace 'function global:New-D2Field', 'function global:Test-D2FieldRun'
+function global:Brush($h) { $h }
+Invoke-Expression $d2
+foreach ($kind in 'System.Windows.Controls.TextBox', 'System.Windows.Controls.PasswordBox') {
+    $in = New-Strict $kind; $e = $null; $fb = $null; try { $fb = Test-D2FieldRun $in } catch { $e = $_.Exception.Message }
+    Check "New-D2Field styles the real $($kind.Split('.')[-1]) it is given (not-configured setup dialog opens)" (-not $e -and $in.Background -eq 'transparent' -and $in.Padding -eq '8,0' -and $fb.Child.Children[0] -eq $in -and $in.Handlers['GotKeyboardFocus']) }
+Invoke-Expression (($d2 -replace '\$field\b', '$input') -replace 'Test-D2FieldRun', 'Test-D2FieldOld')
+$e = $null; try { [void](Test-D2FieldOld (New-Strict 'System.Windows.Controls.PasswordBox')) } catch { $e = $_.Exception.Message }
+Check 'stand-in run reproduces the laptop error on the old code' ($e -match "The property 'Background' cannot be found on this object")
+$sd = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-MailSetupDialog' }, $true).Extent.Text
+Check 'not configured: the setup dialog builds both fields through New-D2Field and reads no saved secret unless enabled' ($sd.Contains('$fa = New-D2Field $ta') -and $sd.Contains('$fp = New-D2Field $pb') -and $sd.Contains('if ($was.enabled -and (Test-Path -LiteralPath (Get-MailSecretPath)))'))
+$kinds = @((Get-MailTestText @{ kind = 'ok'; unseen = 2 }).kind, (Get-MailTestText @{ kind = 'auth' }).kind, (Get-MailTestText @{ kind = 'auth'; unclear = $true }).kind, (Get-MailTestText @{ kind = 'net' }).kind, (Get-MailTestText @{ kind = 'cert' }).kind)
+Check 'Test results: ok, clear fail, unclear fail, network' (($kinds -join ',') -eq 'ok,auth,unclear,net,net')
+Check 'Test results: the dialog has a branch for each and sets only Text/Foreground on its TextBlocks' ($sd.Contains("'ok' { `$ri.Text") -and $sd.Contains("'auth' { `$ri.Text") -and $sd.Contains("{ `$_ -eq 'net' -or `$_ -eq 'unclear' }") -and $sd -notmatch '\$r[it]\.Background')
+foreach ($st in 'flash', 'pulse', 'badge') { Check "style ${st}: motion path picked, badge only when animations are off" ((Get-MailMotion $st $true) -eq $st -and (Get-MailMotion $st $false) -eq 'badge') }
+$ov = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Add-MailOverlay' }, $true)
+Check 'flash/pulse/badge overlay: every property set exists on its element (property table)' ($ov -and @(Find-WpfPropMisuse $ov).Count -eq 0)
 ""
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
