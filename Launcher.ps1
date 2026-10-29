@@ -867,8 +867,10 @@ try {
         $got = $false
         if ($args -contains '-Reload') {   # Reload: wait for the old copy to save and exit
             try { $got = $global:mutex.WaitOne(10000) } catch [System.Threading.AbandonedMutexException] { $got = $true }
-            if (-not $got) {   # R-L3: the old copy already shut itself down for the Reload, so never quit here too: start anyway
-                Add-Content -LiteralPath $global:logPath -Value ("{0}  Reload: the previous copy did not exit within 10 s; starting anyway." -f (Get-Date -Format s)) -ErrorAction SilentlyContinue
+            if (-not $got) {   # R-L3/R3-L1: the old copy didn't exit in 10 s. Ask (default No); never silently run two copies.
+                $ans = [System.Windows.MessageBox]::Show("The old launcher isn't closing. Start anyway? Changes from the old one may be lost.", 'Launcher', 'YesNo', 'Warning', 'No')
+                if ($ans -ne 'Yes') { exit 0 }
+                Add-Content -LiteralPath $global:logPath -Value ("{0}  Reload: the previous copy did not exit within 10 s; user chose to start anyway." -f (Get-Date -Format s)) -ErrorAction SilentlyContinue
                 $got = $true
             }
         }

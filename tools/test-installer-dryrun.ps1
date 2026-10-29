@@ -66,7 +66,8 @@ Check 'Launcher toggle uses Get-AppKeyName for the Run value' ($last.Extent.Text
 $keyLine = "`$KeyName = if (`$AppName -eq 'Launcher') { 'ButtonLauncher' } else { 'ButtonLauncher-' + `$AppName }"
 Check 'installer and uninstaller derive the same key name' ($tmpl['$install'].Contains($keyLine) -and $tmpl['$uninstTemplate'].Contains($keyLine))
 Check 'Launcher derives the same key name' ($last.Extent.Text -match [regex]::Escape("if (`$AppName -eq 'Launcher') { return 'ButtonLauncher' } else { return 'ButtonLauncher-' + `$AppName }"))
-Check 'Reload timeout keeps the new copy running (R-L3)' ($last.Extent.Text -match 'starting anyway' -and $last.Extent.Text -match '\$got = \$true\s+\}\s+\}')
+Check 'Reload timeout asks Yes/No, default No (R3-L1)' ($last.Extent.Text -match [regex]::Escape("Start anyway? Changes from the old one may be lost."", 'Launcher', 'YesNo', 'Warning', 'No')"))
+Check 'Reload timeout: No exits, Yes logs and continues (R3-L1)' ($last.Extent.Text -match "if \(\`$ans -ne 'Yes'\) \{ exit 0 \}" -and $last.Extent.Text -match 'user chose to start anyway' -and $last.Extent.Text -match '\$got = \$true\s+\}\s+\}')
 
 # Stub (exe/ButtonLauncher.cs): source checks for a missing Launcher.ps1 and the PowerShell path (R-M3)
 $cs = Get-Content -LiteralPath (Join-Path $root 'exe/ButtonLauncher.cs') -Raw
