@@ -2595,7 +2595,8 @@ function global:Get-ImapStatusUnseen([string]$line) {   # '* STATUS INBOX (MESSA
     if ($Matches[1] -notmatch '(?i)(?:^|\s)UNSEEN\s+(\d{1,9})(?:\s|$)') { return -1 }
     return [int]$Matches[1]
 }
-function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, [string]$user, [char[]]$pass) {   # @{ kind = ok|auth|net|proto; unseen; detail }
+function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, [string]$user, [char[]]$pass, $Flags = $null) {   # Flags.loginSent: M15-I1
+      # @{ kind = ok|auth|net|proto; unseen; detail }
     $max = 200
     $g = [string](& $ReadLine)
     if ($g -match '(?i)^\* BYE') { return @{ kind = 'net'; unseen = -1; detail = 'server closed' } }
@@ -2607,21 +2608,22 @@ function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, 
         $t = $null
         try {
             try {
+                if ($Flags) { $Flags.loginSent = $true }   # M15-I1: set before LOGIN goes out
                 & $Write $lb.cmd
                 if ($lb.literal) {   # CC N1: untagged lines may come first; wait for '+' or a tagged reply
                     $go = $false
                     for ($k = 0; $k -lt $max -and -not $go -and -not $t; $k++) { $cont = [string](& $ReadLine)
                         if ($cont -match '^\+') { $go = $true } else { $t = Get-ImapTagged $cont 'a1'
-                            if (-not $t -and $cont -match '(?i)^\* BYE') { return @{ kind = 'auth'; unseen = -1; detail = 'server closed at sign-in' } } } }
+                            if (-not $t -and $cont -match '(?i)^\* BYE') { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'server closed at sign-in' } } } }
                     if ($t) { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused' } }
-                    if (-not $go) { return @{ kind = 'auth'; unseen = -1; detail = 'no continuation' } }
+                    if (-not $go) { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no continuation' } }
                     & $Write $lb.literal }
             } finally { if ($lb) { [Array]::Clear($lb.cmd, 0, $lb.cmd.Length); if ($lb.literal) { [Array]::Clear($lb.literal, 0, $lb.literal.Length) } } }
             for ($k = 0; $k -lt $max -and -not $t; $k++) { $l = [string](& $ReadLine)
                 $t = Get-ImapTagged $l 'a1'
-                if (-not $t -and $l -match '(?i)^\* BYE') { return @{ kind = 'auth'; unseen = -1; detail = 'server closed at sign-in' } } }
-        } catch { return @{ kind = 'auth'; unseen = -1; detail = 'no sign-in reply' } }
-        if ($t -ne 'OK') { if ($t) { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused' } }; return @{ kind = 'auth'; unseen = -1; detail = 'no sign-in reply' } }
+                if (-not $t -and $l -match '(?i)^\* BYE') { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'server closed at sign-in' } } }
+        } catch { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no sign-in reply' } }
+        if ($t -ne 'OK') { if ($t) { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused' } }; return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no sign-in reply' } }
     }
     & $Write ([Text.Encoding]::ASCII.GetBytes("a2 STATUS INBOX (UNSEEN)`r`n"))
     $n = -1; $t = $null
@@ -2658,7 +2660,7 @@ function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureStr
         $chars = New-Object char[] $secure.Length
         [Runtime.InteropServices.Marshal]::Copy($bstr, $chars, 0, $chars.Length)
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr); $bstr = [IntPtr]::Zero
-        return (Invoke-ImapSession $readLine $write $user $chars)
+        return (Invoke-ImapSession $readLine $write $user $chars $sync)
     } catch { return @{ kind = 'net'; unseen = -1; detail = 'network error' } }
     finally {
         if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
@@ -2686,12 +2688,16 @@ function global:Update-MailState($s, $r, [datetime]$now) {   # one check result 
             $prev = [Math]::Max(0, [int]$s.count); $n = [Math]::Max(0, [int]$r.unseen)
             $out.grew = $n -gt $prev
             $s.count = $n; $s.lastOk = $now; $s.fails = 0; $s.failSince = $null; $s.failAt = $null; $s.phase = 'ok'; $s.stopped = $false }
-        'auth' { $s.phase = 'authfail'; $s.stopped = $true; $s.fails = 0; $s.failSince = $null }
+        'auth' { $s.phase = 'authfail'; $s.authUnclear = [bool]$r.unclear; $s.stopped = $true; $s.fails = 0; $s.failSince = $null }   # unclear: no definite NO/BAD from the server
         default {
             $s.fails++; $s.failAt = $now; if ($s.fails -eq 1) { $s.failSince = $now }
             $s.phase = if ($s.fails -ge 2) { 'offline' } else { 'retry' } }
     }
     return $out
+}
+function global:Get-MailLostResult($sync, [string]$why) {   # M15-I1: a check cut off by the 45 s cap (or lost) after LOGIN went out is an unclear sign-in failure: stop, never a timer retry
+    if ($sync -and $sync.loginSent) { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = $why } }
+    return @{ kind = 'net'; unseen = -1; detail = $why }
 }
 function global:Step-MailResume($s) { $s.epoch = [int]$s.epoch + 1 }   # a check that started before sleep is ignored when it ends
 function global:Get-MailNextDelaySec($s) {   # -1 = stopped (sign-in failed: never retried on a timer); network errors back off 3 -> 6 -> 12 -> 15 min
@@ -2712,7 +2718,8 @@ function global:Format-MailTime($t, [datetime]$now) {   # Squint: '9:41 AM' toda
 function global:Get-MailCountText([int]$n) { if ($n -le 0) { 'No unread email.' } elseif ($n -eq 1) { '1 unread email in Inbox.' } else { "$n unread emails in Inbox." } }
 function global:Get-MailTipLine($s, [datetime]$now) {   # Squint's tooltip table (second line, under 'Open email')
     switch ($s.phase) {
-        'authfail' { return 'Email count stopped: can''t sign in. If you changed your webmail password, update it in Setup > Unread email count...' }
+        'authfail' { if ($s.authUnclear) { return 'Email count stopped: couldn''t confirm sign-in. Check the connection, then choose Check email now. If you changed your webmail password, update it in Setup > Unread email count...' }
+                     return 'Email count stopped: can''t sign in. If you changed your webmail password, update it in Setup > Unread email count...' }
         'offline'  { return ('Can''t reach email since {0}. The count is hidden until it reconnects.' -f (Format-MailTime $s.failSince $now)) }
         'retry'    { if ([int]$s.count -ge 0) { return ('{0} Couldn''t check at {1}, trying again.' -f (Get-MailCountText $s.count), (Format-MailTime $s.failAt $now)) }
                      return ('Couldn''t check email at {0}, trying again.' -f (Format-MailTime $s.failAt $now)) }
@@ -2722,7 +2729,7 @@ function global:Get-MailTipLine($s, [datetime]$now) {   # Squint's tooltip table
 }
 function global:Get-MailMenuLine($s, [datetime]$now) {   # Squint: the first (disabled) line of the Email tile's right-click menu
     switch ($s.phase) {
-        'authfail' { return 'Email count: can''t sign in' }
+        'authfail' { if ($s.authUnclear) { return 'Email count: couldn''t confirm sign-in' }; return 'Email count: can''t sign in' }
         'offline'  { return ('Email count: offline since {0}' -f (Format-MailTime $s.failSince $now)) }
         'retry'    { if (-not $s.lastOk) { return ('Email count: couldn''t check at {0}, trying again' -f (Format-MailTime $s.failAt $now)) }
                      return ('Email count: {0}, checked {1}' -f $(if ([int]$s.count -le 0) { 'no unread' } else { "$([int]$s.count) unread" }), (Format-MailTime $s.lastOk $now)) }
@@ -2732,7 +2739,7 @@ function global:Get-MailMenuLine($s, [datetime]$now) {   # Squint: the first (di
 }
 function global:Get-MailAccessName([string]$base, $s) {   # Squint: 'Email, 3 unread'; error states in the name too
     switch ($s.phase) {
-        'authfail' { return "$base, email count can't sign in" }
+        'authfail' { if ($s.authUnclear) { return "$base, email count couldn't confirm sign-in" }; return "$base, email count can't sign in" }
         'offline'  { return "$base, email count offline" }
         default { if ([int]$s.count -gt 0) { return "$base, $([int]$s.count) unread" }; if ([int]$s.count -eq 0) { return "$base, no unread email" }; return $base }
     }
@@ -2740,7 +2747,8 @@ function global:Get-MailAccessName([string]$base, $s) {   # Squint: 'Email, 3 un
 function global:Get-MailTestText($r) {   # Squint's 3 Test results: @{ kind = ok|auth|net; text }
     switch ([string]$r.kind) {
         'ok'   { $n = [int]$r.unseen; $t = if ($n -le 0) { 'Signed in. No unread email in Inbox.' } elseif ($n -eq 1) { 'Signed in. 1 unread email in Inbox.' } else { "Signed in. $n unread emails in Inbox." }; return @{ kind = 'ok'; text = $t } }
-        'auth' { return @{ kind = 'auth'; text = 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.' } }
+        'auth' { if ($r.unclear) { return @{ kind = 'unclear'; text = 'Couldn''t confirm sign-in. Check this PC is online, then press Test again.' } }
+                 return @{ kind = 'auth'; text = 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.' } }
         default { return @{ kind = 'net'; text = 'Can''t reach the mail server. Check this PC is online, then press Test again.' } }
     }
 }
@@ -2789,7 +2797,7 @@ function global:Remove-MailLogin { foreach ($p in (Get-MailSecretPath), (Get-Mai
 function global:Start-MailRun([string]$user, [System.Security.SecureString]$secure, [scriptblock]$OnDone) {   # $false when a check is already running
     if ($global:mailRun) { return $false }
     Clear-MailDeadRuns
-    $sync = [hashtable]::Synchronized(@{ tcp = $null })
+    $sync = [hashtable]::Synchronized(@{ tcp = $null; loginSent = $false })
     $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open()
     $ps = [powershell]::Create(); $ps.Runspace = $rs
     [void]$ps.AddScript((Get-MailWorkerScript)).AddArgument($user).AddArgument($secure).AddArgument($sync)
@@ -2801,10 +2809,10 @@ function global:Start-MailRun([string]$user, [System.Security.SecureString]$secu
     $t.Add_Tick({
         $r = $null
         if ($run.handle.IsCompleted) { try { $o = $run.ps.EndInvoke($run.handle); if ($o.Count -gt 0) { $r = $o[$o.Count - 1]; if ($r -is [psobject]) { $r = $r.BaseObject } } } catch {} }
-        elseif (([DateTime]::UtcNow - $run.start).TotalSeconds -ge 45) { $r = @{ kind = 'net'; unseen = -1; detail = 'timed out' } }
+        elseif (([DateTime]::UtcNow - $run.start).TotalSeconds -ge 45) { $r = Get-MailLostResult $run.sync 'timed out' }
         else { return }
         $t.Stop(); Stop-MailRunObjects $run
-        if (-not ($r -is [hashtable])) { $r = @{ kind = 'net'; unseen = -1; detail = 'no result' } }
+        if (-not ($r -is [hashtable])) { $r = Get-MailLostResult $run.sync 'no result' }
         $r.epoch = $run.epoch
         if ($run.done) { & $run.done $r } }.GetNewClosure())
     $run.timer = $t; $t.Start()
@@ -3114,7 +3122,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $pErr.Visibility = if ($kind -eq 'auth') { 'Visible' } else { 'Hidden' }   # Kern: #F87171 line on the password after a failed sign-in
         switch ($kind) { 'ok' { $ri.Text = [string][char]0xE930; $ri.Foreground = Brush '#22C55E'; $rt.Foreground = Brush '#4ADE80' }
                          'auth' { $ri.Text = [string][char]0xEA39; $ri.Foreground = Brush '#F87171'; $rt.Foreground = Brush '#F87171' }
-                         'net' { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
+                         { $_ -eq 'net' -or $_ -eq 'unclear' } { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
                          default { $ri.Text = ''; $rt.Foreground = Brush '#B4B4BC' } } }.GetNewClosure()
     $cb.Add_Click({ $ds.tested = $false; & $refresh }.GetNewClosure())
     $ta.Add_TextChanged({ $ds.tested = $false; & $refresh }.GetNewClosure())
@@ -3213,7 +3221,7 @@ try {
     if ($global:panels.Count -eq 0) { throw 'No panels could be opened.' }
     try { Start-MailPolling } catch { Write-LauncherError 'starting the email count' $_ }   # v1.4.0: nothing at all unless this Windows user turned it on
     Start-TrayAndHotkey                                 # Squint Major 1: tray icon + Ctrl+Alt+L bring the launcher forward (both layouts)
-    $global:app.Add_Exit({ Stop-TrayAndHotkey; try { Clear-VncDeadWorkers -All } catch {}; try { Stop-Mail } catch {} })   # N1
+    $global:app.Add_Exit({ Stop-TrayAndHotkey; try { Clear-VncDeadWorkers -All } catch {}; try { Stop-Mail } catch {}; try { Clear-MailDeadRuns } catch {} })   # N1
     # Idle CPU: wait for the "show" signal on a thread-pool wait instead of polling every 400 ms; it posts to the UI thread.
     # R11-M1: its own Add-Type (WPF is loaded by now; BL.Native stays exactly as before). On failure: log, 1 s poll.
     $showWatch = $false

@@ -8,7 +8,7 @@ function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
 $fns = 'Get-ButtonType', 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker', 'Get-MailWorkerScript',
-       'New-MailState', 'Get-MailFreshState', 'Update-MailState', 'Step-MailResume', 'Get-MailNextDelaySec', 'Get-MailBadgeText', 'Get-MailBadgeWidth', 'Test-MailShowBadge', 'Test-MailShowRing',
+       'New-MailState', 'Get-MailFreshState', 'Update-MailState', 'Step-MailResume', 'Get-MailLostResult', 'Get-MailNextDelaySec', 'Get-MailBadgeText', 'Get-MailBadgeWidth', 'Test-MailShowBadge', 'Test-MailShowRing',
        'Get-MailMotion', 'Format-MailTime', 'Get-MailCountText', 'Get-MailTipLine', 'Get-MailMenuLine', 'Get-MailAccessName', 'Get-MailTestText', 'Format-MailLogLine', 'Get-MailSecretPath', 'Get-MailSettingsPath', 'Remove-MailLogin',
        'Get-MailAddress', 'Test-MailAddress', 'Test-MailTile', 'ConvertTo-MailSettings', 'Get-MailSettingsJson'
 foreach ($n in $fns) {
@@ -208,6 +208,32 @@ Check 'Squint: Enter is Test until a Test passes, then Save' ($sv -match '\$bSav
 Check "Squint: menu item 'Unread email count...', no 'Email count settings...'" (-not $src.Contains("'Email count settings...'") -and ([regex]::Matches($src, "'Unread email count\.\.\.'")).Count -ge 2)
 Check "Squint: no 'mail arrives' left" (-not $src.Contains('new mail arrives'))
 Check 'I5: no @jartrek.net address in tests outside the format checks' (@((Get-Content -LiteralPath $PSCommandPath) | Where-Object { $_ -match '[A-Za-z0-9.]+@jartrek\.net' -and $_ -notmatch "^(Check 'address|foreach \(\`$a in )" -and $_ -notmatch 'Get-ImapLoginBytes "cc`r`n' }).Count -eq 0)
+
+# --- polish round (Lockjaw M15-I1, ClaudeCode I4 note: two kinds of sign-in failure) ---
+$r = Get-MailLostResult @{ loginSent = $true } 'timed out'; Check 'M15-I1: 45 s cap after LOGIN went out -> unclear sign-in failure' ($r.kind -eq 'auth' -and $r.unclear)
+$s = New-MailState; [void](Update-MailState $s $r $now); Check 'M15-I1: ... which stops polling (no timer retry)' ($s.stopped -and (Get-MailNextDelaySec $s) -eq -1 -and $s.authUnclear)
+$r = Get-MailLostResult @{ loginSent = $false } 'timed out'; Check 'M15-I1: cap before LOGIN -> network retry' ($r.kind -eq 'net')
+$r = Get-MailLostResult $null 'no result'; Check 'M15-I1: lost result with no sync -> network' ($r.kind -eq 'net')
+$fl = @{ loginSent = $false }; $m = New-Mock @('* OK ready'); [void](Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray() $fl); Check 'M15-I1: the session sets loginSent before LOGIN' ($fl.loginSent)
+$fl = @{ loginSent = $false }; $m = New-Mock @('* BYE bye'); [void](Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray() $fl); Check 'M15-I1: no LOGIN, no flag' (-not $fl.loginSent)
+$sr2 = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Start-MailRun' }, $true).Extent.Text
+Check 'M15-I1: Start-MailRun maps the cap and lost results through Get-MailLostResult' ($sr2 -match "Get-MailLostResult \`$run\.sync 'timed out'" -and $sr2 -match "Get-MailLostResult \`$run\.sync 'no result'" -and $sr2 -match 'loginSent = \$false' -and $src -match 'Invoke-ImapSession \$readLine \$write \$user \$chars \$sync')
+# (a) definite NO/BAD = clear password failure; (b) anything else after LOGIN = unclear
+$clear = 'Email count stopped: can''t sign in. If you changed your webmail password, update it in Setup > Unread email count...'
+$unc = 'Email count stopped: couldn''t confirm sign-in. Check the connection, then choose Check email now. If you changed your webmail password, update it in Setup > Unread email count...'
+foreach ($c in @(@('NO', @('* OK ready', 'a1 NO [AUTHENTICATIONFAILED] x')), @('BAD', @('* OK ready', 'a1 BAD x')))) {
+    $m = New-Mock $c[1]; $r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray()
+    $s = New-MailState; [void](Update-MailState $s $r $now)
+    Check "(a) $($c[0]) to LOGIN: clear failure, Squint's tip, menu, name, Test line" (-not $r.unclear -and $s.stopped -and (Get-MailTipLine $s $now) -ceq $clear -and (Get-MailMenuLine $s $now) -ceq 'Email count: can''t sign in' -and (Get-MailAccessName 'Email' $s) -ceq 'Email, email count can''t sign in' -and (Get-MailTestText $r).kind -eq 'auth' -and (Get-MailTestText $r).text -like 'Couldn''t sign in.*') }
+foreach ($c in @(@('hang-up', @('* OK ready')), @('BYE', @('* OK ready', '* BYE going away')), @('garbage then drop', @('* OK ready', 'zzzz', 'qqqq')), @('no continuation', @('* OK ready')))) {
+    $pwc = if ($c[0] -eq 'no continuation') { $pw } else { $fake }
+    $m = New-Mock $c[1]; $r = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $pwc.ToCharArray()
+    $s = New-MailState; [void](Update-MailState $s @{ kind = 'ok'; unseen = 3 } $now); [void](Update-MailState $s $r $now)
+    Check "(b) $($c[0]) after LOGIN: unclear failure stops polling, ring, no count, unclear tip/menu/name/Test line" ($r.kind -eq 'auth' -and $r.unclear -and $s.stopped -and (Test-MailShowRing $s) -and -not (Test-MailShowBadge $s) -and (Get-MailTipLine $s $now) -ceq $unc -and (Get-MailMenuLine $s $now) -ceq 'Email count: couldn''t confirm sign-in' -and (Get-MailAccessName 'Email' $s) -ceq 'Email, email count couldn''t confirm sign-in' -and (Get-MailTestText $r).kind -eq 'unclear' -and (Get-MailTestText $r).text -ceq 'Couldn''t confirm sign-in. Check this PC is online, then press Test again.') }
+$s = New-MailState; [void](Update-MailState $s @{ kind = 'auth'; unclear = $true } $now); $o = Update-MailState $s @{ kind = 'ok'; unseen = 2 } $now
+Check '(b) Check email now success clears it and polling resumes' ($s.phase -eq 'ok' -and -not $s.stopped -and (Get-MailNextDelaySec $s) -eq 180)
+Check '(b) Test line uses the amber (net) look, not the red password line' ($sv -match "\{ \`$_ -eq 'net' -or \`$_ -eq 'unclear' \}" -and $sv -match "if \(\`$kind -eq 'auth'\) \{ 'Visible' \}")
+Check 'exit frees parked checks (Clear-MailDeadRuns, best effort)' ($src -match 'try \{ Stop-Mail \} catch \{\}; try \{ Clear-MailDeadRuns \} catch \{\}')
 
 # --- source checks ---
 $tokens = $null; [void][System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$tokens, [ref]$null)

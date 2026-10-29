@@ -497,10 +497,17 @@ Section "Uninstall"
     DeleteRegValue HKCU "${RUNKEY}" "${KEYNAME}"
   ${EndIf}
   ; v1.4.0 (M14-I3): this Windows user's email count login. Only these files; the folder only if it is then empty.
-  Delete "$LOCALAPPDATA\ButtonLauncher\email-count.json"
-  Delete "$LOCALAPPDATA\ButtonLauncher\email-count.dat"
-  Delete "$LOCALAPPDATA\ButtonLauncher\email-count.*.tmp"
-  RMDir "$LOCALAPPDATA\ButtonLauncher"                 ; non-recursive: stays if anything else is in it
+  StrCpy $R6 "$LOCALAPPDATA\ButtonLauncher"
+  Call un.IsLink                                       ; M15-I2: never through a junction or symlink
+  ${If} $R5 = 0
+    Delete "$LOCALAPPDATA\ButtonLauncher\email-count.json"
+    Delete "$LOCALAPPDATA\ButtonLauncher\email-count.dat"
+    Delete "$LOCALAPPDATA\ButtonLauncher\email-count.json.tmp"
+    Delete "$LOCALAPPDATA\ButtonLauncher\email-count.dat.tmp"
+    RMDir "$LOCALAPPDATA\ButtonLauncher"               ; non-recursive: stays if anything else is in it
+  ${Else}
+    DetailPrint "Not touched (it is a link): $LOCALAPPDATA\ButtonLauncher"
+  ${EndIf}
   ; Same as the IExpress uninstaller: the whole folder goes, including buttons.json and pictures.
   SetOutPath "$TEMP"
   !insertmacro SAFE_RMDIR "un." "$INSTDIR"

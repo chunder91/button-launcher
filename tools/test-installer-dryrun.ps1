@@ -284,7 +284,11 @@ foreach ($f in 'Add-Type','Get-CimInstance','Unblock-File','Start-Process','New-
 $nsi = Get-Content -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'installer\launcher.nsi') -Raw
 $un = [regex]::Match($nsi, '(?s)Section "Uninstall".*?SectionEnd').Value
 $blLines = @(($un -split "`r?`n") | Where-Object { $_ -match 'LOCALAPPDATA\\ButtonLauncher' -and $_ -notmatch '^\s*;' } | ForEach-Object { $_.Trim() -replace '\s*;.*$', '' })
-Check 'uninstall: email-count.json, .dat and .*.tmp deleted from %LOCALAPPDATA%\ButtonLauncher' ($blLines -contains 'Delete "$LOCALAPPDATA\ButtonLauncher\email-count.json"' -and $blLines -contains 'Delete "$LOCALAPPDATA\ButtonLauncher\email-count.dat"' -and $blLines -contains 'Delete "$LOCALAPPDATA\ButtonLauncher\email-count.*.tmp"')
-Check 'uninstall: the ButtonLauncher folder only if empty (RMDir without /r), nothing else touched there' ($blLines -contains 'RMDir "$LOCALAPPDATA\ButtonLauncher"' -and $blLines.Count -eq 4 -and -not ($un -match 'RMDir /r "\$LOCALAPPDATA\\ButtonLauncher'))
+$want = @('Delete "$LOCALAPPDATA\ButtonLauncher\email-count.json"', 'Delete "$LOCALAPPDATA\ButtonLauncher\email-count.dat"', 'Delete "$LOCALAPPDATA\ButtonLauncher\email-count.json.tmp"', 'Delete "$LOCALAPPDATA\ButtonLauncher\email-count.dat.tmp"')
+$dels = @($blLines | Where-Object { $_ -like 'Delete *' })
+Check 'uninstall: exact deletes only: email-count.json, .dat, .json.tmp, .dat.tmp (no wildcard)' ((($dels | Sort-Object) -join '|') -ceq (($want | Sort-Object) -join '|') -and -not ($un -match 'ButtonLauncher\\[^"]*\*'))
+Check 'uninstall: the ButtonLauncher folder only if empty (RMDir without /r)' (@($blLines | Where-Object { $_ -like 'RMDir *' }) -join '|' -ceq 'RMDir "$LOCALAPPDATA\ButtonLauncher"' -and -not ($un -match 'RMDir /r "\$LOCALAPPDATA\\ButtonLauncher'))
+$lk = [regex]::Match($un, '(?s)StrCpy \$R6 "\$LOCALAPPDATA\\ButtonLauncher"\s+Call un\.IsLink[^\r\n]*\s+\$\{If\} \$R5 = 0(.*?)\$\{Else\}(.*?)\$\{EndIf\}')
+Check 'uninstall: link check on %LOCALAPPDATA%\ButtonLauncher first; a link skips every delete and the RMDir' ($lk.Success -and ([regex]::Matches($lk.Groups[1].Value, '(?m)^\s*(Delete|RMDir) ')).Count -eq 5 -and $lk.Groups[2].Value -notmatch '(?m)^\s*(Delete|RMDir) ')
 
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
