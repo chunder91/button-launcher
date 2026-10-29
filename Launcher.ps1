@@ -1895,17 +1895,17 @@ function global:Get-VncAgeText($cacheTime, [datetime]$nowUtc) {   # '5 min ago',
 function global:Merge-VncRows($favs, $hosts) {   # pinned first (by name), then the rest by address; seen = in the latest scan
     $rows = New-Object System.Collections.ArrayList
     foreach ($f in $favs) { $h = $null; foreach ($x in $hosts) { if ($x.host -eq $f.host -and $x.port -eq $f.port) { $h = $x; break } }
-        [void]$rows.Add([pscustomobject]@{ host = $f.host; port = $f.port; name = $(if ($f.name) { $f.name } elseif ($h) { $h.name } else { '' }); banner = $(if ($h) { $h.banner } else { '' }); pinned = [bool]$f.pinned; fav = $true; seen = [bool]$h }) }
+        [void]$rows.Add([pscustomobject]@{ host = $f.host; port = $f.port; name = $(if ($f.name) { $f.name } elseif ($h) { $h.name } else { '' }); dnsName = [bool](-not $f.name -and $h -and $h.name); banner = $(if ($h) { $h.banner } else { '' }); pinned = [bool]$f.pinned; fav = $true; seen = [bool]$h }) }
     foreach ($h in $hosts) { $isFav = $false; foreach ($x in $favs) { if ($x.host -eq $h.host -and $x.port -eq $h.port) { $isFav = $true } }; if (-not $isFav) {
-        [void]$rows.Add([pscustomobject]@{ host = $h.host; port = $h.port; name = $h.name; banner = $h.banner; pinned = $false; fav = $false; seen = $true }) } }
+        [void]$rows.Add([pscustomobject]@{ host = $h.host; port = $h.port; name = $h.name; dnsName = [bool]$h.name; banner = $h.banner; pinned = $false; fav = $false; seen = $true }) } }
     $sorted = @($rows | Sort-Object @{ e = { -not $_.pinned } }, @{ e = { if ($_.pinned) { $_.name } else { '' } } }, @{ e = { if (Test-VncIPv4 $_.host) { ConvertTo-VncUInt $_.host } else { [uint32]::MaxValue } } })
     return $sorted
 }
 function global:Get-VncFoundText([int]$n, [string]$At = '', [switch]$LookingUp) {   # Squint recheck wording
     $c = if ($n -eq 1) { '1 computer' } else { '{0} computers' -f $n }
     if ($LookingUp) { return ('Found {0} you can view. Looking up names...' -f $c) }
-    return ('Found {0} on the shop network at {1}.' -f $n, $At) }
-function global:Get-VncShortName([string]$n) {   # Squint: a reverse-DNS name shows its first label; the full name goes in the tooltip
+    return ('Found {0} on this network at {1}.' -f $c, $At) }   # N2: never claims "shop network"; range and adapter stay in the tooltip
+function global:Get-VncShortName([string]$n) {   # Squint: a reverse-DNS name shows its first label; the full name goes in the tooltip (R5-L1: callers pass only DNS names)
     if ($n -match '^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+\.?$' -and $n -notmatch '^\d+(\.\d+){3}$') { return $n.Split('.')[0] }
     return $n }
 function global:Get-VncRowView($r, [bool]$fresh, [bool]$scanning, [string]$age = '', [bool]$stale = $false) {   # display fields for one row (Squint 1, 3)
@@ -1918,7 +1918,7 @@ function global:Get-VncRowView($r, [bool]$fresh, [bool]$scanning, [string]$age =
         star = $(if ($r.pinned) { [string][char]0xE735 } else { [string][char]0xE734 }); starOn = [bool]$r.pinned
         starName = $(if ($r.pinned) { 'Pinned' } else { 'Not pinned' })
         starTip = $(if ($r.pinned) { 'Pinned. Click or press Space to unpin.' } else { 'Not pinned. Click or press Space to pin.' })
-        nameText = $(if ($named) { Get-VncDisplayName (Get-VncShortName ([string]$r.name)) 40 } else { 'Unnamed (F2 to name)' })
+        nameText = $(if ($named) { Get-VncDisplayName $(if ($r.dnsName) { Get-VncShortName ([string]$r.name) } else { [string]$r.name }) 40 } else { 'Unnamed (F2 to name)' })
         nameFull = $(if ($named) { Get-SafeText ([string]$r.name) 255 } else { $null })
         nameFg = $(if ($named -and -not $dim) { '#FFFFFF' } else { '#A0A0A0' }); addrFg = $(if ($dim) { '#A0A0A0' } else { '#FFFFFF' })
         addr = $addr; seen = $seen; tip = $tip; row = $r }
@@ -2187,7 +2187,7 @@ function global:Get-VncScanPlan($ui, [bool]$Ask) {   # targets for confirmed net
         if ($st -eq 'declined' -and -not $Ask) { $plan.declined = $true; continue }
         if ($st -ne 'ok') {
             # Squint: plain words; range and port only in the small print. Default Yes when Rescan asked on purpose, No on automatic opens.
-            $a = [System.Windows.MessageBox]::Show(("Look for registers on this network ({1})?`n`nThis quickly checks the shop network for registers you can view. You'll only be asked again if the network changes.`n`n(Range {0}, port {2})" -f $rg, $n.label, $ui.state.port), 'View Register', 'YesNo', 'Question', $(if ($Ask) { 'Yes' } else { 'No' }))
+            $a = [System.Windows.MessageBox]::Show(("Look for registers on this network ({1})?`n`nThis quickly checks this network for computers you can view. You'll only be asked again if the network changes.`n`n(Range {0}, port {2})" -f $rg, $n.label, $ui.state.port), 'View Register', 'YesNo', 'Question', $(if ($Ask) { 'Yes' } else { 'No' }))
             if ($a -ne 'Yes') {
                 $plan.declined = $true
                 if ($st -eq 'new') { $ui.state.declined = @($ui.state.declined) + $key; Set-Prop $global:cfg.vnc 'declinedRanges' @($ui.state.declined); Save-Config }

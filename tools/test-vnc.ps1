@@ -172,7 +172,7 @@ Check 'favourites-first: favourites + old cache + no new range -> no scan on ope
 Check 'favourites-first: favourites + new range -> scan (after the confirm)' (Test-VncAutoScan $true $fresh $now $true)
 Check 'no favourites: stale cache scans, fresh does not' ((Test-VncAutoScan $false $old $now $false) -and -not (Test-VncAutoScan $false $fresh $now $false))
 $scanSrc = (& { param($n) $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true).Extent.Text } 'Get-VncScanPlan')
-Check 'H1/Squint 2: plain confirm text, Yes from Rescan / No on open, remembered in vnc.confirmedRanges' ($scanSrc -match "Look for registers on this network \(\{1\}\)\?" -and $scanSrc -match "This quickly checks the shop network" -and $scanSrc -match "'YesNo', 'Question', \`$\(if \(\`$Ask\) \{ 'Yes' \} else \{ 'No' \}\)" -and $scanSrc -match "Set-Prop \`$global:cfg\.vnc 'confirmedRanges'")
+Check 'H1/Squint 2: plain confirm text, Yes from Rescan / No on open, remembered in vnc.confirmedRanges' ($scanSrc -match "Look for registers on this network \(\{1\}\)\?" -and $scanSrc -match "This quickly checks this network for computers you can view" -and $scanSrc -match "'YesNo', 'Question', \`$\(if \(\`$Ask\) \{ 'Yes' \} else \{ 'No' \}\)" -and $scanSrc -match "Set-Prop \`$global:cfg\.vnc 'confirmedRanges'")
 
 # --- M1: worker state ---
 function FakePs($state, $msg) { [pscustomobject]@{ InvocationStateInfo = [pscustomobject]@{ State = $state; Reason = $(if ($msg) { New-Object Exception $msg } else { $null }) } } }
@@ -327,7 +327,13 @@ Check 'N2: dialog styles come from the resources block alone (well-formed)' ($rd
 
 # Squint Windows recheck: wording, short reverse-DNS names, status line
 Check "Squint recheck: 'Found N computers you can view' while names load" ((Get-VncFoundText 3 -LookingUp) -eq 'Found 3 computers you can view. Looking up names...' -and (Get-VncFoundText 1 -LookingUp) -eq 'Found 1 computer you can view. Looking up names...')
-Check "Squint recheck: status 'Found N on the shop network at 12:54 PM.'" ((Get-VncFoundText 4 -At '12:54 PM') -eq 'Found 4 on the shop network at 12:54 PM.')
+Check "N1/N2: status 'Found 3 computers on this network at 1:05 PM.'" ((Get-VncFoundText 3 -At '1:05 PM') -eq 'Found 3 computers on this network at 1:05 PM.' -and (Get-VncFoundText 1 -At '1:05 PM') -eq 'Found 1 computer on this network at 1:05 PM.')
+Check 'N2: no "shop network" claim in the status or scan prompt' ($src -notmatch "Found \{0\} on the shop network" -and $src -notmatch 'checks the shop network')
+$rs = @(Merge-VncRows @([pscustomobject]@{ host = '192.168.1.20'; port = 5900; name = 'Front.Till'; pinned = $true }, [pscustomobject]@{ host = '192.168.1.21'; port = 5900; name = 'Till.1'; pinned = $false }, [pscustomobject]@{ host = '192.168.1.22'; port = 5900; name = 'Till.2'; pinned = $false }, [pscustomobject]@{ host = '192.168.1.23'; port = 5900; name = ''; pinned = $false }) @([pscustomobject]@{ host = '192.168.1.23'; port = 5900; name = 'pos-04.shop.lan'; banner = 'RFB 003.008' }, [pscustomobject]@{ host = '192.168.1.24'; port = 5900; name = 'pos-05.shop.lan'; banner = 'RFB 003.008' }))
+$nt = @{}; foreach ($x in $rs) { $nt[$x.host] = (Get-VncRowView $x $true $false).nameText }
+Check "R5-L1: typed name 'Front.Till' shown in full" ($nt['192.168.1.20'] -eq 'Front.Till')
+Check "R5-L1: typed 'Till.1' and 'Till.2' stay distinct" ($nt['192.168.1.21'] -eq 'Till.1' -and $nt['192.168.1.22'] -eq 'Till.2')
+Check 'R5-L1: reverse-DNS names (saved without a name, or scanned) are shortened' ($nt['192.168.1.23'] -eq 'pos-04' -and $nt['192.168.1.24'] -eq 'pos-05')
 Check 'Squint recheck: range and port only in the status tooltip' ($src -match "statusTip\.Invoke\(\('Range \{0\}, port \{1\}\. Press F5 to rescan\.'" -and $src -notmatch "register\(s\) on \{1\}")
 Check "Squint recheck: no 'register(s)' wording left" ($src -notmatch 'register\(s\)')
 Check 'Squint recheck: reverse-DNS name shows the first label, full name in tooltip' ((Get-VncShortName 'pos-03.shop.example.lan') -eq 'pos-03' -and (Get-VncShortName 'Till 2') -eq 'Till 2' -and (Get-VncShortName '192.168.1.5') -eq '192.168.1.5' -and (Get-VncRowView ([pscustomobject]@{ name = 'pos-03.shop.example.lan'; host = '192.168.1.5'; port = 5900; seen = $true }) $true $false).nameFull -eq 'pos-03.shop.example.lan')
