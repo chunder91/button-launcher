@@ -937,8 +937,7 @@ function global:Update-OldDefaultOrder {
         if ($labels.Count -ne $old.Count) { continue }
         $same = $true; for ($i = 0; $i -lt $old.Count; $i++) { if ($labels[$i] -cne $old[$i]) { $same = $false; break } }
         if (-not $same) { continue }
-        $sec = $bs[5]; Set-Prop $sec 'width' 'full'; Set-Prop $sec 'height' 80
-        foreach ($r in $bs[4], $bs[6]) { Set-Prop $r 'width' 'half'; Set-Prop $r 'height' 92; Set-Prop $r 'group' 'danger' }
+        $sec = $bs[5]   # MB-L3: move only. Width, height and font size stay exactly as the user has them.
         $pc.buttons = @($bs[0], $bs[1], $bs[2], $bs[3], $sec, $bs[4], $bs[6]); $changed = $true
     }
     Set-Prop $global:cfg 'layoutVersion' 2

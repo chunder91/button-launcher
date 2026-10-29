@@ -69,5 +69,9 @@ foreach ($bad in 'abc', '2.5x', '') { $global:cfg = $oldJson | ConvertFrom-Json;
 $global:cfgPath = Join-Path $tmp 'no-such-dir/buttons.json'; $global:cfg = $oldJson | ConvertFrom-Json; $e = $null
 try { Update-OldDefaultOrder } catch { $e = $_ }
 Check 'MB-L2: failed migration write is logged, no error, config migrated in memory' (-not $e -and $global:cfg.layoutVersion -eq 2 -and ((Get-Content $global:logPath -Raw) -match "couldn't save the migrated"))
+$global:cfgPath = Join-Path $tmp 'buttons.json'; $global:cfg = $oldJson | ConvertFrom-Json
+$sb = $global:cfg.panels[1].buttons; $sb[5].height = 99; $sb[5].fontSize = 15; $sb[4].width = 'full'; $sb[4].height = 70; $sb[6].fontSize = 14
+Update-OldDefaultOrder; $mb = $global:cfg.panels[1].buttons
+Check 'MB-L3: moved tiles keep their sizes' ($mb[4].height -eq 99 -and $mb[4].fontSize -eq 15 -and $mb[4].width -eq 'half' -and $mb[5].width -eq 'full' -and $mb[5].height -eq 70 -and $mb[6].fontSize -eq 14 -and $mb[6].height -eq 85)
 Remove-Item -LiteralPath $tmp -Recurse -Force
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
