@@ -89,7 +89,8 @@ $svgMiss = @(); foreach ($c in (& git -C $root rev-list --all -- images/svg)) { 
     $h = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($ms.ToArray())).Replace('-', '').ToLowerInvariant()
     if (-not $tmpl['$install'].Contains("'$h'")) { $svgMiss += $h } ; Remove-Item $tmpf } }
 Check 'R6-N1: all older SVG master hashes known to the installer' ($svgMiss.Count -eq 0)
-Check 'R6-L1: swap failure restores the old folder' ($tmpl['$install'] -match [regex]::Escape('if ($old -and -not (Test-Path -LiteralPath $dest)) { try { [IO.Directory]::Move($old, $dest) } catch {} }'))
+Check 'R6-L1: swap failure restores the old folder' ($tmpl['$install'] -match [regex]::Escape('if ($old -and -not (Test-Path -LiteralPath $dest)) { try { Move-Dir $old $dest } catch { $restored = $false } }'))
+Check 'R7-N2: install log has a random name and is created with CreateNew' ($tmpl['$install'] -match "-install-' \+ \[guid\]::NewGuid\(\)" -and $tmpl['$install'] -match '\[IO\.FileMode\]::CreateNew' -and $tmpl['$install'] -notmatch "'-install\.log'")
 Check 'R6-L1: stage/.old removal never follows links' ($tmpl['$install'] -match 'function Remove-Tree' -and $tmpl['$install'] -notmatch '-Recurse -Force' -and $tmpl['$install'] -notmatch 'Delete\(\$p, \$true\)')
 Check 'builder never ships buttons.json' ($ast.Extent.Text -notmatch "'Launcher.ps1','buttons.json'" -and $ast.Extent.Text -match "Join-Path \`$stage 'buttons.default.json'")
 
@@ -167,7 +168,7 @@ foreach ($title in 'Launcher', 'Shop Panel') {
         $bad = New-TestInstaller @{ 'reddog.png' = 'png' } @() $om
         & $bad
         $sd = Join-Path (Join-Path $sbx 'Programs') $safe
-        $lg = Join-Path $env:TEMP "$safe-install.log"; $lt = if (Test-Path -LiteralPath $lg) { Get-Content -LiteralPath $lg -Raw } else { '' }
+        $lg = Get-ChildItem -LiteralPath $env:TEMP -Filter "$safe-install-*.log" | Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty FullName; $lt = if (Test-Path -LiteralPath $lg) { Get-Content -LiteralPath $lg -Raw } else { '' }
         $lnks = @(Get-ChildItem -Recurse -Filter *.lnk -LiteralPath $env:BL_MOCK_FOLDERS -ErrorAction SilentlyContinue)
         Check ($p + "R5-L2: missing $om -> no shortcuts, no registry, no launch, logged") ($lnks.Count -eq 0 -and $global:Reg.Count -eq 0 -and $global:Started.Count -eq 0 -and $lt -match "missing after extraction: .*$([regex]::Escape($om))")
         $global:Reg = $saveReg; $global:Started.Clear(); foreach ($s in $saveSt) { [void]$global:Started.Add($s) }
@@ -183,6 +184,30 @@ foreach ($title in 'Launcher', 'Shop Panel') {
     $sib = @(Get-ChildItem -LiteralPath (Split-Path $dest) -Force | Where-Object { $_.Name -like "$safe.new-*" -or $_.Name -like "$safe.old-*" })
     Check ($p + 'R6-L1: swap -> buttons.json and user picture carried over, no stage/.old left') ((Get-Content (Join-Path $dest 'buttons.json') -Raw) -eq '{"mine":1}' -and (Test-Path (Join-Path $dest 'images/user-added.png')) -and $sib.Count -eq 0 -and (Test-Path (Join-Path $dest 'ButtonLauncher.exe')))
     Remove-Item -LiteralPath (Join-Path $dest 'images/user-added.png'); Write-Raw (Join-Path $dest 'buttons.json') '{"default":true}'
+    # R7-L2: copy of the current install fails -> nothing changed, staging cleaned up, clear message
+    function Sib { @(Get-ChildItem -LiteralPath (Split-Path $dest) -Force | Where-Object { $_.Name -like "$safe.new-*" -or $_.Name -like "$safe.old-*" }) }
+    $before = Snap $dest
+    $f = New-TestInstaller @{ 'reddog.png' = 'png' } @(); (Get-Content $f -Raw).Replace('function Copy-Tree($from, $to) {', 'function Copy-Tree($from, $to) { throw "disk full"') | Set-Content $f
+    $global:boxes = 0; & $f
+    $lg = Get-ChildItem -LiteralPath $env:TEMP -Filter "$safe-install-*.log" | Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty FullName
+    Check ($p + 'R7-L2: copy-over failure -> install untouched, staging removed, logged') ((Snap $dest) -eq $before -and (Sib).Count -eq 0 -and (Get-Content $lg -Raw) -match 'could not copy the current install \(disk full\)')
+    # R7-L2: second rename and rollback both fail -> nothing deleted, both folders named in the log
+    $f = New-TestInstaller @{ 'reddog.png' = 'png' } @()
+    (Get-Content $f -Raw).Replace('function Move-Dir($a, $b) { [IO.Directory]::Move($a, $b) }', 'function Move-Dir($a, $b) { $script:mv++; if ($script:mv -ge 2) { throw "in use" }; [IO.Directory]::Move($a, $b) }') | Set-Content $f
+    & $f
+    $lg = Get-ChildItem -LiteralPath $env:TEMP -Filter "$safe-install-*.log" | Sort-Object LastWriteTime | Select-Object -Last 1 -ExpandProperty FullName; $lt = Get-Content $lg -Raw
+    $o = @(Sib | Where-Object { $_.Name -like "$safe.old-*" }); $n = @(Sib | Where-Object { $_.Name -like "$safe.new-*" })
+    Check ($p + 'R7-L2: swap + rollback fail -> old and new kept, both paths logged') ($o.Count -eq 1 -and $n.Count -eq 1 -and -not (Test-Path $dest) -and $lt -match [regex]::Escape($o[0].FullName) -and $lt -match [regex]::Escape($n[0].FullName) -and (Test-Path (Join-Path $n[0].FullName 'ButtonLauncher.exe')))
+    [IO.Directory]::Move($o[0].FullName, $dest); Microsoft.PowerShell.Management\Remove-Item -LiteralPath $n[0].FullName -Recurse -Force
+    Check ($p + 'R7-N2: each failed run gets its own new log file') (@(Get-ChildItem -LiteralPath $env:TEMP -Filter "$safe-install-*.log").Count -ge 2)
+    # R7-N1/I-R6b: removing the backup deletes a file link as-is and never clears read-only on its target
+    $ro = Join-Path $tb ('ro-' + [guid]::NewGuid() + '.txt'); Set-Content $ro 'keep'; Set-ItemProperty -LiteralPath $ro -Name IsReadOnly -Value $true -ErrorAction SilentlyContinue
+    if (-not $IsWindows) { & chmod a-w $ro }
+    $roBefore = (Get-Item $ro).Attributes
+    [void](New-Item -ItemType SymbolicLink -Path (Join-Path $dest 'link.txt') -Target $ro)
+    & (New-TestInstaller @{ 'reddog.png' = 'png'; 'globe.png' = 'g1' } @())
+    Check ($p + 'R7-N1: backup cleanup leaves a file link target and its read-only flag alone') ((Test-Path $ro) -and (Get-Item $ro).Attributes -eq $roBefore -and -not (Test-Path (Join-Path $dest 'link.txt')) -and (Sib).Count -eq 0)
+    if (-not $IsWindows) { & chmod u+w $ro }
     # R-M2 + Pictures/R3-N1: an upgrade keeps buttons.json, pictures the user added, and a user-replaced reddog.png,
     # but refreshes shipped pictures the user never touched.
     Set-Content (Join-Path $dest 'buttons.json') '{"mine":1}'
