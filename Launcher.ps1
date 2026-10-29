@@ -650,7 +650,7 @@ function global:Build-Panel($p) {
 }
 
 function global:Open-Panel($pc) {
-    foreach ($k in @{ anchor = 'right-middle'; offsetX = 0; offsetY = 0; monitor = -1; size = 'Medium' }.GetEnumerator()) {
+    foreach ($k in @{ anchor = 'middle-right'; offsetX = 0; offsetY = 0; monitor = -1; size = 'Medium' }.GetEnumerator()) {
         if ($pc.($k.Key) -eq $null) { Set-Prop $pc $k.Key $k.Value } }
     $p = @{ cfg = $pc; items = (New-Object System.Collections.ArrayList); deleted = $false; hwnd = [IntPtr]::Zero }
     foreach ($b in $pc.buttons) { [void]$p.items.Add($b) }
