@@ -6,7 +6,7 @@ $fail = 0
 function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"; $script:fail++ } }
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
-foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-ChipFallbackPic') {
+foreach ($n in 'Expand', 'Get-ButtonType', 'Set-Prop', 'Get-LayoutMode', 'Test-HiddenPanelsNotice', 'Get-HiddenPanelsText', 'Get-MiddleHint', 'Get-OverflowSplit', 'Get-ChipLabel', 'New-MiddleState', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Get-ChipFallbackPic') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 $global:PathProbe = @{ DosDevice = { param($d) '\Device\HarddiskVolume3' }; Attr = { param($p) $null } }   # R6-L2 probes: plain local volume, no special attributes
@@ -159,7 +159,7 @@ Check 'idle: a real change (screen/DPI/settings) lays out again' ($global:lays -
 $global:single = $null
 $sigSrc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-LayoutSig' }, $true).Extent.Text
 Check 'idle: layout signature covers screens, work areas, DPI, visibility, handles, settings' ($sigSrc -match 'AllScreens' -and $sigSrc -match 'WorkingArea' -and $sigSrc -match 'Get-Dpi' -and $sigSrc -match 'IsVisible' -and $sigSrc -match 'hwnd' -and $sigSrc -match 'ConvertTo-Json')
-Check 'idle: relayout timer goes through Invoke-Relayout' ($src -match '\$global:relayoutTimer\.Add_Tick\(\{ \$global:relayoutTimer\.Stop\(\); Invoke-Relayout \}\)')
+Check 'idle: relayout timer goes through Invoke-Relayout' ($src -match '\$global:relayoutTimer\.Add_Tick\(\{ \$global:relayoutTimer\.Stop\(\);[^\n]*Invoke-Relayout -Force:\$f')
 Check 'idle: show signal is a thread-pool wait, not a 400 ms poll' ($src -match 'RegisterWaitForSingleObject' -and $src -notmatch 'FromMilliseconds\(400\)\s*\r?\n\s*\$showTimer' -and $src -notmatch "showTimer\.Interval = \[TimeSpan\]::FromMilliseconds\(400\)")
 Check 'idle: no forever-repeating animations' ($src -notmatch 'RepeatBehavior')
 $ticks = [regex]::Matches($src, 'DispatcherTimer').Count
@@ -169,4 +169,25 @@ $afp = [regex]::Matches($src, '(?m)^.*Ask-ForPath \$.*$') | ForEach-Object { $_.
 Check 'first run: Ask-ForPath only from Pick..., Edit Browse, or a launch click' (@($afp | Where-Object { $_ -notmatch '^\$f = Ask-ForPath \$b' -and $_ -notmatch '^\$found = Ask-ForPath \$btn \$kind' -and $_ -notmatch "^\`$p = Ask-ForPath \(\[pscustomobject\]" }).Count -eq 0)
 Check 'first run: Setup window focuses Close (Enter/Space cannot open a picker)' ($src -match '\$close\.IsDefault = \$true; \$d\.Add_ContentRendered\(\{ \[void\]\$close\.Focus\(\) \}')
 Check 'first run: Test-ButtonReady never opens a dialog' ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Test-ButtonReady' }, $true).Extent.Text -notmatch 'Ask-ForPath|OpenFileDialog|ShowDialog')
+# R10-L1: window rects in the change check; forced relayout on show paths and resume; sig re-read after our own layout
+Check 'R10-L1: change check includes each window rect' ($sigSrc -match 'GetWindowRect')
+$global:lays = 0; $global:single = @{}; $global:lastLayoutSig = $null; $global:sigV = 'a'
+function global:Layout-Single { $global:lays++; $global:sigV = 'moved' }   # our own layout moves the window
+[void](Invoke-Relayout); [void](Invoke-Relayout)
+Check 'R10-L1: our own move does not cause a second pass' ($global:lays -eq 1)
+$global:single = $null
+$sap = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-AllPanels' }, $true).Extent.Text
+Check 'R10-L1: Show-AllPanels (second launch, tray Show, Ctrl+Alt+L) forces relayout in both layouts' (([regex]::Matches($sap, '\$global:forceRelayout = \$true; Request-Relayout')).Count -eq 2)
+Check 'R10-L1: relayout tick honours the force flag' ($src -match '\$f = \[bool\]\$global:forceRelayout; \$global:forceRelayout = \$false; \[void\]\(Invoke-Relayout -Force:\$f\)')
+Check 'R10-L1: resume from sleep forces relayout (PowerModeChanged Resume)' ($src -match 'PowerModes\.Resume\) d\.BeginInvoke\(a\)' -and $src -match '\[BL\.Native\]::WatchResume\(\$global:app\.Dispatcher, \[Action\]\{ \$global:forceRelayout = \$true; Request-Relayout \}\)')
+# R10-N1
+$c3 = [pscustomobject]@{ panels = @(1, 2, 3, 4) }
+Check 'R10-N1: notice when single hides panels 3+' (Test-HiddenPanelsNotice $c3 $true)
+Check 'R10-N1: no notice in two-panel layout or with 2 panels' (-not (Test-HiddenPanelsNotice $c3 $false) -and -not (Test-HiddenPanelsNotice ([pscustomobject]@{ panels = @(1, 2) }) $true))
+$c3 | Add-Member hiddenPanelsNoticeShown $true
+Check 'R10-N1: shown once (remembered in buttons.json)' (-not (Test-HiddenPanelsNotice $c3 $true) -and $src -match "Set-Prop \`$global:cfg 'hiddenPanelsNoticeShown' \`$true; Save-Config")
+$ht = Get-HiddenPanelsText ([pscustomobject]@{ panels = @(1, 2, 3, 4) })
+Check 'R10-N1: text says buttons are kept and where two panels is' ($ht -match '2 more panels and their buttons are kept' -and $ht -match 'Setup > Layout > Two panels')
+# R10-N2: one compile
+Check 'R10-N2: event-wait helpers live in BL.Native (single Add-Type for it, no ShowWaiter)' ($src -notmatch 'ShowWaiter' -and $src -match 'public static void WatchHandle' -and ([regex]::Matches($src, '(?m)^\s*Add-Type .*-TypeDefinition')).Count -eq 0)
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

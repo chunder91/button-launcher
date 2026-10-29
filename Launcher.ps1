@@ -2,7 +2,7 @@
 # Right-click a button or empty panel space for edit options.
 
 # Per-monitor DPI awareness (PerMonitorV2) must be set before any window or WPF assembly loads.
-Add-Type -Namespace BL -Name Native -MemberDefinition @'
+Add-Type -Namespace BL -Name Native -ReferencedAssemblies WindowsBase, System -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr v);
 [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
 [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
@@ -14,6 +14,11 @@ Add-Type -Namespace BL -Name Native -MemberDefinition @'
 [DllImport("shell32.dll")] public static extern UIntPtr SHAppBarMessage(uint msg, ref APPBARDATA d);
 [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 [StructLayout(LayoutKind.Sequential)] public struct APPBARDATA { public uint cbSize; public IntPtr hWnd; public uint msg; public uint edge; public RECT rc; public IntPtr lParam; }
+// R10-N2: event waits that post to the UI thread (second-launch signal, resume from sleep); compiled with the rest
+public static void WatchHandle(System.Threading.WaitHandle h, System.Windows.Threading.Dispatcher d, System.Action a) {
+    System.Threading.ThreadPool.RegisterWaitForSingleObject(h, delegate(object s, bool t) { d.BeginInvoke(a); }, null, -1, false); }
+public static void WatchResume(System.Windows.Threading.Dispatcher d, System.Action a) {
+    Microsoft.Win32.SystemEvents.PowerModeChanged += delegate(object s, Microsoft.Win32.PowerModeChangedEventArgs e) { if (e.Mode == Microsoft.Win32.PowerModes.Resume) d.BeginInvoke(a); }; }
 '@
 # R6-L2: subst drive targets, for the local-only path check
 Add-Type -Namespace BL -Name Dos -MemberDefinition @'
@@ -43,6 +48,7 @@ $global:ModernFill   = @{ '#3EC3EE' = @('#0B6E99', '#FFFFFF'); '#0E8A55' = @('#0
 $global:Acronyms     = @('PLCE', 'PC', 'POS', 'VNC', 'KBS', 'USB', 'TV', 'ID', 'IT', 'PA', 'DOR')
 $global:app          = $null
 $global:relayoutTimer = $null
+$global:forceRelayout = $false                                   # R10-L1: next relayout runs even if nothing seems changed
 $global:lastLayoutSig = $null                                     # idle CPU: last laid-out state
 $global:labelSink    = $null
 $global:single       = $null                                      # one-panel layout window state (layout 'single')
@@ -866,13 +872,16 @@ function global:Get-LayoutSig {
     $scr = @(foreach ($x in [System.Windows.Forms.Screen]::AllScreens) { '{0}|{1}' -f $x.Bounds, $x.WorkingArea }) -join ';'
     $dp = @(foreach ($o in $global:panels) { '{0}:{1}:{2}' -f (Get-Dpi $o), [bool]$o.win.IsVisible, [bool]($o.hwnd -and $o.hwnd -ne [IntPtr]::Zero) }) -join ','
     $cf = $global:cfg | ConvertTo-Json -Depth 12 -Compress
+    $rc = @(foreach ($h in @(@($global:panels | ForEach-Object { $_.hwnd }) + @($(if ($global:single) { $global:single.hwnd })))) {   # R10-L1: each window's own size/position
+        if ($h -and $h -ne [IntPtr]::Zero) { $r = New-Object BL.Native+RECT; if ([BL.Native]::GetWindowRect($h, [ref]$r)) { '{0},{1},{2},{3}' -f $r.Left, $r.Top, $r.Right, $r.Bottom } } }) -join ';'
     $sh = if ($global:single) { [bool]($global:single.hwnd -and $global:single.hwnd -ne [IntPtr]::Zero) } else { 'none' }
-    return "$scr#$dp#$sh#$($global:middle.items.Count)#$cf" }
+    return "$scr#$dp#$rc#$sh#$($global:middle.items.Count)#$cf" }
 function global:Invoke-Relayout([switch]$Force) {
     $sig = Get-LayoutSig
     if (-not $Force -and $sig -eq $global:lastLayoutSig) { return $false }   # nothing changed: no layout pass, no SetWindowPos
     $global:lastLayoutSig = $sig
     if ($global:single) { Layout-Single } else { foreach ($o in $global:panels) { Layout-Panel $o } }
+    $global:lastLayoutSig = Get-LayoutSig   # after our own move/resize, so it doesn't count as a change next time
     return $true }
 function global:Request-Relayout {
     # Debounce: Windows sends several messages for one change (resolution, DPI, taskbar, wake...)
@@ -1111,7 +1120,7 @@ function global:Show-AllPanels {
     if ($global:single) {   # one-panel layout: one window to restore and raise
         $w = $global:single.win
         if ($w.WindowState -eq 'Minimized') { $w.WindowState = 'Normal' }
-        $t = $w.Topmost; $w.Topmost = $true; $w.Topmost = $t; [void]$w.Activate(); Request-Relayout; return }
+        $t = $w.Topmost; $w.Topmost = $true; $w.Topmost = $t; [void]$w.Activate(); $global:forceRelayout = $true; Request-Relayout; return }   # R10-L1
     $reopen = @($global:panels | Where-Object { -not $_.deleted -and -not $_.win.IsVisible })
     foreach ($p in $reopen) { [void]$global:panels.Remove($p); [void](Open-Panel $p.cfg) }
     if ($reopen.Count) { Apply-Lock }
@@ -1120,6 +1129,7 @@ function global:Show-AllPanels {
         $t = $p.win.Topmost; $p.win.Topmost = $true; $p.win.Topmost = $t
         [void]$p.win.Activate()
     }
+    $global:forceRelayout = $true; Request-Relayout   # R10-L1: second launch, tray Show, Ctrl+Alt+L always re-dock
 }
 
 # R-L1/R-L2: same name rules as Build-Installer.ps1 (tools/test-installer-dryrun.ps1 checks the two copies match).
@@ -1177,6 +1187,10 @@ function global:Get-LayoutMode($cfg) {
     if ($v -eq 'single') { return 'single' }
     if (@($cfg.panels).Count -gt 2) { return 'two' }
     return 'single' }
+function global:Test-HiddenPanelsNotice($cfg, [bool]$single) { $single -and @($cfg.panels).Count -gt 2 -and -not [bool]$cfg.hiddenPanelsNoticeShown }
+function global:Get-HiddenPanelsText($cfg) {
+    $n = @($cfg.panels).Count - 2
+    "The one-panel layout shows your first two panels. $n more panel$(if ($n -ne 1) { 's' }) and $(if ($n -ne 1) { 'their' } else { 'its' }) buttons are kept, just not shown.`n`nTo see every panel: unlock, right-click a panel > Setup > Layout > Two panels, then Setup > Reload." }
 function global:Get-MiddleHint([int]$count, [bool]$locked) {   # empty + unlocked: a subtle hint; locked: nothing
     if ($count -eq 0 -and -not $locked) { return 'Right-click here to add icons' }   # laptop test: it is already unlocked here
     return $null
@@ -1547,7 +1561,7 @@ try {
     $global:app.Add_DispatcherUnhandledException({ Write-LauncherError 'while running' $_.Exception; $_.Handled = $true })
     $global:relayoutTimer = New-Object System.Windows.Threading.DispatcherTimer
     $global:relayoutTimer.Interval = [TimeSpan]::FromMilliseconds(400)
-    $global:relayoutTimer.Add_Tick({ $global:relayoutTimer.Stop(); Invoke-Relayout })
+    $global:relayoutTimer.Add_Tick({ $global:relayoutTimer.Stop(); $f = [bool]$global:forceRelayout; $global:forceRelayout = $false; [void](Invoke-Relayout -Force:$f) })
 
     $global:middle = New-MiddleState $global:cfg
     if ((Get-LayoutMode $global:cfg) -eq 'single' -and @($global:cfg.panels).Count -ge 1) { Open-Single }
@@ -1559,17 +1573,15 @@ try {
     # Idle CPU: wait for the "show" signal on a thread-pool wait instead of polling every 400 ms; it posts to the UI thread.
     $showWatch = $false
     try {
-        if (-not ('BL.ShowWaiter' -as [type])) {
-            Add-Type -ReferencedAssemblies WindowsBase -TypeDefinition @'
-namespace BL { public static class ShowWaiter {
-    public static void Watch(System.Threading.WaitHandle h, System.Windows.Threading.Dispatcher d, System.Action a) {
-        System.Threading.ThreadPool.RegisterWaitForSingleObject(h, delegate(object s, bool t) { d.BeginInvoke(a); }, null, -1, false); } } }
-'@ }
-        [BL.ShowWaiter]::Watch($global:showEvent, $global:app.Dispatcher, [Action]{ Show-AllPanels }); $showWatch = $true
+        [BL.Native]::WatchHandle($global:showEvent, $global:app.Dispatcher, [Action]{ Show-AllPanels }); $showWatch = $true
     } catch { Add-Content -LiteralPath $global:logPath -Value ("{0}  show-signal wait unavailable ({1}); polling instead" -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }
+    try { [BL.Native]::WatchResume($global:app.Dispatcher, [Action]{ $global:forceRelayout = $true; Request-Relayout }) } catch {}   # R10-L1: re-dock after sleep
     if (-not $showWatch) {
         $showTimer = New-Object System.Windows.Threading.DispatcherTimer; $showTimer.Interval = [TimeSpan]::FromMilliseconds(1000)
         $showTimer.Add_Tick({ if ($global:showEvent.WaitOne(0)) { Show-AllPanels } }); $showTimer.Start() }
+    if (Test-HiddenPanelsNotice $global:cfg ([bool]$global:single)) {   # R10-N1: once, when a saved one-panel layout hides panels 3+
+        Set-Prop $global:cfg 'hiddenPanelsNoticeShown' $true; Save-Config
+        [void]$global:app.Dispatcher.BeginInvoke([Action]{ [System.Windows.MessageBox]::Show((Get-HiddenPanelsText $global:cfg), 'Launcher', 'OK', 'Information') | Out-Null }, [System.Windows.Threading.DispatcherPriority]::ApplicationIdle) }
     if (-not [bool]$global:cfg.setupDone) {   # UX-2a: first run (right after install) lists every button that still needs a file
         Set-Prop $global:cfg 'setupDone' $true
         [void]$global:app.Dispatcher.BeginInvoke([Action]{ Show-SetupWindow -OnlyIfNeeded }, [System.Windows.Threading.DispatcherPriority]::ApplicationIdle)
