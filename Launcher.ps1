@@ -3226,8 +3226,14 @@ function global:New-MailKeyAnim([double[]]$ms, [double[]]$val, [bool]$sine) {
         [void]$k.KeyFrames.Add($f) }
     return $k
 }
-function global:Get-HexLuminance([string]$hex) {   # WCAG relative luminance of '#RRGGBB' / '#AARRGGBB' (alpha ignored); pure, no WPF
-    $h = ([string]$hex).TrimStart('#'); if ($h.Length -eq 8) { $h = $h.Substring(2) }; if ($h -notmatch '^[0-9A-Fa-f]{6}$') { return 0.0 }
+function global:Get-HexLuminance([string]$hex) {   # WCAG relative luminance of a tile colour: '#RGB', '#ARGB', '#RRGGBB', '#AARRGGBB' or a named colour ('White'), as WPF reads it; alpha ignored; unreadable -> 0 (dark-label look)
+    $t = ([string]$hex).Trim(); $h = $null
+    if ($t -match '^#([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$') {
+        $h = $Matches[1]; if ($h.Length -le 4) { $h = -join ($h.ToCharArray() | ForEach-Object { "$_$_" }) }; if ($h.Length -eq 8) { $h = $h.Substring(2) } }
+    elseif ($t -match '^[A-Za-z]{3,30}$') {   # CC LOW-D: named colours, resolved like the tile does (WPF ColorConverter; System.Drawing's known colours have the same names and values)
+        try { $c = [System.Windows.Media.ColorConverter]::ConvertFromString($t); $h = '{0:X2}{1:X2}{2:X2}' -f $c.R, $c.G, $c.B } catch {
+            try { $c = [System.Drawing.Color]::FromName($t); if ($c.IsKnownColor) { $h = '{0:X2}{1:X2}{2:X2}' -f $c.R, $c.G, $c.B } } catch {} } }
+    if (-not $h) { return 0.0 }
     $l = foreach ($i in 0, 2, 4) { $v = [Convert]::ToInt32($h.Substring($i, 2), 16) / 255.0; if ($v -le 0.03928) { $v / 12.92 } else { [Math]::Pow(($v + 0.055) / 1.055, 2.4) } }
     return 0.2126 * $l[0] + 0.7152 * $l[1] + 0.0722 * $l[2]
 }
@@ -3299,13 +3305,17 @@ function global:Set-MailPulse($e, [bool]$on, [double]$peak = 1.0) {   # one Stor
         $ez = New-Object System.Windows.Media.Animation.SineEase; $ez.EasingMode = 'EaseInOut'; $a.EasingFunction = $ez; $a.AutoReverse = $true
         [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($a, (New-Object System.Windows.PropertyPath 'Opacity'))
         $sb = New-Object System.Windows.Media.Animation.Storyboard; [void]$sb.Children.Add($a)
-        $sb.RepeatBehavior = 'Forever'
+        $sb.RepeatBehavior = [System.Windows.Media.Animation.RepeatBehavior]::Forever
         [System.Windows.Media.Animation.Timeline]::SetDesiredFrameRate($sb, 20)
         $e.pulse = $sb; $sb.Begin($e.glow, $true)
     } elseif ($e.pulse) { try { $e.pulse.Remove($e.glow) } catch {}; $e.pulse = $null; $e.glow.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null); $e.glow.Opacity = 0 }
 }
 $global:MailStateHooked = New-Object 'System.Collections.Generic.HashSet[object]'   # LJ M34-I1: windows that already have the StateChanged handler
-function global:Add-MailStateHookOnce($w, [scriptblock]$add) { if (-not $w -or $global:MailStateHooked.Contains($w)) { return $false }; [void]$global:MailStateHooked.Add($w); & $add $w; return $true }
+function global:Add-MailStateHookOnce($w, [scriptblock]$add) {   # LJ M34-I1: once per window; LJ M35-I1 / CC LOW-H: a closed window leaves the set
+    if (-not $w -or $global:MailStateHooked.Contains($w)) { return $false }
+    [void]$global:MailStateHooked.Add($w); & $add $w
+    $w.Add_Closed({ [void]$global:MailStateHooked.Remove($w) }.GetNewClosure())
+    return $true }
 function global:Test-MailWinMinimized($el) { try { $w = [System.Windows.Window]::GetWindow($el); return [bool]($w -and $w.WindowState -eq 'Minimized') } catch { return $false } }
 function global:Update-MailPulse($e) {
     $m = $global:mail; if (-not $m) { return }

@@ -161,22 +161,29 @@ $sigSrc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Fu
 Check 'idle: layout signature covers screens, work areas, DPI, visibility, handles, settings' ($sigSrc -match 'AllScreens' -and $sigSrc -match 'WorkingArea' -and $sigSrc -match 'Get-Dpi' -and $sigSrc -match 'IsVisible' -and $sigSrc -match 'hwnd' -and $sigSrc -match 'ConvertTo-Json')
 Check 'idle: relayout timer goes through Invoke-Relayout' ($src -match '\$global:relayoutTimer\.Add_Tick\(\{ \$global:relayoutTimer\.Stop\(\);[^\n]*Invoke-Relayout -Force:\$f')
 Check 'idle: show signal is a thread-pool wait, not a 400 ms poll' ($src -match 'RegisterWaitForSingleObject' -and $src -notmatch 'FromMilliseconds\(400\)\s*\r?\n\s*\$showTimer' -and $src -notmatch "showTimer\.Interval = \[TimeSpan\]::FromMilliseconds\(400\)")
-function Test-OneForever([string]$text) {   # CC LOW-B: exactly ONE case-insensitive 'RepeatBehavior' hit in the whole source, and its line is exactly the expected one inside Set-MailPulse (string-built names: accepted gap)
-    $hits = [regex]::Matches($text, '(?i)RepeatBehavior'); if ($hits.Count -ne 1) { return $false }
-    $ln = ($text.Substring(0, $hits[0].Index) -split "`n").Count
-    if (($text -split "`n")[$ln - 1].Trim() -cne "`$sb.RepeatBehavior = 'Forever'") { return $false }
+function Test-OneForever([string]$text) {   # CC R-1 / LOW-B: every case-insensitive 'RepeatBehavior' hit sits on ONE exact line, that line appears exactly once, inside Set-MailPulse (string-built names: accepted gap)
+    $want = '$sb.RepeatBehavior = [System.Windows.Media.Animation.RepeatBehavior]::Forever'
+    $hits = [regex]::Matches($text, '(?i)RepeatBehavior'); if ($hits.Count -eq 0) { return $false }
+    $all = $text -split "`n"
+    $lines = @($hits | ForEach-Object { ($text.Substring(0, $_.Index) -split "`n").Count } | Sort-Object -Unique)
+    if ($lines.Count -ne 1 -or $all[$lines[0] - 1].Trim() -cne $want) { return $false }
+    if (@($all | Where-Object { $_.Trim() -ceq $want }).Count -ne 1) { return $false }
+    if ($hits.Count -ne 2) { return $false }   # the exact line has exactly two hits (property and type); anything more is a second use
     $pa = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$null)
     $f = $pa.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-MailPulse' }, $true)
-    return ($f -and $ln -ge $f.Extent.StartLineNumber -and $ln -le $f.Extent.EndLineNumber)
+    return ($f -and $lines[0] -ge $f.Extent.StartLineNumber -and $lines[0] -le $f.Extent.EndLineNumber)
 }
 Check 'idle: exactly one forever animation, the unread-email pulse inside Set-MailPulse (20 fps)' ((Test-OneForever $src) -and $src.Contains('SetDesiredFrameRate($sb, 20)'))
 $plants = @("`n`$x.RepeatBehavior='Forever'", "`n`$xaml = '<DoubleAnimation RepeatBehavior=`"Forever`"/>'", "`n`$a.SetValue([System.Windows.Media.Animation.Timeline]::RepeatBehaviorProperty, `$f)")
 $caught = @(foreach ($pl in $plants) { -not (Test-OneForever ($src + $pl)) })
 $plants += "`n`$x.repeatbehavior = 'Forever'"
 $caught = @(foreach ($pl in $plants) { -not (Test-OneForever ($src + $pl)) })
-$sameLine = $src.Replace("`$sb.RepeatBehavior = 'Forever'", "`$sb.RepeatBehavior = 'Forever'; `$y.RepeatBehavior = 'Forever'")
+$exact = '$sb.RepeatBehavior = [System.Windows.Media.Animation.RepeatBehavior]::Forever'
+$sameLine = $src.Replace($exact, $exact + '; $y.RepeatBehavior = 2')
+$sameLineLower = $src.Replace($exact, $exact + '; $y.repeatbehavior = 2')
+$twice = $src.Replace($exact, $exact + "`n        " + $exact)
 $inside = $src -replace '(function global:Set-MailPulse[^\n]*\n)', ('$1        $y.RepeatBehavior = 2' + "`n")
-Check "idle: the forever check catches a planted property set, XAML attribute and SetValue, lowercase ($($caught -join ',')), a second one inside Set-MailPulse and a second assignment on the same line" ((@($caught | Where-Object { $_ }).Count -eq 4) -and -not (Test-OneForever $inside) -and -not (Test-OneForever $sameLine))
+Check "idle: the forever check catches a planted property set, XAML attribute and SetValue, lowercase ($($caught -join ',')), a second one inside Set-MailPulse a second assignment on the same line (any case) and the exact line twice" ((@($caught | Where-Object { $_ }).Count -eq 4) -and -not (Test-OneForever $inside) -and -not (Test-OneForever $sameLine) -and -not (Test-OneForever $sameLineLower) -and -not (Test-OneForever $twice))
 $ticks = [regex]::Matches($src, 'DispatcherTimer').Count
 Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback, VNC scan drain, VNC temp-file delete, VNC worker cleanup after close; v1.4.0 email count: poll, check drain, follow-ups after a click, Test wait)' ($ticks -eq 11)
 # First run: no file picker without a click

@@ -28,9 +28,9 @@ WHAT EACH BUTTON DOES
                        password is encrypted by Windows for that user only.
                        Right-click Email for Check email now and its status.
                        While there are unread emails the button fades to red
-                       ("Pulse the Email button"; it stops once every email is
-                       read), or pick Just show the number. With Windows
-                       animations off it just shows the number.
+                       (unless Windows animations are off, or you pick Just
+                       show the number in Setup). "Pulse the Email button"
+                       stops once every email is read.
   USER GUIDE buttons   First click asks you to pick the PDF; after that it
                        just opens it.
   PLCE                 PA State Police Liquor Control Enforcement page.
