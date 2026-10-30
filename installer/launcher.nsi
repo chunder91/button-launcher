@@ -306,6 +306,11 @@ Section "Install"
   SetDetailsPrint textonly                      ; UI-1: one short status line; every step goes to the hidden log only
   DetailPrint "Installing ${APPNAME}..."
   SetDetailsPrint listonly
+  ${If} $Elevated = 1                           ; M26-I1: a silent elevated run leaves a trace of where it installed
+  ${AndIf} ${Silent}
+    SetDetailsPrint listonly
+    DetailPrint "Setup ran elevated (/S): installing for this account into $INSTDIR"
+  ${EndIf}
   InitPluginsDir
   ; Stop only a launcher started from this install folder (powershell.exe ... <dest>\Launcher.ps1), like the IExpress installer.
   System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$INSTDIR")i'
