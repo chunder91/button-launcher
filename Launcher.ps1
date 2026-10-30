@@ -2756,7 +2756,8 @@ $global:MailDeadRuns  = New-Object System.Collections.ArrayList   # stopped chec
 $global:MailLogDetails = @('address not allowed', 'server closed', 'no greeting', 'login has characters IMAP cannot send', 'sign-in refused', 'no continuation', 'server closed at sign-in', 'no sign-in reply',
                            'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result', 'connection dropped', 'sign-in method not offered')   # the only words the log may carry
 $global:MailLogSteps = @('connect', 'tls', 'greeting', 'login', 'status', 'logout', 'timeout', 'lost-result')   # the failing step; fixed words only
-$global:MailLogWords = @('OK', 'NO', 'BAD', 'BYE')   # the server reply's status word only, never the text after it
+$global:MailLogWords = @('OK', 'NO', 'BAD', 'BYE')
+$global:MailWorkerDeadlineSec = 25   # CC L4: the worker gives up after 25 s; the UI cap in Start-MailRun is 45 s   # the server reply's status word only, never the text after it
 
 # ---- IMAP protocol (pure; the worker runs these in a background runspace; tools/test-mail.ps1 drives them with a mock) ----
 function global:ConvertTo-ImapQuotedBytes([char[]]$chars) {   # RFC 3501 quoted string as ASCII bytes ('\' and '"' escaped); $null = needs a literal; CR, LF, NUL throw
@@ -2814,9 +2815,10 @@ function global:Read-ImapLine([scriptblock]$ReadLine) {   # one logical server l
     for ($k = 0; $k -lt 4 -and $l -match '\{\d{1,6}\}$'; $k++) { $l = $l + ' ' + [string](& $ReadLine) }
     return $l
 }
-function global:Read-ImapStreamLine($stream, [IO.MemoryStream]$buf) {   # bytes up to LF (CR trimmed), however the server split them across reads
+function global:Read-ImapStreamLine($stream, [IO.MemoryStream]$buf, $Deadline = $null, $Flags = $null) {   # bytes up to LF (CR trimmed), however the server split them across reads; CC L4: past the deadline -> throw (Flags.timedOut)
     $buf.SetLength(0)
-    while ($true) { $b = $stream.ReadByte(); if ($b -lt 0) { throw 'closed' }; if ($b -eq 10) { break }; if ($buf.Length -ge 16384) { throw 'line too long' }; $buf.WriteByte([byte]$b) }
+    while ($true) { if ($null -ne $Deadline -and [DateTime]::UtcNow -ge $Deadline) { if ($Flags) { $Flags.timedOut = $true }; throw 'deadline' }
+        $b = $stream.ReadByte(); if ($b -lt 0) { throw 'closed' }; if ($b -eq 10) { break }; if ($buf.Length -ge 16384) { throw 'line too long' }; $buf.WriteByte([byte]$b) }
     return ([Text.Encoding]::UTF8.GetString($buf.ToArray())).TrimEnd("`r")
 }
 function global:Get-ImapTagged([string]$line, [string]$tag) {   # 'OK' / 'NO' / 'BAD' for this tag's completion line, else $null
@@ -2838,7 +2840,7 @@ function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, 
     if ($g -notmatch '(?i)^\* PREAUTH\b') {
         if ($Flags) { $Flags.step = 'login' }
         $caps = Get-ImapCaps $g   # from the greeting only: no extra command is ever sent
-        if ($caps -contains 'LOGINDISABLED' -and -not ($caps -contains 'AUTH=PLAIN')) { return @{ kind = 'proto'; unseen = -1; detail = 'sign-in method not offered'; step = 'login' } }   # LJ M28-I2: never send LOGIN the server refuses
+        if ($caps -contains 'LOGINDISABLED' -and -not ($caps -contains 'AUTH=PLAIN')) { return @{ kind = 'proto'; stop = $true; unseen = -1; detail = 'sign-in method not offered'; step = 'login' } }   # LJ M28-I2: never send LOGIN the server refuses
         $lb = $null
         try {
             if ($caps -contains 'AUTH=PLAIN') {   # SASL PLAIN: the password is base64 of UTF-8, so quotes, backslashes, spaces, braces and non-ASCII all go through unchanged
@@ -2881,6 +2883,7 @@ function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, 
 }
 function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureString]$secure, $sync) {   # runs in the background runspace; one TLS connection, then closed
     $tcp = $null; $ssl = $null; $chars = $null; $bstr = [IntPtr]::Zero
+    $deadline = [DateTime]::UtcNow.AddSeconds($global:MailWorkerDeadlineSec)   # CC L4: 25 s overall, checked before every byte read; under the UI's 45 s cap (Start-MailRun)
     try {
         $tcp = New-Object System.Net.Sockets.TcpClient
         $sync.tcp = $tcp                                                            # lets the UI close it on exit or timeout
@@ -2899,16 +2902,21 @@ function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureStr
         catch { $e = $_.Exception; while ($e -and -not ($e -is [System.Security.Authentication.AuthenticationException])) { $e = $e.InnerException }
                 if ($e) { return @{ kind = 'cert'; unseen = -1; detail = 'certificate or TLS check failed'; step = 'tls' } }; return @{ kind = 'net'; unseen = -1; detail = 'TLS handshake failed'; step = 'tls' } }
         $buf = New-Object IO.MemoryStream
-        $readLine = { Read-ImapStreamLine $ssl $buf }.GetNewClosure()
+        $readLine = { Read-ImapStreamLine $ssl $buf $deadline $sync }.GetNewClosure()
         $write = { param([byte[]]$bytes) $ssl.Write($bytes, 0, $bytes.Length); $ssl.Flush() }.GetNewClosure()
         $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
         $chars = New-Object char[] $secure.Length
         [Runtime.InteropServices.Marshal]::Copy($bstr, $chars, 0, $chars.Length)
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr); $bstr = [IntPtr]::Zero
-        return (Invoke-ImapSession $readLine $write $user $chars $sync)
-    } catch {   # a drop or timeout: before the greeting it is the network; after a good sign-in the server stopped answering
+        $res = Invoke-ImapSession $readLine $write $user $chars $sync
+        if ($sync.timedOut) { $res.step = 'timeout'; $res.detail = 'timed out' }   # e.g. a sign-in cut off by the deadline stays an unclear sign-in failure
+        return $res
+    } catch {   # CC L1: connect/TLS failures are the network; a drop or EOF once TLS is up is the server (greeting or status)
         $st = [string]$sync.step; if ($st -cnotin $global:MailLogSteps) { $st = '' }
-        if ($st -eq 'status') { return @{ kind = 'proto'; unseen = -1; detail = 'connection dropped'; step = $st } }
+        if ($sync.timedOut) {   # CC L4: same split as the UI cap (Get-MailLostResult)
+            if ($sync.loginSent -and -not $sync.loginOk) { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'timed out'; step = 'timeout' } }
+            return @{ kind = 'net'; unseen = -1; detail = 'timed out'; step = 'timeout' } }
+        if ($st -eq 'status' -or $st -eq 'greeting') { return @{ kind = 'proto'; unseen = -1; detail = 'connection dropped'; step = $st } }
         return @{ kind = 'net'; unseen = -1; detail = 'network error'; step = $st } }
     finally {
         if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
@@ -2921,7 +2929,7 @@ function global:Get-MailWorkerScript {   # the worker's functions, copied by nam
     if (-not $global:MailWorkerScript) {
         $parts = foreach ($n in 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapPlainBytes', 'Get-ImapCaps', 'Read-ImapLine', 'Read-ImapStreamLine', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker') {
             'function global:{0} {{ {1} }}' -f $n, (Get-Item -LiteralPath ('function:' + $n)).ScriptBlock.ToString() }
-        $parts = @("`$global:MailLogSteps = @('" + ($global:MailLogSteps -join "', '") + "')") + @($parts)
+        $parts = @("`$global:MailLogSteps = @('" + ($global:MailLogSteps -join "', '") + "')", "`$global:MailWorkerDeadlineSec = $([int]$global:MailWorkerDeadlineSec)") + @($parts)
         $global:MailWorkerScript = ($parts -join "`n") + "`nInvoke-MailCheckWorker `$args[0] `$args[1] `$args[2]" }
     return $global:MailWorkerScript
 }
@@ -2932,7 +2940,8 @@ function global:Get-MailFreshState($old) { New-MailState ([int]$old.epoch + 1) }
 function global:Update-MailState($s, $r, [datetime]$now) {   # one check result -> state; @{ grew; ignored }. Squint: auth stops polling; offline after 2 tried polls; sleep never counts.
     $out = @{ grew = $false; ignored = $false }
     if ($null -ne $r.epoch -and [int]$r.epoch -ne [int]$s.epoch) { $out.ignored = $true; return $out }   # started before a sleep: not a tried poll
-    switch ([string]$r.kind) {
+    $k = [string]$r.kind; if ($r.stop -and $k -ne 'ok') { $k = 'auth' }   # LJ M29-I1: no sign-in method offered stops polling like a sign-in failure (Test still shows proto)
+    switch ($k) {
         'ok' {
             $prev = [Math]::Max(0, [int]$s.count); $n = [Math]::Max(0, [int]$r.unseen)
             $out.grew = $n -gt $prev
@@ -3082,7 +3091,7 @@ function global:Start-MailRun([string]$user, [System.Security.SecureString]$secu
         if ($OnDone) { & $OnDone @{ kind = 'auth'; unseen = -1; detail = 'address not allowed'; epoch = $(if ($global:mail) { $global:mail.state.epoch } else { 0 }) } }
         return $true }
     Clear-MailDeadRuns
-    $sync = [hashtable]::Synchronized(@{ tcp = $null; loginSent = $false; loginOk = $false; step = 'connect' })
+    $sync = [hashtable]::Synchronized(@{ tcp = $null; loginSent = $false; loginOk = $false; step = 'connect'; timedOut = $false })
     $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open()
     $ps = [powershell]::Create(); $ps.Runspace = $rs
     [void]$ps.AddScript((Get-MailWorkerScript)).AddArgument($user).AddArgument($secure).AddArgument($sync)

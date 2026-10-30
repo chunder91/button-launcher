@@ -291,6 +291,7 @@ Function Fail   ; $R9 = message. Leaves the current install as it was.
   SetDetailsPrint textonly
   DetailPrint "$FailShort"
   SetDetailsPrint listonly
+  SetDetailsPrint listonly                    ; twice: lastused is listonly too (plugin/InitPluginsDir code restores lastused)
   !ifdef DEBUGLOG
   FileOpen $9 "$TEMP\bl-debug.txt" a
   FileWrite $9 "$R9$\r$\n"
@@ -306,6 +307,7 @@ Section "Install"
   SetDetailsPrint textonly                      ; UI-1: one short status line; every step goes to the hidden log only
   DetailPrint "Installing ${APPNAME}..."
   SetDetailsPrint listonly
+  SetDetailsPrint listonly                    ; twice: lastused is listonly too (plugin/InitPluginsDir code restores lastused)
   ${If} $Elevated = 1                           ; M26-I1: a silent elevated run leaves a trace of where it installed
   ${AndIf} ${Silent}
     SetDetailsPrint listonly
@@ -484,6 +486,16 @@ Section "Install"
   ${EndIf}
   SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
   SetOutPath "$INSTDIR"
+  ${If} $Elevated = 1                           ; CC M2: an elevated /S run also leaves the same fixed line in a file IT can read
+  ${AndIf} ${Silent}
+    ClearErrors
+    FileOpen $0 "$INSTDIR\install-note.txt" a
+    ${IfNot} ${Errors}
+      FileSeek $0 0 END
+      FileWrite $0 "Setup ran elevated (/S): installing for this account into $INSTDIR$\r$\n"
+      FileClose $0
+    ${EndIf}
+  ${EndIf}
 
   ; Shortcuts (per-user Start menu, same names as the IExpress installer)
   CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\ButtonLauncher.exe" "" "$INSTDIR\ButtonLauncher.exe" 0 SW_SHOWNORMAL "" "${APPNAME}"
@@ -542,6 +554,7 @@ Section "Install"
   SetDetailsPrint textonly
   DetailPrint "${APPNAME} is $1."
   SetDetailsPrint listonly
+  SetDetailsPrint listonly                    ; twice: lastused is listonly too (plugin/InitPluginsDir code restores lastused)
   ${If} $Elevated = 0
     MessageBox MB_OK|MB_ICONINFORMATION "${APPNAME} is $1 and open now.$\n$\nTo open it later: click Start and type ${APPNAME}.$\n$\nTo remove it: Settings > Apps." /SD IDOK
   ${Else}
@@ -582,6 +595,7 @@ Section "Uninstall"
   SetDetailsPrint textonly
   DetailPrint "Removing ${APPNAME}..."
   SetDetailsPrint listonly
+  SetDetailsPrint listonly                    ; twice: lastused is listonly too (plugin/InitPluginsDir code restores lastused)
   System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$INSTDIR")i'
   nsExec::ExecToLog `${PS} "& {${STOP_LAUNCHER}}"`
   Pop $0

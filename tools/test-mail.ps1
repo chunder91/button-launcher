@@ -14,7 +14,7 @@ $fns = 'Get-ButtonType', 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
-foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(MailDomain|MailLogDetails|MailLogSteps|MailLogWords|MailWorkerScript|MailIntervals|MailDialogXaml)\s*=') { Invoke-Expression $l.Extent.Text } }
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(MailDomain|MailLogDetails|MailLogSteps|MailLogWords|MailWorkerDeadlineSec|MailWorkerScript|MailIntervals|MailDialogXaml)\s*=') { Invoke-Expression $l.Extent.Text } }
 $fake = 'test-not-real'   # a fake password, used only in this test
 function Ascii([byte[]]$b) { [Text.Encoding]::ASCII.GetString($b) }
 
@@ -496,12 +496,31 @@ Check 'LJ M28-I2: LOGINDISABLED with AUTH=PLAIN -> PLAIN sign-in works' ($r.kind
 $pl2 = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-ImapPlainBytes' }, $true).Extent.Text
 Check 'LJ M28-I1: NUL/CR/LF check is an index loop (no ToCharArray / array concat)' ($pl2 -notmatch 'ToCharArray' -and $pl2 -match 'for \(\$i = 0; \$i -lt \$pass\.Length; \$i\+\+\)')
 foreach ($bad in "a`rb", "a`nb", ("a" + [char]0 + "b")) { $t = $false; try { [void](Get-ImapPlainBytes $u $bad.ToCharArray() '') } catch { $t = $true }; Check 'LJ M28-I1: PLAIN still rejects CR/LF/NUL' $t }
+# LJ M29-I1: no supported sign-in method stops polling like a sign-in failure; Test still says proto
+$m = New-Mock @('* OK [CAPABILITY IMAP4rev1 LOGINDISABLED] ready'); $r = Invoke-ImapSession $m.read $m.write $u $fake.ToCharArray()
+$s29 = New-MailState; [void](Update-MailState $s29 $r $now)
+Check 'LJ M29-I1: LOGINDISABLED without PLAIN stops background checks (stopped, no next poll); Test message stays proto' ($r.stop -and $s29.stopped -and (Get-MailNextDelaySec $s29) -eq -1 -and (Get-MailTestText $r).kind -eq 'proto')
+$s29b = New-MailState; [void](Update-MailState $s29b @{ kind = 'proto'; detail = 'no STATUS reply' } $now); Check 'LJ M29-I1: an ordinary proto failure still retries' (-not $s29b.stopped -and (Get-MailNextDelaySec $s29b) -gt 0)
+# CC L4: overall worker deadline, checked before every byte read
+Check 'CC L4: worker deadline 25 s, under the UI cap' ($global:MailWorkerDeadlineSec -eq 25 -and $src -match 'TotalSeconds -ge 45\) \{ Stop-MailRunObjects' -and $global:MailWorkerDeadlineSec -lt 45)
+$fl4 = @{ timedOut = $false }; $ms4 = New-Object IO.MemoryStream (,[Text.Encoding]::ASCII.GetBytes("* OK hi`r`n")); $t4 = $false
+try { [void](Read-ImapStreamLine $ms4 (New-Object IO.MemoryStream) ([DateTime]::UtcNow.AddSeconds(-1)) $fl4) } catch { $t4 = $true }
+Check 'CC L4: past the deadline the line reader throws and marks timedOut' ($t4 -and $fl4.timedOut)
+$drip = New-Object PSObject; $drip | Add-Member -MemberType ScriptMethod -Name ReadByte -Value { Start-Sleep -Milliseconds 120; return [int][char]'x' }
+$fl4 = @{ timedOut = $false }; $sw = [Diagnostics.Stopwatch]::StartNew(); $t4 = $false
+try { [void](Read-ImapStreamLine $drip (New-Object IO.MemoryStream) ([DateTime]::UtcNow.AddMilliseconds(600)) $fl4) } catch { $t4 = $true }; $sw.Stop()
+Check "CC L4: a slow-drip server (1 byte / 120 ms, no LF) is cut off at the deadline ($($sw.ElapsedMilliseconds) ms)" ($t4 -and $fl4.timedOut -and $sw.ElapsedMilliseconds -lt 2000)
+$fl4 = @{ timedOut = $false }; $ms4 = New-Object IO.MemoryStream (,[Text.Encoding]::ASCII.GetBytes("* OK hi`r`n"))
+Check 'CC L4: before the deadline the reader is unchanged' ((Read-ImapStreamLine $ms4 (New-Object IO.MemoryStream) ([DateTime]::UtcNow.AddSeconds(30)) $fl4) -ceq '* OK hi' -and -not $fl4.timedOut)
+$wl = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Invoke-MailCheckWorker' }, $true).Extent.Text
+Check 'CC L4: worker passes the deadline to every read and marks the step timeout' ($wl.Contains('$readLine = { Read-ImapStreamLine $ssl $buf $deadline $sync }.GetNewClosure()') -and $wl.Contains("if (`$sync.timedOut) { `$res.step = 'timeout'; `$res.detail = 'timed out' }") -and $wl -match "detail = 'timed out'; step = 'timeout'" -and (Get-MailWorkerScript) -match '\$global:MailWorkerDeadlineSec = 25')
+Check 'CC L1: a drop/EOF at the greeting (after TLS) is proto step=greeting; connect/TLS stay net' ($wl.Contains("if (`$st -eq 'status' -or `$st -eq 'greeting') { return @{ kind = 'proto'; unseen = -1; detail = 'connection dropped'; step = `$st } }") -and $wl -match "kind = 'net'; unseen = -1; detail = 'connect timed out'; step = 'connect'" -and $wl -match "kind = 'net'; unseen = -1; detail = 'TLS handshake failed'; step = 'tls'")
 # CRLF split across reads: the worker's line reader takes bytes, however the server chunks them
 $bytes = [Text.Encoding]::ASCII.GetBytes("* OK hi`r`na1 OK done`r`n"); $ms = New-Object IO.MemoryStream (,$bytes); $buf = New-Object IO.MemoryStream
 $l1 = Read-ImapStreamLine $ms $buf; $l2 = Read-ImapStreamLine $ms $buf
 Check 'stream line reader: CR and LF in separate reads, CR trimmed' ($l1 -ceq '* OK hi' -and $l2 -ceq 'a1 OK done')
 $w2 = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Invoke-MailCheckWorker' }, $true).Extent.Text
-Check 'worker reads lines through Read-ImapStreamLine (byte by byte)' ($w2.Contains('$readLine = { Read-ImapStreamLine $ssl $buf }.GetNewClosure()') -and $ast.Extent.Text.Contains('$b = $stream.ReadByte()'))
+Check 'worker reads lines through Read-ImapStreamLine (byte by byte)' ($w2.Contains('$readLine = { Read-ImapStreamLine $ssl $buf $deadline $sync }.GetNewClosure()') -and $ast.Extent.Text.Contains('$b = $stream.ReadByte()'))
 $ws2 = Get-MailWorkerScript
 Check 'worker script carries the new helpers and the step list' ($ws2 -match 'function global:Get-ImapPlainBytes' -and $ws2 -match 'function global:Get-ImapCaps' -and $ws2 -match 'function global:Read-ImapLine' -and $ws2 -match 'function global:Read-ImapStreamLine' -and $ws2 -match '\$global:MailLogSteps = @\(')
 # distinct Test copy per failure kind
