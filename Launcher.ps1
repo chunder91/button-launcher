@@ -3231,6 +3231,7 @@ function global:Get-HexLuminance([string]$hex) {   # WCAG relative luminance of 
     $l = foreach ($i in 0, 2, 4) { $v = [Convert]::ToInt32($h.Substring($i, 2), 16) / 255.0; if ($v -le 0.03928) { $v / 12.92 } else { [Math]::Pow(($v + 0.055) / 1.055, 2.4) } }
     return 0.2126 * $l[0] + 0.7152 * $l[1] + 0.0722 * $l[2]
 }
+function global:Get-MailPulseHint([bool]$animOn) { if ($animOn) { 'The pulse stops once every email is read.' } else { 'Windows animations are off, so Launcher just shows the number.' } }   # Squint: the hint under Pulse
 function global:Get-MailPulseLook([string]$labelHex) {   # Kern Minor: a light label (luminance > 0.5, a recoloured dark tile) gets a black overlay at 30%; otherwise the yellow one at 45%
     if ((Get-HexLuminance $labelHex) -gt 0.5) { return @{ color = '#000000'; peak = 0.30 } }
     return @{ color = 'yellow'; peak = 0.45 }
@@ -3288,11 +3289,12 @@ function global:Add-MailMenu($menu) {   # Squint: status line first, then Check 
         foreach ($x in @($st, $ck, $se, $sep)) { $x.Visibility = $v }
         if ($on) { $st.Header = Get-MailMenuLine $global:mail.state (Get-Date); $ck.IsEnabled = -not $global:mailRun } }.GetNewClosure())
 }
-function global:Set-MailPulse($e, [bool]$on, [double]$peak = 0.45, [string]$color = '') {   # one Storyboard per tile on the overlay ($color: yellow or black, Kern Minor): 0 -> $peak -> 0 every 2.4 s, sine ease, 20 fps; started once, removed when off
+$global:MailPulseCycleMs = 3500   # Charles 2:11 PM: one full pulse (in and out) every 3.5 s, about 0.29 Hz (he picks 3.5 or 5 s)
+function global:Set-MailPulse($e, [bool]$on, [double]$peak = 0.45, [string]$color = '') {   # one Storyboard per tile on the overlay ($color: yellow or black, Kern Minor): 0 -> $peak -> 0 every $global:MailPulseCycleMs ms, sine ease, 20 fps; started once, removed when off
     if ($on) {
         if ($e.pulse) { return }   # already running: a count change never restarts it
         if ($color -and $color -ne 'yellow') { $e.glow.Background = Brush $color }
-        $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, $peak, ([System.Windows.Duration][TimeSpan]::FromMilliseconds(1200))
+        $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, $peak, ([System.Windows.Duration][TimeSpan]::FromMilliseconds($global:MailPulseCycleMs / 2))
         $ez = New-Object System.Windows.Media.Animation.SineEase; $ez.EasingMode = 'EaseInOut'; $a.EasingFunction = $ez; $a.AutoReverse = $true
         [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($a, (New-Object System.Windows.PropertyPath 'Opacity'))
         $sb = New-Object System.Windows.Media.Animation.Storyboard; [void]$sb.Children.Add($a)
@@ -3496,9 +3498,12 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $rb = New-Object System.Windows.Controls.RadioButton; $rb.GroupName = 'mailStyle'; $rb.Content = $o[1]; if ($s2) { $rb.Style = $s2 } else { $rb.Foreground = Brush '#FFFFFF'; $rb.FontSize = 14; $rb.Margin = '0,4' }
         $rb.IsChecked = ([string]$was.style -eq $o[0]); $radios[$o[0]] = $rb; [void]$acct.Children.Add($rb)
         if ($o[0] -eq 'pulse') {   # Squint: hint under the option, the dialog's caption style (12 px #B4B4BC), aligned with the label
-            $ph = New-Object System.Windows.Controls.TextBlock; $ph.Text = 'The pulse stops once every email is read.'; $ph.FontSize = 12; $ph.Foreground = Brush '#B4B4BC'; $ph.Margin = '28,0,0,4'; $ph.TextWrapping = 'Wrap'; [void]$acct.Children.Add($ph) } }
-    $aoff = New-Object System.Windows.Controls.TextBlock; $aoff.Text = 'Windows animations are off, so Launcher just shows the number.'; $aoff.FontSize = 12; $aoff.Foreground = Brush '#B4B4BC'; $aoff.Margin = '0,6,0,0'; $aoff.TextWrapping = 'Wrap'
-    $aoff.Visibility = if (Test-MailAnimOn) { 'Collapsed' } else { 'Visible' }; [void]$acct.Children.Add($aoff)   # Squint: the saved choice stays as it is
+            $ph = New-Object System.Windows.Controls.TextBlock; $ph.FontSize = 12; $ph.Foreground = Brush '#B4B4BC'; $ph.Margin = '28,0,0,4'; $ph.TextWrapping = 'Wrap'; [void]$acct.Children.Add($ph) } }
+    $pulseHint = { $t = Get-MailPulseHint (Test-MailAnimOn); $ph.Text = $t; [System.Windows.Automation.AutomationProperties]::SetHelpText($radios['pulse'], $t) }.GetNewClosure()   # Squint: one hint spot, also the radio's HelpText; the saved choice stays as it is
+    & $pulseHint
+    $animH = [System.ComponentModel.PropertyChangedEventHandler]{ param($src0, $chg) if ($chg.PropertyName -eq 'ClientAreaAnimation') { & $pulseHint } }.GetNewClosure()
+    try { [System.Windows.SystemParameters]::add_StaticPropertyChanged($animH) } catch {}
+    $d.Add_Closed({ try { [System.Windows.SystemParameters]::remove_StaticPropertyChanged($animH) } catch {} }.GetNewClosure())   # live while the dialog is open, unhooked when it closes
     if (-not ($radios.Values | Where-Object { $_.IsChecked })) { $radios['pulse'].IsChecked = $true }   # Charles: Pulse by default
     $h3 = New-D2Label 'Check for new email every:' '#FFFFFF' 14; $h3.FontWeight = [System.Windows.FontWeights]::SemiBold; $h3.Margin = '0,16,0,6'; [void]$acct.Children.Add($h3)
     $cbI = New-Object System.Windows.Controls.ComboBox; $cbI.Width = 140; $cbI.Height = 32; $cbI.HorizontalAlignment = 'Left'; $cbI.FontSize = 14; $cbI.Margin = '0'   # Kern: 16 to the buttons comes from the row
