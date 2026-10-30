@@ -312,13 +312,15 @@ Check 'UX-4: refusal names the folder actually found and the IT contact, not "La
 $fl = [regex]::Match($nsi, '(?s)Function FindLeftover.*?FunctionEnd').Value
 Check 'UX-4: FindLeftover checks .old-* then .new-*' ($fl -match '(?s)FindFirst \$3 \$4 "\$INSTDIR\.old-\*".*FindFirst \$3 \$4 "\$INSTDIR\.new-\*"')
 Check 'UX-3: no "did not run" PowerShell copy; next step and IT contact given' ($nsi -notmatch 'did not run' -and $inst -match "that check didn't finish \(code \`$0\)\. Nothing was changed\.\`$\\n\`$\\nRestart the PC and run Setup again")
-Check 'UI-1: Fail puts the full text in the log only and a short status line' ($failFn -match '(?s)SetDetailsPrint listonly\s+DetailPrint "\$R9"\s+SetDetailsPrint textonly\s+DetailPrint "\$FailShort"\s+SetDetailsPrint both')
+Check 'UI-1: Fail puts the full text in the log only and a short status line' ($failFn -match '(?s)SetDetailsPrint listonly\s+DetailPrint "\$R9"\s+SetDetailsPrint textonly\s+DetailPrint "\$FailShort"\s+SetDetailsPrint listonly')
 $shorts = @([regex]::Matches($nsi, 'StrCpy \$FailShort "([^"]*)"') | ForEach-Object { $_.Groups[1].Value })
 Check 'UI-1: every status-line text is 40 chars or fewer' ($shorts.Count -ge 2 -and @($shorts | Where-Object { $_.Length -gt 40 }).Count -eq 0 -and $shorts -contains 'Setup stopped. Nothing was changed.')
 $dps = @(($nsi -split "`r?`n") | Select-String -Pattern '^\s*DetailPrint ' | ForEach-Object { $_.LineNumber })
 $lines = $nsi -split "`r?`n"
-Check 'UI-1: every other DetailPrint is log-only (listonly right before)' (@($dps | Where-Object { $lines[$_ - 1] -notmatch 'DetailPrint "\$FailShort"' -and $lines[$_ - 2] -notmatch 'SetDetailsPrint listonly' }).Count -eq 0)
+Check 'UI-1: every DetailPrint is log-only, or a status line of 40 chars or fewer' (@($dps | Where-Object { $prev = $lines[$_ - 2]; $txt = [regex]::Match($lines[$_ - 1], 'DetailPrint "([^"]*)"').Groups[1].Value
+    -not ($prev -match 'SetDetailsPrint listonly' -or ($prev -match 'SetDetailsPrint textonly' -and ($txt -eq '$FailShort' -or $txt.Replace('${APPNAME}', 'Launcher').Length -le 40))) }).Count -eq 0)
 Check 'UX-6/UI-3: log hidden, auto-close, Windows colours' ($code -match '(?m)^ShowInstDetails hide' -and $code -match '(?m)^ShowUninstDetails hide' -and $code -match '(?m)^AutoCloseWindow true' -and $code -match '(?m)^InstallColors /windows')
+Check 'UI-1: install and uninstall show one short status line, then log only' ($inst -match '(?s)^Section "Install"\s+SetShellVarContext current\s+SetDetailsPrint textonly[^\n]*\s+DetailPrint "Installing \$\{APPNAME\}\.\.\."\s+SetDetailsPrint listonly' -and $un -match '(?s)^Section "Uninstall"\s+SetShellVarContext current\s+SetDetailsPrint textonly\s+DetailPrint "Removing \$\{APPNAME\}\.\.\."\s+SetDetailsPrint listonly' -and $nsi -notmatch 'SetDetailsPrint both')
 Check 'UI-4: XPStyle on' ($code -match '(?m)^XPStyle on')
 Check 'UX-6/UI-6: success box has an info icon and plain copy' ($inst -match 'MessageBox MB_OK\|MB_ICONINFORMATION "\$\{APPNAME\} is \$1 and open now\.\$\\n\$\\nTo open it later: click Start and type \$\{APPNAME\}\.')
 Check 'UX-6: uninstall ends with a removed box and auto-closes' ($un -match 'MB_ICONINFORMATION "\$\{APPNAME\} was removed for this Windows user\."' -and $un -match 'SetAutoClose true')

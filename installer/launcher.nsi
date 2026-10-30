@@ -126,7 +126,7 @@ FunctionEnd
     ${Else}
       SetDetailsPrint listonly       ; status line: 40 chars or fewer
       DetailPrint "Not removed (links left inside): ${dir}"
-      SetDetailsPrint both
+      SetDetailsPrint listonly
     ${EndIf}
   ${EndIf}
 !macroend
@@ -265,7 +265,7 @@ Function Fail   ; $R9 = message. Leaves the current install as it was.
   DetailPrint "$R9"
   SetDetailsPrint textonly
   DetailPrint "$FailShort"
-  SetDetailsPrint both
+  SetDetailsPrint listonly
   !ifdef DEBUGLOG
   FileOpen $9 "$TEMP\bl-debug.txt" a
   FileWrite $9 "$R9$\r$\n"
@@ -278,6 +278,9 @@ FunctionEnd
 
 Section "Install"
   SetShellVarContext current
+  SetDetailsPrint textonly                      ; UI-1: one short status line; every step goes to the hidden log only
+  DetailPrint "Installing ${APPNAME}..."
+  SetDetailsPrint listonly
   InitPluginsDir
   ; Stop only a launcher started from this install folder (powershell.exe ... <dest>\Launcher.ps1), like the IExpress installer.
   System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$INSTDIR")i'
@@ -526,6 +529,9 @@ FunctionEnd
 
 Section "Uninstall"
   SetShellVarContext current
+  SetDetailsPrint textonly
+  DetailPrint "Removing ${APPNAME}..."
+  SetDetailsPrint listonly
   System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$INSTDIR")i'
   nsExec::ExecToLog `${PS} "& {${STOP_LAUNCHER}}"`
   Pop $0
@@ -572,7 +578,7 @@ Section "Uninstall"
   ${Else}
     SetDetailsPrint listonly
     DetailPrint "Not touched (it is a link): $LOCALAPPDATA\ButtonLauncher"
-    SetDetailsPrint both
+    SetDetailsPrint listonly
   ${EndIf}
   ; Same as the IExpress uninstaller: the whole folder goes, including buttons.json and pictures.
   SetOutPath "$TEMP"
