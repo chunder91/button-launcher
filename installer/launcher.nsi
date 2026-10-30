@@ -136,7 +136,7 @@ Var Keep
 Var WantDesk
 Var IsUpdate                    ; 1 = an existing Launcher install is being updated
 Var ShortDir                    ; $INSTDIR for messages, shortened to AppData\Local\... when it is under the profile
-Var NoReopen                    ; 1 = Fail must not reopen (a file was in use, so Launcher may still be running)
+Var NoReopen                    ; Fail must not reopen: 1 = a file was in use (Launcher may still be running), 2 = the install folder has a link
 Var Elevated                    ; 1 = Setup runs elevated (M24-L1): never start Launcher from here, it would run as admin
 Var FailShort                   ; status-line text for Fail (40 chars or fewer)
 
@@ -267,13 +267,19 @@ FunctionEnd
 
 Function Fail   ; $R9 = message. Leaves the current install as it was.
   ; UX-2: Setup closed the running launcher; on an update, open the (unchanged) install again.
+  ; Recheck 2: when it is not reopened, say so in words that match what happened.
   ${If} $IsUpdate = 1
-  ${AndIf} $NoReopen = 0
-  ${AndIf} $Elevated = 0
   ${AndIf} ${FileExists} "$INSTDIR\ButtonLauncher.exe"
-    SetDetailsPrint listonly                    ; UI: keep "Execute: ..." out of the header
-    Exec '"$INSTDIR\ButtonLauncher.exe"'
-    StrCpy $R9 "$R9$\n$\n${APPNAME} has been opened again, so you can keep using it."
+    ${If} $NoReopen = 0
+    ${AndIf} $Elevated = 0
+      SetDetailsPrint listonly                  ; UI: keep "Execute: ..." out of the header
+      Exec '"$INSTDIR\ButtonLauncher.exe"'
+      StrCpy $R9 "$R9$\n$\n${APPNAME} has been opened again, so you can keep using it."
+    ${ElseIf} $NoReopen = 1                     ; file in use: Setup can't tell whether Launcher is still open
+      StrCpy $R9 "$R9$\n$\nIf ${APPNAME} is closed right now, click Start and type ${APPNAME} to open it again."
+    ${Else}                                     ; elevated, or a link: Setup closed it and did not reopen it
+      StrCpy $R9 "$R9$\n$\n${APPNAME} is closed right now. To open it again, click Start and type ${APPNAME}."
+    ${EndIf}
   ${EndIf}
   ; UI-1: the full text goes to the log and the box; the header status line gets 40 chars or fewer.
   SetDetailsPrint listonly
@@ -343,8 +349,8 @@ Section "Install"
     ${If} $R5 = 1
     ${OrIf} $R8 > 0
       RMDir "$Stage"
-      StrCpy $NoReopen 1                        ; M24-I1: never start an exe from a linked install folder
-      StrCpy $R9 "${APPNAME} could not be updated: the install folder is, or contains a shortcut-style link, and links are never copied or followed.$\n$\n$ShortDir$\n$\nYour current install was not changed. Ask your IT contact for help."
+      StrCpy $NoReopen 2                        ; M24-I1: never start an exe from a linked install folder
+      StrCpy $R9 "${APPNAME} could not be updated. Its folder has a link in it, and Setup won't update through a link to keep your files safe:$\n$\n$ShortDir$\n$\nYour current install was not changed. Ask your IT contact for help."
       Call Fail
     ${EndIf}
     ClearErrors
