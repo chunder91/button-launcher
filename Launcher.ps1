@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.0'
+$global:AppVersion   = '1.4.1'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -1165,7 +1165,8 @@ function global:Panel-Menu($p, $menu) {
     [void]$hs.Children.Add($h1); [void]$hs.Children.Add($h2); $setup.Header = $hs
     [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
     if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" }) }   # installed copies ship without the builder
-    [void](Add-MenuItem $setup 'View-only password (for viewing computers)...' { [void](Show-VncPasswordDialog $null) })
+    [void](Add-MenuItem $setup 'Allowed computers (admin)...' { Show-VncAllowedDialog $null })   # v1.4.1: elevated save (UAC)
+    [void](Add-MenuItem $setup 'View-only password (optional, only if your computers need one)...' { [void](Show-VncPasswordDialog $null) })
     [void](Add-MenuItem $setup 'Unread email count...' { [void](Show-MailSetupDialog $null) })   # v1.4.0, opt-in
     if (-not @($p.items | Where-Object { Test-CustomSlot $_ }).Count) {
         [void](Add-MenuItem $setup 'Add the row of 2 custom buttons' { if (Add-CustomRow $p.items) { Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure()) }
@@ -2004,7 +2005,7 @@ function global:Test-VncBannerText([string]$t) { $t -cmatch '^RFB \d{3}\.\d{3}$'
 function global:Get-VncDisplayName([string]$n, [int]$max = 40) {   # L5: shown with an ellipsis, never cut in config
     $t = Get-SafeText $n 1000; if ($t.Length -gt $max) { return ($t.Substring(0, $max - 1) + [char]0x2026) }; return $t
 }
-function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$configFile) {   # an argument list; no shell
+function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$configFile, [string]$dsm = '') {   # an argument list; no shell
     if ($configFile) {
         if ($configFile -notmatch '^[A-Za-z]:\\[^"]+\.vnc$') { throw 'bad config path' }
         $a = @('-config', ('"' + $configFile + '"'))
@@ -2015,6 +2016,7 @@ function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$c
     }
     $a += '-autoscaling'
     if ($viewOnly) { $a += '-viewonly' }
+    if ($dsm) { if ($dsm -cnotmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\.dsm$') { throw 'bad plugin name' }; $a += @('-dsmplugin', ('"' + $dsm + '"')) }   # v1.4.1: the encryption plugin UltraVNC's own dialog would use
     return $a
 }
 function global:ConvertTo-VncObfuscated([byte[]]$pw) {   # VNC password file form: first 8 bytes, zero padded, DES with the fixed key, as 16 hex digits
@@ -2128,7 +2130,7 @@ function global:Test-VncPickerButton($btn) {   # L2: the explicit flag, else onl
     if ((([string]$btn.label) -replace '\s+', ' ').Trim() -ne 'VIEW REGISTER') { return $false }
     return (([string]$btn.askTitle) -eq 'Pick the UltraVNC Viewer (vncviewer.exe)' -or (@($btn.detect.lnkNames) -contains 'UltraVNC Viewer'))
 }
-function global:Test-VncUsePassword($row, [bool]$hasSecret) { $hasSecret -and [bool]$row.session -and (Test-VncBannerText ([string]$row.banner)) }   # L4 + V2-I1: only to a host that greeted RFB in this session's scan
+function global:Test-VncUsePassword($row, [bool]$hasSecret) { $hasSecret -and (Test-VncHost ([string]$row.host)) -and [bool](Get-VncPort $row.port) }   # v1.4.1 (Charles): any computer in the admin's allowed list (the only rows the picker has); was: only hosts seen in this session's scan
 
 # ----- view-only password: one shared value, DPAPI CurrentUser + app entropy, in vnc-viewonly.dat beside buttons.json -----
 function global:Get-VncSecretPath { Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-viewonly.dat' }
@@ -2274,7 +2276,7 @@ function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, A
 function global:Show-VncPasswordDialog($owner) {   # set, replace or clear the shared view-only password; returns $true when one is saved
     $dlg = New-D2Dialog 'View-only password' $owner 380; $d = $dlg.win; $sp = $dlg.body   # Kern 6: D2 dialog
     $t = New-D2Label ''
-    $t.Text = "If the computers you view have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). If View only can't connect later, change it in Setup > View-only password (for viewing computers)..."
+    $t.Text = "If the computers you view have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). Leave it empty if your computers allow viewing without a password."
     [void]$sp.Children.Add($t)
     $st = New-Object System.Windows.Controls.TextBlock; $st.Margin = '0,8,0,0'; $st.Foreground = Brush '#A0A0A0'; $st.FontSize = 12; $st.TextWrapping = 'Wrap'
     $st.Text = if (Test-VncSecret) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only connects straight through.' }
@@ -2319,18 +2321,219 @@ function global:Find-VncViewer($btn) {   # local fixed path to vncviewer.exe, or
     if ($f -ne $t) { Set-Prop $btn 'target' $f; Save-Config }
     return $f
 }
+# ---------- v1.4.1 allowed computers (Charles 4:09 PM, option A) ----------
+# One admin-only list: %ProgramData%\ButtonLauncher\vnc-allowed.json  { "version": 1, "computers": [ { "name", "host", "port" } ] }
+# Untrusted input on read and on save: names 1-40 of [A-Za-z0-9 ._#()-], hosts IPv4 or RFC-1123, port 1-65535, at most 50, no duplicates, 64 KB cap.
+# The picker shows only this list (no network scan). Missing, empty, unreadable or unprotected file = nobody allowed yet.
+# Saving runs one elevated powershell.exe (UAC) whose script is a constant here (-EncodedCommand); the only data in it is base64 of the validated JSON.
+$global:VncAllowedMax = 50
+function global:Get-VncAllowedPath { Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ButtonLauncher\vnc-allowed.json' }
+function global:Test-VncAllowedName([string]$n) { $n -cmatch '^[A-Za-z0-9][A-Za-z0-9 ._#()-]{0,39}$' }
+function global:Test-VncAllowedHost([string]$h) {   # IPv4, or an RFC-1123 hostname (labels 1-63 of letters, digits, '-', not at either end); no trailing dot
+    if (-not $h -or $h.EndsWith('.')) { return $false }
+    return ((Test-VncHost $h) -and ($h -cmatch '^[A-Za-z0-9.-]+$'))
+}
+function global:ConvertTo-VncAllowedList($items) {   # @{ list = validated entries; bad = count skipped }
+    $list = New-Object System.Collections.ArrayList; $bad = 0; $seen = @{}
+    foreach ($e in @($items)) {
+        if ($null -eq $e) { $bad++; continue }
+        $n = ([string]$e.name).Trim(); $h = ([string]$e.host).Trim(); $p = if ($null -eq $e.port -or [string]$e.port -eq '') { 5900 } else { Get-VncPort $e.port }
+        if (-not (Test-VncAllowedName $n) -or -not (Test-VncAllowedHost $h) -or -not $p -or $list.Count -ge $global:VncAllowedMax) { $bad++; continue }
+        $k = ('{0}:{1}' -f $h.ToLowerInvariant(), $p); if ($seen[$k]) { $bad++; continue }; $seen[$k] = $true
+        [void]$list.Add([pscustomobject]@{ name = $n; host = $h; port = [int]$p }) }
+    return @{ list = @($list); bad = $bad }
+}
+function global:ConvertFrom-VncAllowedJson([string]$text) {   # @{ list; bad; error } ; never throws
+    if ($null -eq $text -or $text.Length -gt 65536) { return @{ list = @(); bad = 0; error = 'too big' } }
+    try { $o = $text | ConvertFrom-Json } catch { return @{ list = @(); bad = 0; error = 'not valid JSON' } }
+    if (-not $o -or -not $o.PSObject.Properties['computers']) { return @{ list = @(); bad = 0; error = $(if ([string]::IsNullOrWhiteSpace($text)) { '' } else { 'no computers list' }) } }
+    $r = ConvertTo-VncAllowedList @($o.computers); return @{ list = $r.list; bad = $r.bad; error = '' }
+}
+function global:ConvertTo-VncAllowedJson($list) {   # compact JSON of already validated entries
+    $c = @(foreach ($e in @($list)) { [ordered]@{ name = [string]$e.name; host = [string]$e.host; port = [int]$e.port } })
+    return (ConvertTo-Json -InputObject ([ordered]@{ version = 1; computers = $c }) -Depth 4 -Compress)
+}
+function global:ConvertFrom-VncAllowedText([string]$text) {   # editor: one 'Name, address[:port]' per line -> @{ list; error }
+    $items = @(); $i = 0
+    foreach ($line in ($text -split "`r?`n")) { $i++
+        $t = $line.Trim(); if (-not $t) { continue }
+        $parts = $t.Split(','); if ($parts.Count -ne 2) { return @{ list = @(); error = ('Line {0}: use Name, address (for example Register 1, 192.168.1.21).' -f $i) } }
+        $n = $parts[0].Trim(); $ep = ConvertTo-VncEndpoint $parts[1].Trim() 5900
+        if (-not (Test-VncAllowedName $n)) { return @{ list = @(); error = ('Line {0}: the name must be 1-40 letters, numbers, spaces or . _ # ( ) -' -f $i) } }
+        if (-not $ep -or -not (Test-VncAllowedHost $ep.host)) { return @{ list = @(); error = ('Line {0}: that address isn''t valid. Use an IP like 192.168.1.21 or a name like REG1, optionally :port.' -f $i) } }
+        $items += [pscustomobject]@{ name = $n; host = $ep.host; port = $ep.port } }
+    if ($items.Count -gt $global:VncAllowedMax) { return @{ list = @(); error = ('At most {0} computers.' -f $global:VncAllowedMax) } }
+    $r = ConvertTo-VncAllowedList $items
+    if ($r.bad) { return @{ list = @(); error = 'The same computer is listed twice.' } }
+    return @{ list = $r.list; error = '' }
+}
+function global:ConvertTo-VncAllowedText($list) { (@(foreach ($e in @($list)) { if ($e.port -eq 5900) { '{0}, {1}' -f $e.name, $e.host } else { '{0}, {1}:{2}' -f $e.name, $e.host, $e.port } }) -join "`r`n") }
+function global:Test-VncAllowedAclSafe($acl) {   # owner is Administrators or SYSTEM, and only Administrators/SYSTEM/TrustedInstaller may write
+    $okSids = @('S-1-5-32-544', 'S-1-5-18', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    try { $own = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { return $false }
+    if ($okSids -notcontains $own) { return $false }
+    $write = [int]([System.Security.AccessControl.FileSystemRights]'Write, Delete, ChangePermissions, TakeOwnership, AppendData, CreateFiles, CreateDirectories, WriteData')
+    foreach ($r in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
+        if ($r.AccessControlType -ne 'Allow') { continue }
+        if (([int]$r.FileSystemRights -band $write) -and ($okSids -notcontains $r.IdentityReference.Value)) { return $false } }
+    return $true
+}
+function global:Read-VncAllowed {   # @{ list; state = 'ok' | 'missing' | 'unsafe' | 'bad' ; bad }
+    $p = Get-VncAllowedPath
+    try {
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { return @{ list = @(); state = 'missing'; bad = 0 } }
+        $fi = Get-Item -LiteralPath $p; $di = $fi.Directory
+        if (($fi.Attributes -band [IO.FileAttributes]::ReparsePoint) -or ($di.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return @{ list = @(); state = 'unsafe'; bad = 0 } }
+        if (-not (Test-VncAllowedAclSafe ([IO.File]::GetAccessControl($p))) -or -not (Test-VncAllowedAclSafe ([IO.Directory]::GetAccessControl($di.FullName)))) { return @{ list = @(); state = 'unsafe'; bad = 0 } }
+        if ($fi.Length -gt 65536) { return @{ list = @(); state = 'bad'; bad = 0 } }
+        $r = ConvertFrom-VncAllowedJson ([IO.File]::ReadAllText($p))
+        return @{ list = $r.list; state = $(if ($r.error) { 'bad' } else { 'ok' }); bad = $r.bad }
+    } catch { Write-LauncherLog ('allowed computers list unreadable: ' + $_.Exception.GetType().Name); return @{ list = @(); state = 'bad'; bad = 0 } }
+}
+# Elevated writer: constants only. __DATA__ is replaced by base64 (A-Z a-z 0-9 + / =) of the validated JSON; it re-checks every entry before writing.
+$global:VncAllowedWriterScript = @'
+$ErrorActionPreference = 'Stop'
+try {
+    $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__DATA__'))
+    if ($json.Length -gt 65536) { exit 3 }
+    $o = $json | ConvertFrom-Json
+    $out = @(); $seen = @{}
+    foreach ($e in @($o.computers)) {
+        $n = [string]$e.name; $h = [string]$e.host; $p = [int]$e.port
+        if ($n -cnotmatch '^[A-Za-z0-9][A-Za-z0-9 ._#()-]{0,39}$' -or $h.Length -gt 253 -or $p -lt 1 -or $p -gt 65535) { exit 3 }
+        if ($h -cmatch '^[\d.]+$') { if ($h -cnotmatch '^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$') { exit 3 } }
+        elseif ($h -cnotmatch '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$') { exit 3 }
+        $k = $h.ToLowerInvariant() + ':' + $p; if ($seen[$k]) { exit 3 }; $seen[$k] = 1
+        $out += [ordered]@{ name = $n; host = $h; port = $p } }
+    if ($out.Count -gt 50) { exit 3 }
+    $text = ConvertTo-Json -InputObject ([ordered]@{ version = 1; computers = $out }) -Depth 4 -Compress
+    $dir = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ButtonLauncher'
+    if (Test-Path -LiteralPath $dir) { if ((Get-Item -LiteralPath $dir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 4 } }
+    else { [void][IO.Directory]::CreateDirectory($dir) }
+    $adm = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'; $sys = New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'; $usr = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
+    $ds = New-Object Security.AccessControl.DirectorySecurity
+    $ds.SetOwner($adm); $ds.SetAccessRuleProtection($true, $false)
+    foreach ($x in @(@($adm, 'FullControl'), @($sys, 'FullControl'), @($usr, 'ReadAndExecute'))) {
+        $ds.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($x[0], $x[1], 'ContainerInherit, ObjectInherit', 'None', 'Allow'))) }
+    [IO.Directory]::SetAccessControl($dir, $ds)
+    foreach ($c in Get-ChildItem -LiteralPath $dir -Force) { if ($c.Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 4 } }
+    $file = Join-Path $dir 'vnc-allowed.json'; $tmp = Join-Path $dir 'vnc-allowed.json.tmp'
+    [IO.File]::WriteAllText($tmp, $text, (New-Object Text.UTF8Encoding $false))
+    $fs = New-Object Security.AccessControl.FileSecurity
+    $fs.SetOwner($adm); $fs.SetAccessRuleProtection($true, $false)
+    foreach ($x in @(@($adm, 'FullControl'), @($sys, 'FullControl'), @($usr, 'ReadAndExecute'))) { $fs.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($x[0], $x[1], 'Allow'))) }
+    [IO.File]::SetAccessControl($tmp, $fs)
+    if (Test-Path -LiteralPath $file) { [IO.File]::Replace($tmp, $file, $null) } else { [IO.File]::Move($tmp, $file) }
+    [IO.File]::SetAccessControl($file, $fs)
+    exit 0
+} catch { exit 2 }
+'@
+function global:Get-VncAllowedWriterCommand($list) {   # the -EncodedCommand text for a validated list, or $null when too long for one command line
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-VncAllowedJson $list)))
+    if ($b64 -cnotmatch '^[A-Za-z0-9+/=]*$') { return $null }
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($global:VncAllowedWriterScript.Replace('__DATA__', $b64)))
+    if ($enc.Length -gt 30000) { return $null }
+    return $enc
+}
+function global:Save-VncAllowedElevated($list) {   # $true when saved; Windows asks for an administrator (UAC)
+    $enc = Get-VncAllowedWriterCommand $list
+    if (-not $enc) { [System.Windows.MessageBox]::Show('That list is too long to save. Use fewer or shorter names.', 'Allowed computers') | Out-Null; return $false }
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    try { $p = Start-Process -FilePath $ps -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $enc) }
+    catch { return $false }   # UAC cancelled
+    if ($p.ExitCode -ne 0) { Write-LauncherLog ('allowed computers save failed, code ' + $p.ExitCode); [System.Windows.MessageBox]::Show("Couldn't save the list (code $($p.ExitCode)).", 'Allowed computers') | Out-Null; return $false }
+    return $true
+}
+function global:Show-VncAllowedDialog($owner) {   # Setup > Allowed computers (admin)...
+    $cur = Read-VncAllowed
+    $dlg = New-D2Dialog 'Allowed computers (admin)' $owner 440; $d = $dlg.win; $sp = $dlg.body
+    [void]$sp.Children.Add((New-D2Label "View Register shows only these computers, for every Windows user on this PC. One per line: Name, address (an IP or computer name, optionally :port). Saving asks Windows for an administrator."))
+    $st = New-D2Label '' '#A0A0A0' 12
+    $st.Text = switch ($cur.state) { 'unsafe' { 'The saved list is not protected, so it is ignored. Save again to fix it.' } 'bad' { 'The saved list could not be read. Save again to replace it.' } default { '{0} of {1} allowed.' -f @($cur.list).Count, $global:VncAllowedMax } }
+    [void]$sp.Children.Add($st)
+    $tb = New-Object System.Windows.Controls.TextBox; $tb.AcceptsReturn = $true; $tb.TextWrapping = 'NoWrap'; $tb.MaxLength = 6000; $tb.Text = ConvertTo-VncAllowedText $cur.list
+    $tb.Height = 200; [System.Windows.Controls.ScrollViewer]::SetVerticalScrollBarVisibility($tb, 'Auto'); [System.Windows.Automation.AutomationProperties]::SetName($tb, 'Allowed computers, one per line')
+    $f = New-D2Field $tb; $f.Height = 210; $tb.VerticalContentAlignment = 'Top'; $tb.Padding = '8,6'; [void]$sp.Children.Add($f)
+    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'
+    $bSave = New-D2Button 'Save as administrator...' 'Green' $dlg; $bCancel = New-D2Button 'Cancel' 'Chip' $dlg; $bCancel.IsCancel = $true
+    $bSave.Add_Click({
+        $r = ConvertFrom-VncAllowedText $tb.Text
+        if ($r.error) { $st.Text = $r.error; $st.Foreground = Brush '#F59E0B'; [void]$tb.Focus(); return }
+        if (Save-VncAllowedElevated $r.list) { $d.Close() } else { $st.Text = 'Not saved.'; $st.Foreground = Brush '#F59E0B' } }.GetNewClosure())
+    $bCancel.Add_Click({ $d.Close() }.GetNewClosure())
+    [void]$row.Children.Add($bSave); [void]$row.Children.Add($bCancel); [void]$sp.Children.Add($row)
+    $d.Add_ContentRendered({ [void]$tb.Focus() }.GetNewClosure())
+    [void]$d.ShowDialog()
+}
+# Quick online check of the allowed computers only: 300 ms connect, at most 12 bytes read, never replies.
+$global:VncAllowedCheckScript = {
+    param($items, [int]$timeoutMs, $sync)
+    $batch = @()
+    try {
+        foreach ($it in $items) { $c = New-Object System.Net.Sockets.TcpClient; $b = @{ key = $it.key; c = $c; ar = $null }; $batch += $b
+            try { $b.ar = $c.BeginConnect([string]$it.host, [int]$it.port, $null, $null) } catch {} }
+        $deadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
+        foreach ($b in $batch) {
+            if ($sync.cancel -or -not $b.ar) { continue }
+            $left = [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+            $ok = $false; try { $ok = $b.ar.AsyncWaitHandle.WaitOne($left) -and $b.c.Connected } catch {}
+            if (-not $ok) { continue }
+            $buf = New-Object byte[] 12; $got = 0
+            try { $s = $b.c.GetStream(); $s.ReadTimeout = $timeoutMs
+                  while ($got -lt 12) { $n = $s.Read($buf, $got, 12 - $got); if ($n -le 0) { break }; $got += $n } } catch {}
+            if ($got -eq 12 -and ([Text.Encoding]::ASCII.GetString($buf, 0, 12) -cmatch '^RFB \d{3}\.\d{3}\n$')) { $sync.found.Enqueue($b.key) } }
+    } finally { foreach ($b in $batch) { try { $b.c.Close() } catch {} }; $sync.done = $true }
+}
+function global:Get-VncAllowedRows($list, $online, [bool]$checking) {   # picker rows for the allowed list, sorted by name
+    $rows = foreach ($e in @($list)) { $k = '{0}:{1}' -f $e.host, $e.port
+        $r = [pscustomobject]@{ host = $e.host; port = $e.port; name = $e.name; dnsName = $false; banner = ''; pinned = $false; fav = $false; seen = [bool]$online[$k]; session = [bool]$online[$k] }
+        $v = Get-VncRowView $r $true $false
+        $v.star = ''; $v.starTip = $null; $v.seen = $(if ($online[$k]) { 'Online' } elseif ($checking) { 'Checking...' } else { 'Offline' })
+        $v.nameFg = '#FFFFFF'; $v.addrFg = $(if ($online[$k] -or $checking) { '#FFFFFF' } else { '#A0A0A0' })
+        $v }
+    return @($rows | Sort-Object { $_.row.name })
+}
+# UltraVNC's own per-computer settings (%APPDATA%\UltraVNC\<host>-<display or port>.vnc, written by its connection dialog) can name a DSM
+# encryption plugin. A command-line connect never opens that dialog, so the plugin was lost (v1.4.1 Interact refusal). Only the two plugin
+# keys are read; nothing else in that file (it can hold a password) is kept or used.
+function global:Get-VncHostSettingsPath([string]$h, [int]$port) {
+    $disp = $port - 5900; $n = if ($disp -gt 0 -and $disp -lt 100) { $disp } else { $port }
+    $hh = if ($h.Length -gt 15) { $h.Substring(0, 15) } else { $h }
+    return (Join-Path (Join-Path $env:APPDATA 'UltraVNC') ('{0}-{1}.vnc' -f $hh, $n))
+}
+function global:Get-VncDsmFromLines($lines) {   # plugin file name or ''; only UseDSMPlugin / DSMPlugin in [options] are looked at
+    $use = $false; $name = ''; $sec = ''
+    foreach ($l in @($lines)) { $t = ([string]$l).Trim()
+        if ($t -match '^\[(.+)\]$') { $sec = $matches[1].ToLowerInvariant(); continue }
+        if ($sec -ne 'options') { continue }
+        if ($t -match '^(?i)UseDSMPlugin\s*=\s*(\d+)$') { $use = [int]$matches[1] -ne 0 }
+        elseif ($t -match '^(?i)DSMPlugin\s*=\s*(.*)$') { $name = $matches[1].Trim() } }
+    if ($use -and $name -cmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\.dsm$') { return $name }
+    return ''
+}
+function global:Get-VncHostDsm([string]$h, [int]$port) {
+    try { $p = Get-VncHostSettingsPath $h $port
+          if (-not (Test-Path -LiteralPath $p -PathType Leaf) -or (Get-Item -LiteralPath $p).Length -gt 65536) { return '' }
+          return (Get-VncDsmFromLines @([IO.File]::ReadAllLines($p) | Where-Object { $_ -match '^\s*\[|^(?i)\s*(UseDSMPlugin|DSMPlugin)\s*=' })) } catch { return '' }
+}
+function global:Get-VncViewerInfo([string]$exe) {   # 'UltraVNC 1.5.0.0 (64-bit)' style text for the log; $null product = unknown
+    try { $vi = (Get-Item -LiteralPath $exe).VersionInfo; $prod = [string]$vi.ProductName; $ver = [string]$vi.FileVersion } catch { $prod = ''; $ver = '' }
+    return @{ product = (Get-SafeText $prod 60); version = (Get-SafeText $ver 30); ultra = ($prod -match 'Ultr@?VNC|UltraVNC') }
+}
 function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptblock]$OnEarlyExit) {
     $h = [string]$row.host; $p = Get-VncPort $row.port
     if (-not (Test-VncHost $h) -or -not $p) { [System.Windows.MessageBox]::Show("That address isn't valid.", 'View Register') | Out-Null; return $false }
     $exe = Find-VncViewer $btn; if (-not $exe) { return $false }
     $file = $null; $hex = $null
     try {
-        if ($viewOnly) {   # Interact never uses the saved password
-            if (-not (Test-VncSecret) -and -not [bool]$global:cfg.vnc.viewOnlyAsked) { [void](Show-VncPasswordDialog $owner) }   # first View only: ask once
+        if ($viewOnly) {   # Interact never uses the saved password. v1.4.1: View only never asks; the saved one (optional) is passed silently
             if (Test-VncUsePassword $row (Test-VncSecret)) {
                 $hex = Get-VncSecretHex
                 if ($hex) { $file = New-VncTempConfig $h $p $hex; $hex = $null } } }
-        $proc = Start-Process -FilePath $exe -ArgumentList (Get-VncViewerArgs $h $p $viewOnly $file) -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+        $dsm = Get-VncHostDsm $h $p; $vi = Get-VncViewerInfo $exe
+        Write-LauncherLog ('VNC {0}: {1}::{2} viewer "{3}" {4}{5}{6}' -f $(if ($viewOnly) { 'view only' } else { 'interact' }), $h, $p, $vi.product, $vi.version, $(if ($dsm) { ' plugin ' + $dsm } else { '' }), $(if ($vi.ultra) { '' } else { ' (NOT UltraVNC)' }))
+        if (-not $vi.ultra -and $owner -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke(('The picked viewer is "{0}", not UltraVNC. Pick UltraVNC''s vncviewer.exe if it can''t connect.' -f $vi.product)) }
+        $proc = Start-Process -FilePath $exe -ArgumentList (Get-VncViewerArgs $h $p $viewOnly $file $dsm) -WorkingDirectory (Split-Path -Parent $exe) -PassThru
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit }
         return $true
     } catch {
@@ -2620,122 +2823,84 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
         $a = New-Object System.Windows.Controls.MenuItem; $a.Header = 'View only'; $a.InputGestureText = 'Enter'; $a.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure()); [void]$m.Items.Add($a)
         $b = New-Object System.Windows.Controls.MenuItem; $b.Header = 'Interact'; $b.InputGestureText = 'Ctrl+Enter'; $b.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure()); [void]$m.Items.Add($b)
         [void]$m.Items.Add((New-Object System.Windows.Controls.Separator)) }
+    if ($ui.allowedMode) { $m.Items.RemoveAt($m.Items.Count - 1) }   # v1.4.1: the admin's list can't be renamed, pinned or removed here
+    else {
     $r = New-Object System.Windows.Controls.MenuItem; $r.Header = 'Rename...'; $r.InputGestureText = 'F2'; $r.IsEnabled = [bool]$s; $r.Add_Click({ $ui.rename.Invoke() }.GetNewClosure()); [void]$m.Items.Add($r)
     $p = New-Object System.Windows.Controls.MenuItem; $p.Header = $(if ($s -and $s.row.pinned) { 'Unpin' } else { 'Pin' }); $p.InputGestureText = 'Space'; $p.IsEnabled = [bool]$s; $p.Add_Click({ $ui.togglePin.Invoke() }.GetNewClosure()); [void]$m.Items.Add($p)
     [void]$m.Items.Add((New-Object System.Windows.Controls.Separator))
     $d = New-Object System.Windows.Controls.MenuItem; $d.Header = 'Remove from favourites'; $d.InputGestureText = 'Del'
     $d.IsEnabled = [bool]($s -and $s.row.fav); if (-not $d.IsEnabled) { $d.ToolTip = 'Only saved computers can be removed'; [System.Windows.Controls.ToolTipService]::SetShowOnDisabled($d, $true) }
-    $d.Add_Click({ $ui.remove.Invoke() }.GetNewClosure()); [void]$m.Items.Add($d)
+    $d.Add_Click({ $ui.remove.Invoke() }.GetNewClosure()); [void]$m.Items.Add($d) }
     try { $m.Style = $ui.win.FindResource([System.Windows.Controls.ContextMenu]); $ms = $ui.win.FindResource([System.Windows.Controls.MenuItem])   # a code-built menu doesn't inherit the window's implicit styles
           foreach ($it in $m.Items) { if ($it -is [System.Windows.Controls.MenuItem]) { $it.Style = $ms } } } catch {}
     $m.Foreground = Brush '#FFFFFF'; $m.FontFamily = $global:UiFont; $m.FontSize = 14   # Kern Blocker: a popup doesn't inherit the window's text colour or font
     return $m
 }
-function global:Show-VncPicker($btn) {
+function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed computers; no network scan, no Add/Remove/Rescan
     if ($global:vncPicker -and $global:vncPicker.win.IsVisible) { $global:vncPicker.win.Activate() | Out-Null; return }
     Remove-VncTempLeftovers
-    $ui = @{ btn = $btn; state = (Get-VncState $global:cfg); cachePath = (Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-cache.json'); scan = $null; hosts = @(); fresh = $false; scanning = $false; timer = $null; busy = $null; sessionSeen = @{}; ageText = ''; stale = $false; scanned = $false }
-    $cache = Read-VncCache $ui.cachePath; $ui.hosts = @($cache.hosts)
-    $ui.ageText = Get-VncAgeText $cache.time ([datetime]::UtcNow); $ui.stale = (Test-VncCacheStale $cache ([datetime]::UtcNow)) -and $cache.time -gt [datetime]::MinValue
+    $al = Read-VncAllowed
+    $ui = @{ btn = $btn; allowedMode = $true; allowed = @($al.list); online = @{}; checking = $false; check = $null; timer = $null }
     try { $w = [Windows.Markup.XamlReader]::Parse($global:VncPickerXaml) }
     catch { Write-LauncherLog ('VNC picker window could not load: ' + $_.Exception.Message)
             [System.Windows.MessageBox]::Show("The computer finder couldn't open.`n`n" + $_.Exception.Message + "`n`nDetails are in launcher-error.log.", 'View Register', 'OK', 'Error') | Out-Null; return }
     $w.FontFamily = $global:UiFont
     $ui.win = $w
     $lv = $w.FindName('List'); $status = $w.FindName('Status'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
-    $bView = $w.FindName('View'); $bInt = $w.FindName('Interact'); $bScan = $w.FindName('Rescan'); $bAdd = $w.FindName('Add'); $bMore = $w.FindName('More')
+    $bView = $w.FindName('View'); $bInt = $w.FindName('Interact')
+    foreach ($n in 'Rescan', 'Add', 'More') { $w.FindName($n).Visibility = 'Collapsed' }
     $ui.list = $lv
-    try { [System.Windows.Automation.AutomationProperties]::SetLiveSetting($status, 'Polite') } catch {}   # .NET 4.7.1+
-    $ui.statusTip = [Action[string]]{ param($t) $status.ToolTip = $t }.GetNewClosure()
+    try { [System.Windows.Automation.AutomationProperties]::SetLiveSetting($status, 'Polite') } catch {}
     $ui.setStatus = [Action[string]]{ param($s) $status.Text = $s
         try { $pe = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($status); if ($pe) { $pe.RaiseAutomationEvent('LiveRegionChanged') } } catch {} }.GetNewClosure()
-    $ui.busy = [Action[bool]]{ param($on) $busyBar.IsIndeterminate = $on; $busyBar.Visibility = $(if ($on) { 'Visible' } else { 'Hidden' }); $bScan.IsEnabled = -not $on }.GetNewClosure()
-    $ui.showEmpty = [Action[string]]{ param($kind)
-        if ($kind -eq 'nonet') { $eT.Text = "This PC isn't connected to a local network we can scan (Wi-Fi or cable)."; $eB.Text = "Connect to Wi-Fi or a network cable, then press Rescan (F5). Or use Add... to type a computer's address." }
-        elseif ($kind -eq 'notscanned') { $eT.Text = 'Not scanned yet.'; $eB.Text = 'Look for computers you can view on this network? Press Rescan (F5), or use Add... to type an address.' }   # Squint Major
-        else { $eT.Text = 'No computers found.'; $eB.Text = 'Check the computer is turned on and on the same network as this PC, then press Rescan (F5). Or use Add... to type its address.' }
-        if ($lv.Items.Count -eq 0) { $empty.Visibility = 'Visible'; [void]$bAdd.Focus() } }.GetNewClosure()
     $ui.refresh = [Action]{
         $sel = $lv.SelectedItem; $lv.Items.Clear()
-        foreach ($r in (Merge-VncRows $ui.state.favorites $ui.hosts)) {
-            $r | Add-Member -NotePropertyName session -NotePropertyValue ([bool]$ui.sessionSeen[('{0}:{1}' -f $r.host, $r.port)]) -Force
-            $v = Get-VncRowView $r ([bool]$ui.fresh) ([bool]$ui.scanning) $ui.ageText ([bool]$ui.stale)
-            [void]$lv.Items.Add($v); if ($sel -and $sel.row.host -eq $r.host -and $sel.row.port -eq $r.port) { $lv.SelectedItem = $v } }
+        foreach ($v in (Get-VncAllowedRows $ui.allowed $ui.online ([bool]$ui.checking))) { [void]$lv.Items.Add($v); if ($sel -and $sel.row.host -eq $v.row.host -and $sel.row.port -eq $v.row.port) { $lv.SelectedItem = $v } }
         if (-not $lv.SelectedItem -and $lv.Items.Count) { $lv.SelectedIndex = 0 }
         $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has
         if ($lv.Items.Count -gt 0) { $empty.Visibility = 'Collapsed' }
-        elseif (-not $ui.scanning) { $ui.showEmpty.Invoke($(if ($ui.scanned -or @($ui.hosts).Count -gt 0) { 'none' } else { 'notscanned' })) }   # never 'No registers found' before any scan
-    }.GetNewClosure()
+        else { $eT.Text = 'No computers have been allowed yet. Ask your administrator.'
+               $eB.Text = $(if ($al.state -eq 'unsafe') { "The allowed list on this PC isn't protected, so it is ignored. An administrator can save it again in Setup > Allowed computers (admin)..." } else { 'An administrator adds them in Setup > Allowed computers (admin)...' })
+               $empty.Visibility = 'Visible' } }.GetNewClosure()
+    $ui.startCheck = [Action]{   # F5 too: ~300 ms check of only the allowed computers
+        if ($ui.checking -or @($ui.allowed).Count -eq 0) { return }
+        $sync = [hashtable]::Synchronized(@{ cancel = $false; done = $false; found = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]) })
+        $items = @(foreach ($e in $ui.allowed) { @{ key = ('{0}:{1}' -f $e.host, $e.port); host = $e.host; port = $e.port } })
+        try { $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open(); $ps = [powershell]::Create(); $ps.Runspace = $rs
+              [void]$ps.AddScript($global:VncAllowedCheckScript).AddArgument($items).AddArgument($global:VncTimeoutMs).AddArgument($sync)
+              $ui.check = @{ sync = $sync; ps = $ps; rs = $rs; handle = $ps.BeginInvoke() } }
+        catch { Write-LauncherLog ('VNC online check could not start: ' + $_.Exception.Message); return }
+        $ui.online = @{}; $ui.checking = $true; $busyBar.IsIndeterminate = $true; $busyBar.Visibility = 'Visible'; $ui.refresh.Invoke(); $ui.timer.Start() }.GetNewClosure()
+    $ui.stopCheck = [Action]{ $ui.timer.Stop(); $busyBar.IsIndeterminate = $false; $busyBar.Visibility = 'Hidden'; $ui.checking = $false
+        if ($ui.check) { $ui.check.sync.cancel = $true; try { [void]$ui.check.ps.BeginStop($null, $null) } catch {}; [void]$global:VncDeadWorkers.Add(@{ ps = $ui.check.ps; rs = $ui.check.rs }); $ui.check = $null } }.GetNewClosure()
     $ui.timer = New-Object System.Windows.Threading.DispatcherTimer; $ui.timer.Interval = [TimeSpan]::FromMilliseconds(200)
-    $ui.timer.Add_Tick({ Step-VncScan $ui }.GetNewClosure())
-    $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only password (for viewing computers)...") }.GetNewClosure()
-    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }
-        if ($vo -and (Test-VncSecret) -and -not (Test-VncUsePassword $s.row $true)) { $ui.setStatus.Invoke('The saved view-only password is only sent to computers found in this scan. The viewer will ask for it; press F5 first to use the saved one.') }
-        [void](Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw) }.GetNewClosure()
-    $ui.saveFavs = [Action]{ Save-VncFavorites $global:cfg $ui.state.favorites $ui.state.invalid; Save-Config; $ui.refresh.Invoke() }.GetNewClosure()
-    $ui.rename = [Action]{ $s = $lv.SelectedItem; if (-not $s) { return }
-        $old = [string]$s.row.name
-        $n = [Microsoft.VisualBasic.Interaction]::InputBox('Name for this computer (e.g. Register 1). Leave it empty to clear the name.', 'Rename', $old)
-        if ($n -eq '') {   # Cancel and an empty OK both return '': ask before clearing
-            if (-not $old -or [System.Windows.MessageBox]::Show(("Clear the name ""{0}""?" -f (Get-VncDisplayName $old 40)), 'Rename', 'YesNo', 'Question', 'No') -ne 'Yes') { return } }
-        [void](Set-VncFavorite $ui.state.favorites $s.row.host $s.row.port $n $null); $ui.saveFavs.Invoke() }.GetNewClosure()
-    $ui.togglePin = [Action]{ $s = $lv.SelectedItem; if (-not $s) { return }
-        [void](Set-VncFavorite $ui.state.favorites $s.row.host $s.row.port $null (-not [bool]$s.row.pinned)); $ui.saveFavs.Invoke() }.GetNewClosure()
-    $ui.remove = [Action]{ $s = $lv.SelectedItem; if (-not $s -or -not $s.row.fav) { return }
-        $nm = if ($s.row.name) { Get-VncDisplayName $s.row.name 40 } else { $s.addr }
-        if ([System.Windows.MessageBox]::Show(("Remove ""{0}"" from your saved computers?" -f $nm), 'View Register', 'YesNo', 'Question', 'No') -ne 'Yes') { return }
-        $f = $null; foreach ($x in $ui.state.favorites) { if ($x.host -eq $s.row.host -and $x.port -eq $s.row.port) { $f = $x } }
-        if ($f) { $ui.state.favorites.Remove($f) }; $ui.saveFavs.Invoke() }.GetNewClosure()
-    $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure()); $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
-    $bScan.Add_Click({ Start-VncScan $ui -Rescan }.GetNewClosure())
-    $bMore.Add_Click({
-        $bMore = $bMore   # local copy so the Opened closure below can see it (GetNewClosure copies locals only); LJ M21-I1: comment on its own line
-        $m = New-VncRowMenu $ui $false; $m.PlacementTarget = $bMore; $m.Placement = 'Top'; $m.VerticalOffset = -4   # Kern: above the row, right edges aligned, 4 px gap
-        $m.Add_Opened({ $m.HorizontalOffset = $bMore.ActualWidth - $m.ActualWidth }.GetNewClosure()); $m.IsOpen = $true }.GetNewClosure())
+    $ui.timer.Add_Tick({ $c = $ui.check; if (-not $c) { $ui.timer.Stop(); return }
+        $k = $null; while ($c.sync.found.TryDequeue([ref]$k)) { $ui.online[[string]$k] = $true }
+        if ($c.sync.done -or (Get-VncWorkerFault $c.ps ([bool]$c.sync.done))) { $ui.stopCheck.Invoke(); Clear-VncDeadWorkers
+            $n = @($ui.online.Keys).Count; $ui.refresh.Invoke(); $ui.setStatus.Invoke(('{0} of {1} online at {2}. Press F5 to check again.' -f $n, @($ui.allowed).Count, (Get-Date -Format 't'))) } }.GetNewClosure())
+    $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only password (optional)...") }.GetNewClosure()
+    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; [void](Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw) }.GetNewClosure()
+    $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure())
+    $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has }.GetNewClosure())
     $lv.Add_MouseDoubleClick({ if ($lv.SelectedItem) { $ui.go.Invoke($true) } }.GetNewClosure())
-    $lv.Add_PreviewMouseLeftButtonUp({   # star column toggles pin
-        $o = $_.OriginalSource; while ($o -and -not ($o -is [System.Windows.FrameworkElement] -and [string]$o.Tag -eq 'star')) { if ($o -is [System.Windows.Media.Visual]) { $o = [System.Windows.Media.VisualTreeHelper]::GetParent($o) } else { $o = $null } }
-        if ($o -and $o.DataContext) { $lv.SelectedItem = $o.DataContext; $_.Handled = $true; $ui.togglePin.Invoke() } }.GetNewClosure())
     $lv.Add_PreviewMouseRightButtonUp({
         $o = $_.OriginalSource; while ($o -and -not ($o -is [System.Windows.Controls.ListBoxItem])) { if ($o -is [System.Windows.Media.Visual]) { $o = [System.Windows.Media.VisualTreeHelper]::GetParent($o) } else { $o = $null } }
         if ($o) { $o.IsSelected = $true; $m = New-VncRowMenu $ui $true; $m.PlacementTarget = $o; $m.IsOpen = $true; $_.Handled = $true } }.GetNewClosure())
     $w.Add_PreviewKeyDown({
         $k = $_.Key; $ctrl = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0
-        $inList = $lv.IsKeyboardFocusWithin
         if ($k -eq 'Return' -and $ctrl) { $_.Handled = $true; $ui.go.Invoke($false) }
-        elseif ($k -eq 'Return' -and $inList) { $_.Handled = $true; $ui.go.Invoke($true) }
-        elseif ($k -eq 'F2') { $_.Handled = $true; $ui.rename.Invoke() }
-        elseif ($k -eq 'Delete' -and $inList) { $_.Handled = $true; $ui.remove.Invoke() }
-        elseif ($k -eq 'Space' -and $inList) { $_.Handled = $true; $ui.togglePin.Invoke() }
-        elseif ($k -eq 'F5') { $_.Handled = $true; Start-VncScan $ui -Rescan }
-        elseif ($k -eq 'Escape') { $_.Handled = $true; $w.Close() } }.GetNewClosure())   # Esc: cancels a scan and closes (Closed handler)
-    $bAdd.Add_Click({
-        $in = Show-VncAddDialog $ui.win
-        if (-not $in) { return }   # Squint 4: Cancel adds nothing
-        $ep = ConvertTo-VncEndpoint $in.addr $ui.state.port
-        if (-not $ep) { [System.Windows.MessageBox]::Show("That isn't a valid address. Use an IP like 192.168.1.20 or a name like REG1, optionally with :port.", 'Add a computer') | Out-Null; return }
-        $n = $in.name
-        [void](Set-VncFavorite $ui.state.favorites $ep.host $ep.port $n $null); $ui.saveFavs.Invoke() }.GetNewClosure())
-    # N1: -All cleanup after close. Workers were told to stop (BeginStop); give them 3 s so Dispose never blocks the UI thread.
-    $w.Add_Closed({ Stop-VncScan $ui; $global:vncPicker = $null
+        elseif ($k -eq 'Return' -and $lv.IsKeyboardFocusWithin) { $_.Handled = $true; $ui.go.Invoke($true) }
+        elseif ($k -eq 'F5') { $_.Handled = $true; $ui.startCheck.Invoke() }
+        elseif ($k -eq 'Escape') { $_.Handled = $true; $w.Close() } }.GetNewClosure())
+    $w.Add_Closed({ $ui.stopCheck.Invoke(); $global:vncPicker = $null
         $ct = New-Object System.Windows.Threading.DispatcherTimer; $ct.Interval = [TimeSpan]::FromSeconds(3)
         $ct.Add_Tick({ $ct.Stop(); if (-not $global:vncPicker) { Clear-VncDeadWorkers -All } }.GetNewClosure()); $ct.Start() }.GetNewClosure())
     $global:vncPicker = $ui
     $ui.refresh.Invoke()
-    $bad = Get-VncInvalidText $ui.state.invalid
-    if ($cache.time -gt [datetime]::MinValue) { $ui.setStatus.Invoke(('Last scan {0}{1}. Press F5 to rescan.' -f $(if ($cache.time.ToLocalTime().Date -eq (Get-Date).Date) { $cache.time.ToLocalTime().ToString('t') } else { $cache.time.ToLocalTime().ToString('g') }), $(if ($ui.stale) { ' (out of date)' } else { '' }))) }
-    if ($bad) { $ui.setStatus.Invoke($bad) }   # L5: visible warning
+    if ($al.bad -gt 0) { $ui.setStatus.Invoke(('{0} entries in the allowed list were not valid and are hidden.' -f $al.bad)) }
     $w.Show(); [void]$lv.Focus()
-    # Favourites-first (H1): with saved registers, only a new network range scans on open; otherwise a scan older than a day. Never at startup.
-    $ranges = @(); try { foreach ($n in @(Get-VncLocalSubnets)) { $ranges += (Get-VncRangeKey (Get-VncRangeText $n.ip $n.prefix $ui.state.prefix) $n.gw $n.dns $n.gwId) } } catch {}
-    $hasNew = @(Get-VncNewRanges $ranges (@($ui.state.confirmed) + @($ui.state.declined))).Count -gt 0
-    $okRanges = @(Get-VncNewRanges $ranges $ui.state.declined).Count -gt 0
-    if ($okRanges -and (Test-VncAutoScan ($ui.state.favorites.Count -gt 0) $cache ([datetime]::UtcNow) $hasNew)) { Start-VncScan $ui }
-    elseif ($lv.Items.Count -eq 0 -and $ranges.Count -eq 0) { $ui.showEmpty.Invoke('nonet') }
-    elseif ($ranges.Count -gt 0 -and -not $okRanges -and -not $bad) { $ui.setStatus.Invoke('Not scanned. Press Rescan (F5) to scan anyway, or use Add... to type an address.') }   # Squint Major: declined network
-    elseif ($ui.state.favorites.Count -gt 0 -and -not $bad) {   # nit: favourites suppressed the scan, so say how old the list is
-        $ui.setStatus.Invoke($(if ($ui.ageText) { 'Showing saved computers. Last scan {0}{1}. Press F5 to rescan.' -f $ui.ageText, $(if ($ui.stale) { ' (out of date)' } else { '' }) } else { 'Showing saved computers. Not scanned yet. Press F5 to look for others.' })) }
+    $ui.startCheck.Invoke()
 }
 
 # ================= v1.4.0 unread email count on the Email tile (opt-in, per Windows user) =================

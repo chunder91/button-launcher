@@ -370,4 +370,11 @@ $isz = @(0..([BitConverter]::ToUInt16($ico, 4) - 1) | ForEach-Object { $w = $ico
 Check 'UI-5: images/app.ico has 16, 20, 24, 32, 40, 48, 64, 256' (($isz -join ',') -eq '16,20,24,32,40,48,64,256')
 Check 'UI-5: README says uninstall deletes buttons and pictures, lists /DESKTOP /NOAUTOSTART and (Launcher)' ((Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'README.txt') -Raw) -match 'including your buttons and any pictures you added' -and (Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'README.txt') -Raw) -match '/DESKTOP /NOAUTOSTART' -and (Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'README.txt') -Raw) -match 'Settings > Apps \(Launcher\)')
 
+# v1.4.1 allowed computers: the installer is per-user (no admin), so it never creates or changes %ProgramData%\ButtonLauncher;
+# the admin-only file and its ACL are made by Setup > Allowed computers (admin)... (UAC). A missing file = nobody allowed yet.
+$nsi = Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'installer\launcher.nsi') -Raw
+Check 'v1.4.1: NSIS stays per-user (RequestExecutionLevel user)' ($nsi -match '(?m)^RequestExecutionLevel user')
+Check 'v1.4.1: NSIS and IExpress never touch ProgramData (no ACL step without admin)' ($nsi -notmatch '(?i)ProgramData|COMMONAPPDATA|icacls' -and (Get-Content $path -Raw) -notmatch '(?i)ProgramData|icacls')
+Check 'v1.4.1: uninstall leaves the admin list alone' ($nsi -notmatch '(?i)vnc-allowed')
+
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

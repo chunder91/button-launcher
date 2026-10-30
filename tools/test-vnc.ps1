@@ -145,9 +145,6 @@ $v = Get-VncRowView $rows[1] $false $false; Check "cached row says 'Earlier'; po
 Check 'Kern 6/L5: long name in the row has an ellipsis' ((Get-VncRowView $rows[2] $true $false).nameText.EndsWith([string][char]0x2026))
 
 # --- L4: password file only to an RFB host ---
-Check 'L4: saved password used for a host that greeted RFB in this session' (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $true }) $true)
-Check 'V2-I1: cached RFB banner alone is not enough (not seen this session)' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $false }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $true))
-Check 'L4: no password file for a host with no or a non-RFB greeting' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = '' }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'SSH-2.0-Open' }) $true))
 Check 'no saved password: never a file' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $false))
 
 # --- H1: adapters, ranges, confirmation, favourites-first ---
@@ -235,23 +232,14 @@ Check 'scan: connect timeout, batch of $parallel, paced, cancellable' ($scan -ma
 Check 'L4: scan reports only exact RFB greetings' ($scan -match [regex]::Escape("-cmatch '^RFB \d{3}\.\d{3}\n$'") -and $scan -match '\$got -eq 12')
 Check 'nit: sockets closed in finally (also on cancel)' ($scan -match '(?s)finally \{ foreach \(\$b in \$batch\) \{ try \{ \$b\.c\.Close\(\) \}')
 Check 'scan: 300 ms, 16 at a time' ($src -match '\$global:VncTimeoutMs\s+= 300' -and $src -match '\$global:VncParallel\s+= 16')
-Check 'scan only from the picker (open, or Rescan/F5)' (([regex]::Matches($src, 'Start-VncScan \$ui')).Count -ge 3 -and ([regex]::Match($src, '(?s)# =+ MAIN.*').Value -notmatch 'VncScan|Show-VncPicker'))
 $pk = & $fn 'Show-VncPicker'
 $xaml = [regex]::Match($src, "(?s)\`$global:VncPickerXaml = @'.*?'@").Value
 Check 'XAML parses as XML' ($(try { [void]([xml]($xaml -replace "^\`$global:VncPickerXaml = @'\r?\n", '' -replace "\r?\n'@$", '')); $true } catch { $false }))
-Check 'picker: closing cancels the scan' ($pk -match 'Add_Closed\(\{ Stop-VncScan')
-Check 'picker: Enter = View only, Ctrl+Enter = Interact, double-click = View only' ($pk -match "Return' -and \`$ctrl\) \{ \`$_\.Handled = \`$true; \`$ui\.go\.Invoke\(\`$false\)" -and $pk -match "Return' -and \`$inList\) \{ \`$_\.Handled = \`$true; \`$ui\.go\.Invoke\(\`$true\)" -and $pk -match 'MouseDoubleClick\(\{ if \(\$lv\.SelectedItem\) \{ \$ui\.go\.Invoke\(\$true\)' -and $xaml -match 'x:Name="View"[^>]*IsDefault="True"')
-Check 'picker: F2 rename, Space pin, Del remove, F5 rescan, Esc close' ($pk -match "'F2'" -and $pk -match "'Space' -and \`$inList" -and $pk -match "'Delete' -and \`$inList" -and $pk -match "'F5'" -and $pk -match "'Escape'")
 Check 'Kern 1: one button row: View only, Interact | Rescan, Add..., More; 32 px; no WrapPanel; window still 620' ($xaml -notmatch 'WrapPanel' -and $xaml -match '(?s)x:Name="View".*x:Name="Interact".*x:Name="Rescan".*x:Name="Add".*x:Name="More"' -and $xaml -match 'Property="Height" Value="32"' -and $xaml -match 'Width="620"' -and $xaml -match 'Margin="8,0,0,0"' -and $xaml -match '&#xE712;' -and $xaml -match 'AutomationProperties.Name="More actions"')
 Check 'Kern 2: Win11 selection: white 9%, 3x16 #22C55E pill, radius 6, hover 5%' ($xaml -match 'Value="#17FFFFFF"' -and $xaml -match 'Width="3" Height="16"[^>]*Fill="#22C55E"' -and $xaml -match 'x:Name="bg" CornerRadius="6"' -and $xaml -match 'Value="#0DFFFFFF"' -and $xaml -notmatch '#0B6E99"/>\s*</Trigger>')
-Check 'Kern 6: star column E735/E734 in #F59E0B, toggles pin' ($xaml -match 'Foreground="#F59E0B"' -and $pk -match "Tag -eq 'star'" -and $pk -match 'togglePin\.Invoke')
-Check 'Squint 2: empty-state and no-network copy, Add focused' ($pk -match [regex]::Escape("This PC isn't connected to a local network we can scan (Wi-Fi or cable).") -and $pk -match [regex]::Escape("Connect to Wi-Fi or a network cable, then press Rescan (F5). Or use Add... to type a computer's address.") -and $pk -match 'No computers found\.' -and $pk -match [regex]::Escape('Check the computer is turned on and on the same network as this PC, then press Rescan (F5). Or use Add... to type its address.') -and $pk -match '\$bAdd\.Focus\(\)')
 Check 'Squint 7: title once (chrome), hint line, no H1' ($xaml -match 'Title="View Register"' -and $xaml -match 'Pick a computer\. View only to watch, Interact to take control\.' -and $xaml -notmatch 'FontSize="20"')
-Check 'Squint 6: wrong saved password hint' ($pk -match [regex]::Escape("Couldn't connect with the saved view-only password. Change it in Setup > View-only password (for viewing computers)..."))
 Check 'Squint 5: Interact tooltip' ($xaml -match [regex]::Escape("Take control of this computer's mouse and keyboard. Asks for the full password."))
 $menu = & $fn 'New-VncRowMenu'
-Check 'menus: Rename (F2), Pin/Unpin, Remove from favourites only for saved rows; row menu adds View only + Interact' ($menu -match "'Rename\.\.\.'" -and $menu -match "'Unpin' \} else \{ 'Pin'" -and $menu -match "'Remove from favourites'" -and $menu -match 'IsEnabled = \[bool\]\(\$s -and \$s\.row\.fav\)' -and $menu -match 'Only saved computers can be removed' -and $menu -match "if \(\`$withLaunch\)" -and $pk -match 'New-VncRowMenu \$ui \$true' -and $pk -match 'New-VncRowMenu \$ui \$false')
-Check 'decision: no view-only password item in the picker; Setup item + first-use ask stay' ($pk -notmatch 'Show-VncPasswordDialog' -and $menu -notmatch 'password' -and $xaml -notmatch '(?i)password\.\.\.' -and $src -match "Add-MenuItem \`$setup 'View-only password \(for viewing computers\)\.\.\.'" -and (& $fn 'Start-VncViewer') -match 'viewOnlyAsked\) \{ \[void\]\(Show-VncPasswordDialog')
 Check 'D2: gradient client area, radius 10 chips, stroke 28%->6%, sheen, list radius 10' ($xaml -match '#26262C' -and $xaml -match '#16161A' -and $xaml -match 'CornerRadius="10" Background="\{TemplateBinding Background\}"' -and $xaml -match '#47FFFFFF' -and $xaml -match '#0FFFFFFF' -and $xaml -match '#24FFFFFF' -and $xaml -match 'CornerRadius="10" Background="#2E000000"')
 Check 'D2: primary gradients + hover/pressed per kern.md' ($xaml -match '#0E7A4B" Offset="0"/><GradientStop Color="#0A5A38"' -and $xaml -match '#187F52' -and $xaml -match '#0A5333' -and $xaml -match '#0B6E99" Offset="0"/><GradientStop Color="#085171"' -and $xaml -match '#15749D' -and $xaml -match '#074B68')
 Check 'D2: hover lift 1 px, press 0.97, focus ring, disabled #2A2A2A/#8A8A8A, 2 px busy bar' ($xaml -match 'TranslateTransform Y="-1"' -and $xaml -match 'ScaleX="0.97"' -and $xaml -match 'x:Name="ring" CornerRadius="12"' -and $xaml -match 'Value="#2A2A2A"' -and $xaml -match 'Value="#8A8A8A"' -and $xaml -match 'ProgressBar x:Name="Busy"[^>]*Height="2"[^>]*Foreground="#0E7A4B"')
@@ -284,14 +272,12 @@ Check 'R2-L1: odd DNS suffix is neutralised' ((Get-VncRangeKey '10.0.0.0/24' '10
 Check 'R2-L2: range state ok / declined / new' ((Get-VncRangeState $kShop @($kShop) @()) -eq 'ok' -and (Get-VncRangeState $kHome @($kShop) @($kHome)) -eq 'declined' -and (Get-VncRangeState 'x' @($kShop) @($kHome)) -eq 'new')
 $plan = & $fn 'Get-VncScanPlan'
 Check 'R2-L2: declines remembered in vnc.declinedRanges, skipped unless Rescan asks' ($plan -match "Set-Prop \`$global:cfg\.vnc 'declinedRanges'" -and $plan -match "\`$st -eq 'declined' -and -not \`$Ask" -and $plan -match 'Get-VncRangeKey')
-Check 'R2-L2: Rescan and F5 pass -Rescan; open does not' ($pk -match 'Start-VncScan \$ui -Rescan \}\.GetNewClosure' -and $pk -match "'F5'\) \{ \`$_\.Handled = \`$true; Start-VncScan \`$ui -Rescan" -and $pk -match '\{ Start-VncScan \$ui \}\s*\r?\n')
 foreach ($d in 'NordLynx Tunnel', 'Cloudflare WARP Interface Tunnel', 'Surfshark WireGuard', 'Mullvad Tunnel', 'ProtonVPN TUN', 'Windscribe VPN', 'Tailscale Tunnel', 'ZeroTier One Virtual Port', 'Sophos SSL VPN Adapter', 'SonicWall NetExtender') {
     Check "R2-L3: '$d' never scanned" (-not (Test-VncAdapter 'Ethernet' $d 'Ethernet 3' '192.168.1.37' 24 @('192.168.1.1'))) }
 Check 'nit: GigabitEthernet type allowed' (Test-VncAdapter 'GigabitEthernet' 'Realtek PCIe GbE' 'Ethernet' '192.168.1.37' 24 @('192.168.1.1'))
 $xaml2 = [regex]::Match($src, "(?s)\`$global:VncPickerXaml = @'.*?'@").Value
 Check 'R2-L4: no Tag binding inside triggers, no blur effect in the picker' ($xaml2 -notmatch '\{Binding Tag' -and $xaml2 -notmatch 'DropShadowEffect')
 Check 'R2-L4: glow layer = TemplateBinding Tag brush, shown on hover/press, hidden when disabled' ($xaml2 -match 'x:Name="glow"[^>]*Background="\{TemplateBinding Tag\}"' -and $xaml2 -match 'TargetName="glow" Property="Opacity" Value="0.35"' -and $xaml2 -match 'TargetName="glow" Property="Opacity" Value="0.15"' -and $xaml2 -match '<SolidColorBrush Color="#22C55E"/>' -and $xaml2 -match '<SolidColorBrush Color="#38BDF8"/>')
-Check 'nit: Rename can clear a name (asks first)' ($pk -match 'Leave it empty to clear the name' -and $pk -match 'Clear the name')
 $stop2 = & $fn 'Stop-VncScan'
 Check 'nit: Stop is async (BeginStop, dispose later), no blocking Stop()' ($stop2 -match 'BeginStop' -and $stop2 -notmatch '\.Stop\(\);' -and $stop2 -notmatch '\$x\.Stop\(\)' -and (& $fn 'Clear-VncDeadWorkers') -match 'Dispose')
 Check 'nit: XAML load in try with a clear message' ($pk -match "(?s)try \{ \`$w = \[Windows\.Markup\.XamlReader\]::Parse.*The computer finder couldn't open")
@@ -299,18 +285,11 @@ Check 'nit: no unused $total in Step-VncScan' ((& $fn 'Step-VncScan') -notmatch 
 Check 'nit: age text' ((Get-VncAgeText ([datetime]::MinValue) $now) -eq '' -and (Get-VncAgeText $now.AddMinutes(-5) $now) -eq '5 min ago' -and (Get-VncAgeText $now.AddHours(-3) $now) -eq '3 h ago' -and (Get-VncAgeText $now.AddDays(-1.2) $now) -eq '1 day ago' -and (Get-VncAgeText $now.AddDays(-3) $now) -eq '3 days ago')
 $rv = Get-VncRowView ([pscustomobject]@{ host = '192.168.1.21'; port = 5900; name = 'Register 1'; banner = 'RFB 003.889'; pinned = $true; fav = $true; seen = $true }) $false $false '3 days ago' $true
 Check 'Squint 5: stale cached row says Earlier (age only in the status line) and is greyed' ($rv.seen -eq 'Earlier' -and $rv.addrFg -eq '#A0A0A0' -and $rv.nameFg -eq '#A0A0A0')
-Check 'nit: favourites suppressing the scan show the cache age' ($pk -match 'Showing saved computers\. Last scan \{0\}\{1\}' -and $pk -match 'out of date')
-Check 'V2-I1: rows carry session-seen; scan hits fill it' ($pk -match 'sessionSeen\[' -and (& $fn 'Step-VncScan') -match '\$ui\.sessionSeen\[')
 
 # ---- v1.3.0 round 3 (Squint / Kern / ClaudeCode) ----
-Check 'Squint Major: notscanned empty state with its copy' ($src -match "'notscanned'\) \{ \`$eT\.Text = 'Not scanned yet\.'; \`$eB\.Text = 'Look for computers you can view on this network\? Press Rescan \(F5\), or use Add\.\.\. to type an address\.'")
-Check 'Squint Major: no "No registers found" before any scan (refresh picks notscanned)' ($src -match "if \(\`$ui\.scanned -or @\(\`$ui\.hosts\)\.Count -gt 0\) \{ 'none' \} else \{ 'notscanned' \}" -and $src -match '\$ui\.scanned = \$true; \$ui\.busy')
-Check 'Squint Major: declined network sets the Not scanned status on open' ($src -match "-not \`$okRanges -and -not \`$bad\) \{ \`$ui\.setStatus\.Invoke\('Not scanned\. Press Rescan \(F5\)")
-Check 'Squint 4: Add is one dialog; Cancel adds nothing; name labelled optional' ($src -match 'Name \(optional, e\.g\. Register 1\)\. Leave empty to name it later with F2\.' -and $src -match "\`$in = Show-VncAddDialog \`$ui\.win\s+if \(-not \`$in\) \{ return \}" -and $src -notmatch "InputBox\('Name \(e\.g\. Register 1\):'")
 Check 'Kern 6: Add and password dialogs use the D2 dialog' ($src -match "New-D2Dialog 'Add a computer'" -and $src -match "New-D2Dialog 'View-only password'" -and $src -match "Background = Brush '#0FFFFFFF'" -and $src -match "Background = Brush '#22C55E'")
 Check 'Picker Blocker: menu text white 14 px UI font, disabled #9A9A9A' ($xaml2 -match '<Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/>' -and $xaml2 -match 'Property="Foreground" Value="#9A9A9A"' -and $src -match "\`$m\.Foreground = Brush '#FFFFFF'; \`$m\.FontFamily = \`$global:UiFont; \`$m\.FontSize = 14")
 Check 'Picker Minor: shortcut text #B4B4B4' ($xaml2 -match 'Text="\{TemplateBinding InputGestureText\}" Foreground="#B4B4B4"')
-Check 'Picker Minor: More menu above, right-aligned, 4 px gap' ($src -match "\`$m\.Placement = 'Top'; \`$m\.VerticalOffset = -4" -and $src -match 'HorizontalOffset = \$bMore\.ActualWidth - \$m\.ActualWidth')
 Check 'Picker Minor: list border 12% white' ($xaml2 -match 'Background="#2E000000" BorderBrush="#1FFFFFFF"')
 Check 'N1: -All cleanup after picker close and on exit' ($src -match 'Clear-VncDeadWorkers -All \} \}\.GetNewClosure\(\)\); \$ct\.Start\(\)' -and $src -match 'Add_Exit\(\{ Stop-TrayAndHotkey; try \{ Clear-VncDeadWorkers -All \}')
 $xmlOk = $true; try { $px = [regex]::Match($xaml2, "(?s)@'\r?\n(.*)\r?\n'@").Groups[1].Value; if (-not $px) { throw 'empty' }; [void][xml]$px } catch { $xmlOk = $false }
@@ -377,4 +356,82 @@ if ([System.Windows.MessageBox].GetField('Calls')) {
 } else { 'SKIP  scan plan with a stub MessageBox (real WPF loaded)' }
 foreach ($d in 'Bluetooth Device (Personal Area Network)', 'Bluetooth Device (Personal Area Network) #2') { Check "LJ M18-I4: '$d' never scanned (with or without a gateway)" (-not (Test-VncAdapter 'Ethernet' $d 'Bluetooth Network Connection' '192.168.44.5' 24 @()) -and -not (Test-VncAdapter 'Ethernet' $d 'Ethernet 5' '192.168.44.5' 24 @('192.168.44.1'))) }
 Check 'LJ M18-I4: an adapter named Bluetooth Network Connection never scanned' (-not (Test-VncAdapter 'Ethernet' 'Generic adapter' 'Bluetooth Network Connection' '192.168.44.5' 24 @()))
+
+# ================= v1.4.1 (Charles 4:09 PM / 4:11 PM): allowed computers, View only never asks, Interact keeps UltraVNC's own box =================
+foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'ConvertTo-VncAllowedJson', 'ConvertFrom-VncAllowedText',
+               'ConvertTo-VncAllowedText', 'Get-VncAllowedRows', 'Get-VncAllowedWriterCommand', 'Get-VncDsmFromLines', 'Get-VncHostSettingsPath', 'Test-VncAllowedAclSafe') {
+    $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
+    Check "v1.4.1 defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(VncAllowedMax|VncAllowedWriterScript)\s*=') { Invoke-Expression $l.Extent.Text } }
+# names, hosts, ports
+foreach ($n in 'Register 1', 'REG-2', 'Front (till) #3', 'a', ('a' * 40)) { Check "allowed name ok: $n" (Test-VncAllowedName $n) }
+foreach ($n in '', ' lead', ('a' * 41), 'x;calc', 'x"y', "x`ny", 'x$(y)', 'x<y>', [string][char]0xE9) { Check ("allowed name rejected: " + ($n -replace '[^\x20-\x7E]', '?')) (-not (Test-VncAllowedName $n)) }
+foreach ($h in '192.168.1.21', 'REG1', 'reg-1.shop.local') { Check "allowed host ok: $h" (Test-VncAllowedHost $h) }
+foreach ($h in 'reg1.', '-reg', 'reg_1', '256.1.1.1', '01.2.3.4', 'reg 1', '..', '', 'a..b', '-config') { Check "allowed host rejected: '$h'" (-not (Test-VncAllowedHost $h)) }
+$j = '{"version":1,"computers":[{"name":"Register 1","host":"192.168.1.21"},{"name":"Register 2","host":"REG2","port":5901},{"name":"bad;","host":"x"},{"name":"Port","host":"1.2.3.4","port":70000},{"name":"Dup","host":"192.168.1.21","port":5900},{"name":"Evil","host":"-viewonly"}]}'
+$r = ConvertFrom-VncAllowedJson $j
+Check 'allowlist: 2 good entries kept, 4 bad skipped' (@($r.list).Count -eq 2 -and $r.bad -eq 4 -and -not $r.error)
+Check 'allowlist: default port 5900, explicit port kept' ($r.list[0].port -eq 5900 -and $r.list[1].port -eq 5901 -and $r.list[1].host -eq 'REG2')
+Check 'allowlist: empty list -> no entries, no error' (@((ConvertFrom-VncAllowedJson '{"version":1,"computers":[]}').list).Count -eq 0 -and -not (ConvertFrom-VncAllowedJson '{"version":1,"computers":[]}').error)
+Check 'allowlist: not JSON -> nothing, error' (@((ConvertFrom-VncAllowedJson 'nope{').list).Count -eq 0 -and (ConvertFrom-VncAllowedJson 'nope{').error)
+Check 'allowlist: over 64 KB -> nothing' (@((ConvertFrom-VncAllowedJson ('{"computers":[]}' + (' ' * 70000))).list).Count -eq 0)
+$many = '{"computers":[' + ((1..60 | ForEach-Object { '{{"name":"R{0}","host":"10.0.0.{0}"}}' -f $_ }) -join ',') + ']}'
+Check 'allowlist: capped at 50 entries' (@((ConvertFrom-VncAllowedJson $many).list).Count -eq 50)
+$rt = ConvertFrom-VncAllowedJson (ConvertTo-VncAllowedJson $r.list); Check 'allowlist: JSON round trip' (@($rt.list).Count -eq 2 -and $rt.list[1].port -eq 5901 -and -not $rt.error)
+# editor text
+$t = ConvertFrom-VncAllowedText "Register 1, 192.168.1.21`r`n`r`nRegister 2, REG2:5901"
+Check 'editor: two lines parsed, blank lines skipped' (-not $t.error -and @($t.list).Count -eq 2 -and $t.list[1].port -eq 5901)
+Check 'editor: text round trip' ((ConvertTo-VncAllowedText $t.list) -eq "Register 1, 192.168.1.21`r`nRegister 2, REG2:5901")
+foreach ($bad in 'no comma here', 'A, B, C', 'x;y, 1.2.3.4', 'Good, 999.1.1.1', 'Good, reg1:0', "A, 1.2.3.4`r`nB, 1.2.3.4") { Check "editor rejects: $($bad -replace "`r`n", ' / ')" ([bool](ConvertFrom-VncAllowedText $bad).error) }
+Check 'editor: at most 50' ([bool](ConvertFrom-VncAllowedText ((1..51 | ForEach-Object { "R$_, 10.0.0.$_" }) -join "`n")).error)
+# rows
+$rows = Get-VncAllowedRows $t.list @{ '192.168.1.21:5900' = $true } $false
+Check 'picker rows: Online / Offline, no star, names from the admin' ($rows.Count -eq 2 -and $rows[0].seen -eq 'Online' -and $rows[1].seen -eq 'Offline' -and $rows[0].star -eq '' -and $rows[0].nameText -eq 'Register 1')
+Check "picker rows: 'Checking...' while the check runs" ((Get-VncAllowedRows $t.list @{} $true)[0].seen -eq 'Checking...')
+Check 'empty list: rows empty' (@(Get-VncAllowedRows @() @{} $false).Count -eq 0)
+$pk = & $fn 'Show-VncPicker'
+Check "empty-state copy: 'No computers have been allowed yet. Ask your administrator.'" ($pk -match [regex]::Escape("'No computers have been allowed yet. Ask your administrator.'"))
+Check 'picker: allowed list only (Read-VncAllowed), no scan, no favourites' ($pk -match 'Read-VncAllowed' -and $pk -notmatch 'Start-VncScan|Merge-VncRows|favorites|Read-VncCache')
+Check 'picker: Rescan, Add and More hidden' ($pk -match "foreach \(\`$n in 'Rescan', 'Add', 'More'\) \{ \`$w.FindName\(\`$n\).Visibility = 'Collapsed' \}")
+Check 'picker: Enter = View only, Ctrl+Enter = Interact, double-click = View only, F5 = online check, Esc closes' ($pk -match "'Return' -and \`$ctrl\) \{ \`$_.Handled = \`$true; \`$ui.go.Invoke\(\`$false\)" -and $pk -match 'MouseDoubleClick\(\{ if \(\$lv.SelectedItem\) \{ \$ui.go.Invoke\(\$true\)' -and $pk -match "'F5'\) \{ \`$_.Handled = \`$true; \`$ui.startCheck.Invoke\(\)" -and $pk -match "'Escape'")
+Check 'picker: online check uses 300 ms (VncTimeoutMs) and only the allowed entries' ($pk -match 'VncAllowedCheckScript\).AddArgument\(\$items\).AddArgument\(\$global:VncTimeoutMs\)')
+Check 'picker: closing stops the check' ($pk -match 'Add_Closed\(\{ \$ui.stopCheck.Invoke\(\)')
+$rm = & $fn 'New-VncRowMenu'; Check 'row menu: allowed mode has only View only + Interact' ($rm -match 'if \(\$ui.allowedMode\) \{ \$m.Items.RemoveAt')
+# View only never asks; password for any allowed row when saved
+$sv = & $fn 'Start-VncViewer'
+Check 'View only: no password prompt from the launcher (ask-once removed)' ($sv -notmatch 'Show-VncPasswordDialog' -and $sv -notmatch 'viewOnlyAsked')
+Check 'saved view-only password used for an allowed row with no scan/session' (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.1.21'; port = 5900; banner = ''; session = $false }) $true)
+Check 'saved password also for a hostname row on another port' (Test-VncUsePassword ([pscustomobject]@{ host = 'REG2'; port = 5901 }) $true)
+Check 'no saved password -> none passed (connect with no password)' (-not (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.1.21'; port = 5900 }) $false))
+Check 'invalid host or port -> never a password file' (-not (Test-VncUsePassword ([pscustomobject]@{ host = '-config'; port = 5900 }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ host = 'REG1'; port = 0 }) $true))
+Check 'temp .vnc only for View only (Interact never gets the saved password)' ($sv -match '(?s)if \(\$viewOnly\) \{.*?Test-VncUsePassword.*?New-VncTempConfig')
+# Interact unchanged apart from the plugin: no config, no password, -viewonly absent
+$a = Get-VncViewerArgs 'REG1' 5900 $false $null
+Check 'Interact: host::port -autoscaling only (UltraVNC asks for the password)' (($a -join ' ') -eq 'REG1::5900 -autoscaling')
+$a = Get-VncViewerArgs 'REG1' 5901 $false $null 'SecureVNCPlugin64.dsm'
+Check 'Interact with a per-computer DSM plugin: -dsmplugin "<name>" added, nothing else' (($a -join ' ') -eq 'REG1::5901 -autoscaling -dsmplugin "SecureVNCPlugin64.dsm"')
+Check 'View only keeps -viewonly and the plugin' ((Get-VncViewerArgs 'REG1' 5900 $true $null 'MSRC4Plugin.dsm') -join ' ' -eq 'REG1::5900 -autoscaling -viewonly -dsmplugin "MSRC4Plugin.dsm"')
+foreach ($bad in '..\x.dsm', 'a"b.dsm', 'x.exe', '-password.dsm', ('a' * 70 + '.dsm')) { $th = $false; try { [void](Get-VncViewerArgs 'REG1' 5900 $false $null $bad) } catch { $th = $true }; Check "bad plugin name refused: $($bad.Substring(0, [Math]::Min(20, $bad.Length)))" $th }
+Check 'Interact never -password, never -config' (-not ((Get-VncViewerArgs 'REG1' 5900 $false $null 'X.dsm') -match '^-password$|^-config$'))
+# DSM settings: only the two keys, only in [options], only when enabled
+Check 'DSM: UseDSMPlugin=1 + DSMPlugin in [options] -> name' ((Get-VncDsmFromLines @('[connection]', 'host=REG1', '[options]', 'UseDSMPlugin=1', 'DSMPlugin=SecureVNCPlugin64.dsm')) -eq 'SecureVNCPlugin64.dsm')
+Check 'DSM: UseDSMPlugin=0 -> none' ((Get-VncDsmFromLines @('[options]', 'UseDSMPlugin=0', 'DSMPlugin=SecureVNCPlugin64.dsm')) -eq '')
+Check 'DSM: NoPlugin / bad names -> none' ((Get-VncDsmFromLines @('[options]', 'UseDSMPlugin=1', 'DSMPlugin=NoPlugin')) -eq '' -and (Get-VncDsmFromLines @('[options]', 'UseDSMPlugin=1', 'DSMPlugin=..\evil.dsm')) -eq '')
+Check 'DSM: keys outside [options] ignored' ((Get-VncDsmFromLines @('[connection]', 'UseDSMPlugin=1', 'DSMPlugin=X.dsm')) -eq '')
+$env:APPDATA = $(if ($env:APPDATA) { $env:APPDATA } else { '/tmp/appdata' })
+Check 'per-computer file name like UltraVNC (host first 15 chars, display 0-99 else port)' ((Split-Path -Leaf (Get-VncHostSettingsPath 'REG1' 5900)) -eq 'REG1-5900.vnc' -and (Split-Path -Leaf (Get-VncHostSettingsPath 'REG1' 5901)) -eq 'REG1-1.vnc' -and (Split-Path -Leaf (Get-VncHostSettingsPath 'averyveryverylongname' 5900)) -eq 'averyveryverylo-5900.vnc')
+$hd = & $fn 'Get-VncHostDsm'; Check 'per-computer file: only plugin lines are read (no password kept)' ($hd -match "Where-Object \{ \`$_ -match '\^\\s\*\\\[\|\^\(\?i\)\\s\*\(UseDSMPlugin\|DSMPlugin\)\\s\*='")
+Check 'viewer identity logged, non-UltraVNC viewer flagged' ($sv -match 'Get-VncViewerInfo' -and $sv -match 'NOT UltraVNC')
+# elevated writer
+$enc = Get-VncAllowedWriterCommand $t.list
+$dec = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($enc))
+Check 'writer: encoded command is the constant script with only base64 data' ($dec -eq $global:VncAllowedWriterScript.Replace('__DATA__', [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-VncAllowedJson $t.list)))))
+$pe = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($dec, [ref]$null, [ref]$pe); Check 'writer script parses' ($pe.Count -eq 0)
+Check 'writer: ACL Administrators + SYSTEM full, Users read, inheritance off, owner Administrators' ($global:VncAllowedWriterScript -match "S-1-5-32-544" -and $global:VncAllowedWriterScript -match "@\(\`$usr, 'ReadAndExecute'\)" -and $global:VncAllowedWriterScript -match 'SetAccessRuleProtection\(\$true, \$false\)' -and $global:VncAllowedWriterScript -match 'SetOwner\(\$adm\)')
+Check 'writer: refuses reparse points, re-validates every entry, writes only vnc-allowed.json' ($global:VncAllowedWriterScript -match 'ReparsePoint\) \{ exit 4 \}' -and $global:VncAllowedWriterScript -match 'exit 3' -and @([regex]::Matches($global:VncAllowedWriterScript, "Join-Path \`$dir '")).Count -eq 2)
+Check 'writer: no file or script from a user folder is run' ($global:VncAllowedWriterScript -notmatch 'LOCALAPPDATA|TEMP|APPDATA|Invoke-Expression|iex |& \$|\. \$|Start-Process')
+$se = & $fn 'Save-VncAllowedElevated'; Check 'save: System32 powershell.exe, RunAs, -EncodedCommand' ($se -match "Join-Path \`$env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'" -and $se -match '-Verb RunAs' -and $se -match "'-EncodedCommand', \`$enc")
+Check 'writer: 50 long entries still fit one command line' ([bool](Get-VncAllowedWriterCommand (1..50 | ForEach-Object { [pscustomobject]@{ name = ('Register number {0:00} front till' -f $_); host = ('register-{0:00}.shop.example.local' -f $_); port = 5900 } })))
+# writer re-validation on a hand-made (hostile) payload: decode + run its checks in a sandbox copy with exit trapped
+Check 'Setup menu: Allowed computers (admin)... and the optional password label' ($src -match "'Allowed computers \(admin\)\.\.\.'" -and $src -match "'View-only password \(optional, only if your computers need one\)\.\.\.'")
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

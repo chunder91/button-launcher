@@ -303,7 +303,7 @@ Check 'badge: Kern -6 top, -8 right' ($src.Contains('SetLeft($bd, $ipx - 8); [Sy
 Check 'motion follows Windows animation setting' ($src -match 'ClientAreaAnimation')
 Check 'exit stops the email check' ($src -match 'try \{ Stop-Mail \} catch \{\}')
 Check 'resume hooks the email check' ($src -match 'Resume-Mail')
-Check 'version 1.4.0' ($src -match "\`$global:AppVersion\s+= '1\.4\.0'")
+Check 'version 1.4.1' ($src -match "\`$global:AppVersion\s+= '1\.4\.1'")
 
 # --- polish round 3 (ClaudeCode L1: loginOk after a tagged OK; Lockjaw M16-I1: close before reading the flags) ---
 # dripstatus: LOGIN gets a tagged OK, then STATUS drips (a few untagged bytes, then the 45 s cap closes the socket)
@@ -455,11 +455,8 @@ Check 'Kern: popup #2B2B30, radius 8; items 32 tall, 9% hover, green pill when s
 Check 'keyboard kept: real ComboBox with PART_Popup + ItemsPresenter, toggle not focusable (arrows, Alt+Down, Esc stay the ComboBox''s own)' ($xs.Contains('x:Name="PART_Popup" IsOpen="{TemplateBinding IsDropDownOpen}"') -and $xs.Contains('<ItemsPresenter') -and $xs.Contains('<ToggleButton x:Name="Toggle" Focusable="False"'))
 Check 'CC: interval clamp - any number over 60 -> 60 ([double]::MaxValue, 1e300, decimal, long), NaN / +-Infinity -> 3' ((Get-MailInterval ([double]::MaxValue)) -eq 60 -and (Get-MailInterval 1e300) -eq 60 -and (Get-MailInterval ([decimal]::MaxValue)) -eq 60 -and (Get-MailInterval ([long]::MaxValue)) -eq 60 -and (Get-MailInterval '1e300') -eq 60 -and (Get-MailInterval ([double]::NaN)) -eq 3 -and (Get-MailInterval ([double]::PositiveInfinity)) -eq 3 -and (Get-MailInterval ([double]::NegativeInfinity)) -eq 3 -and (Get-MailInterval ([double]::MinValue)) -eq 3)
 Check 'interval clamp still holds (hand-edited 0 / 99 / text)' ((Get-MailInterval 0) -eq 3 -and (Get-MailInterval 99) -eq 60 -and (Get-MailInterval 'abc') -eq 3 -and (ConvertTo-MailSettings @{ interval = 1 }).interval -eq 3)
-# LJ M21-I1: the More-menu statements were commented out by a mid-line comment
-$vp = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-VncPicker' }, $true)
-$mc = $vp.Find({ param($x) $x -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and $x.Expression.Extent.Text -eq '$bMore' -and $x.Member.Extent.Text -eq 'Add_Click' }, $true)
-$mset = @($mc.FindAll({ param($x) $x -is [System.Management.Automation.Language.AssignmentStatementAst] -and $x.Left -is [System.Management.Automation.Language.MemberExpressionAst] }, $true) | ForEach-Object { $_.Left.Member.Value })
-Check 'LJ M21-I1: the More menu really sets PlacementTarget, Placement and VerticalOffset (code, not comment)' ($mset -contains 'PlacementTarget' -and $mset -contains 'Placement' -and $mset -contains 'VerticalOffset' -and $mset -contains 'HorizontalOffset')
+# LJ M21-I1 (More menu) retired in v1.4.1: the picker has no More menu any more (allowed computers only)
+Check 'v1.4.1: picker has no More menu handler' (-not ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-VncPicker' }, $true).Extent.Text -match '\$bMore'))
 $cmt = @(); foreach ($f in @(Get-ChildItem (Join-Path $root '*.ps1')) + @(Get-ChildItem (Join-Path $PSScriptRoot '*.ps1'))) { $cmt += @(Find-CommentedOutCode $f.FullName | ForEach-Object { "$($f.Name) $_" }) }
 Check ('no statements hidden inside a comment ' + ($cmt -join '; ')) ($cmt.Count -eq 0)
 $tmpc = Join-Path ([IO.Path]::GetTempPath()) ('bl-cmt-' + [guid]::NewGuid() + '.ps1')
