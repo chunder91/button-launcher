@@ -5,6 +5,7 @@
 Unicode true
 ManifestDPIAware true
 RequestExecutionLevel user
+XPStyle on                      ; themed (Win11) buttons and progress bar
 SetCompressor /SOLID lzma
 !include LogicLib.nsh
 !include FileFunc.nsh
@@ -21,9 +22,11 @@ OutFile "${OUTFILE}"
 Icon "${SRC}\images\app.ico"
 UninstallIcon "${SRC}\images\app.ico"
 InstallDir "$LOCALAPPDATA\Programs\${APPNAME}"
-ShowInstDetails show
-ShowUninstDetails show
+ShowInstDetails hide            ; the log stays under "Show details"
+ShowUninstDetails hide
+AutoCloseWindow true            ; the success box is the last step
 BrandingText "${APPNAME} ${VERSION}"
+InstallColors /windows          ; system text on window background in the log
 VIProductVersion "${VERSION}.0"
 VIAddVersionKey "ProductName" "${APPNAME}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
@@ -121,7 +124,9 @@ FunctionEnd
     ${AndIf} $R5 = 0
       RMDir /r "${dir}"
     ${Else}
+      SetDetailsPrint listonly       ; status line: 40 chars or fewer
       DetailPrint "Not removed (links left inside): ${dir}"
+      SetDetailsPrint both
     ${EndIf}
   ${EndIf}
 !macroend
@@ -130,6 +135,9 @@ Var Stage
 Var Old
 Var Keep
 Var WantDesk
+Var IsUpdate                    ; 1 = an existing Launcher install is being updated
+Var ShortDir                    ; $INSTDIR for messages, shortened to AppData\Local\... when it is under the profile
+Var FailShort                   ; status-line text for Fail (40 chars or fewer)
 
 Function .onInit
   SetShellVarContext current
@@ -139,6 +147,11 @@ Function .onInit
     Quit
   ${EndIf}
   StrCpy $INSTDIR "$LOCALAPPDATA\Programs\${APPNAME}"   ; fixed location (no /D override)
+  StrCpy $ShortDir "$INSTDIR"
+  ${If} "$LOCALAPPDATA" == "$PROFILE\AppData\Local"
+    StrCpy $ShortDir "AppData\Local\Programs\${APPNAME}"
+  ${EndIf}
+  StrCpy $FailShort "Setup stopped. Nothing was changed."
   ; N4: an EMPTY leftover Programs\Launcher (no files, no links, not itself a link) counts as a fresh install
   ${If} ${FileExists} "$INSTDIR\*.*"
   ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
@@ -164,13 +177,32 @@ Function .onInit
   ${If} ${FileExists} "$INSTDIR\*.*"
   ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
   ${AndIfNot} ${FileExists} "$INSTDIR\.buttonlauncher"
-    MessageBox MB_OK|MB_ICONSTOP "Setup stopped: $INSTDIR already exists but has no Launcher.ps1 or .buttonlauncher marker, so it may belong to another program (or it is a link). Nothing was changed." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Setup stopped. A folder named ${APPNAME} is already here,$\nand it doesn't look like ours:$\n$\n$ShortDir$\n$\nIt may belong to another program, so Setup left it alone.$\nNothing was changed. Ask your IT contact for help." /SD IDOK
     SetErrorLevel 1
     Quit
   ${EndIf}
+  ; UX-4: refuse before any question if the install is missing but a Launcher.old-*/.new-* folder exists (R15-H1)
+  ${IfNot} ${FileExists} "$INSTDIR\*.*"
+    Call FindLeftover
+    ${If} $4 != ""
+      MessageBox MB_OK|MB_ICONSTOP "${APPNAME} can't be installed yet.$\n$\nA copy of your earlier ${APPNAME} was found here:$\n$\n$4$\n$\nIt may hold your buttons, so Setup left it alone.$\nNothing was changed.$\n$\nAsk your IT contact to rename that folder to $\"${APPNAME}$\",$\nthen run Setup again." /SD IDOK
+      SetErrorLevel 1
+      Quit
+    ${EndIf}
+  ${EndIf}
+  StrCpy $IsUpdate 0
+  ${If} ${FileExists} "$INSTDIR\Launcher.ps1"
+  ${OrIf} ${FileExists} "$INSTDIR\.buttonlauncher"
+    StrCpy $IsUpdate 1
+  ${EndIf}
   ${IfNot} ${Silent}
-    MessageBox MB_OKCANCEL|MB_ICONQUESTION "Install ${APPNAME} for this user?$\n$\nIt goes in the Start menu and starts with Windows (you can turn that off: unlock, right-click a panel > Start with Windows)." IDOK +2
-    Abort
+    ${If} $IsUpdate = 1
+      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment$\nand opens again when the update is done." IDOK +2
+      Abort
+    ${Else}
+      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Install ${APPNAME} for this Windows user?$\n$\nIt will be added to the Start menu and will open each time you sign in.$\nYou can turn that off later from ${APPNAME}'s right-click menu." IDOK +2
+      Abort
+    ${EndIf}
   ${EndIf}
   StrCpy $WantDesk 0
   ${GetParameters} $0
@@ -178,9 +210,28 @@ Function .onInit
   ${GetOptions} $0 "/DESKTOP" $1
   ${IfNot} ${Errors}
     StrCpy $WantDesk 1
+  ${ElseIf} $IsUpdate = 1
+    ; UX-5: an update keeps whatever desktop shortcut is there and does not ask
   ${ElseIfNot} ${Silent}
     MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "Also put a shortcut on the desktop?" IDNO +2
     StrCpy $WantDesk 1
+  ${EndIf}
+FunctionEnd
+
+; $4 = shortened path of the first Launcher.old-* (else .new-*) folder beside the install, or "" if none.
+Function FindLeftover
+  FindFirst $3 $4 "$INSTDIR.old-*"
+  ${If} $4 == ""
+    FindClose $3
+    FindFirst $3 $4 "$INSTDIR.new-*"
+  ${EndIf}
+  FindClose $3
+  ${If} $4 != ""
+    ${If} "$ShortDir" != "$INSTDIR"
+      StrCpy $4 "AppData\Local\Programs\$4"
+    ${Else}
+      StrCpy $4 "$LOCALAPPDATA\Programs\$4"
+    ${EndIf}
   ${EndIf}
 FunctionEnd
 
@@ -203,7 +254,18 @@ Function KeepNote
 FunctionEnd
 
 Function Fail   ; $R9 = message. Leaves the current install as it was.
+  ; UX-2: Setup closed the running launcher; on an update, open the (unchanged) install again.
+  ${If} $IsUpdate = 1
+  ${AndIf} ${FileExists} "$INSTDIR\ButtonLauncher.exe"
+    Exec '"$INSTDIR\ButtonLauncher.exe"'
+    StrCpy $R9 "$R9$\n$\n${APPNAME} has been opened again, so you can keep using it."
+  ${EndIf}
+  ; UI-1: the full text goes to the log and the box; the header status line gets 40 chars or fewer.
+  SetDetailsPrint listonly
   DetailPrint "$R9"
+  SetDetailsPrint textonly
+  DetailPrint "$FailShort"
+  SetDetailsPrint both
   !ifdef DEBUGLOG
   FileOpen $9 "$TEMP\bl-debug.txt" a
   FileWrite $9 "$R9$\r$\n"
@@ -244,14 +306,9 @@ Section "Install"
   ${EndIf}
   ; R15-H1: never auto-delete Launcher.old-*/.new-*. If the install is missing but one exists, it may be the user's only copy.
   ${IfNot} ${FileExists} "$INSTDIR\*.*"
-    FindFirst $3 $4 "$INSTDIR.old-*"
-    ${If} $4 == ""
-      FindClose $3
-      FindFirst $3 $4 "$INSTDIR.new-*"
-    ${EndIf}
-    FindClose $3
+    Call FindLeftover                           ; also checked in .onInit; kept here in case one appeared since
     ${If} $4 != ""
-      StrCpy $R9 "Setup stopped: $INSTDIR is missing, but $LOCALAPPDATA\Programs\$4 exists. It may be your previous install.$\n$\nRename the Launcher.old-... folder back to Launcher (or contact support), then run Setup again. Nothing was changed."
+      StrCpy $R9 "${APPNAME} can't be installed yet.$\n$\nA copy of your earlier ${APPNAME} was found here:$\n$\n$4$\n$\nIt may hold your buttons, so Setup left it alone.$\nNothing was changed.$\n$\nAsk your IT contact to rename that folder to $\"${APPNAME}$\",$\nthen run Setup again."
       Call Fail
     ${EndIf}
   ${EndIf}
@@ -268,7 +325,7 @@ Section "Install"
     ${If} $R5 = 1
     ${OrIf} $R8 > 0
       RMDir "$Stage"
-      StrCpy $R9 "${APPNAME} could not be updated: the install folder is, or contains, a folder or file link (junction or symlink), and links are never copied or followed.$\n$INSTDIR$\n$\nYour current install was not changed. Remove the link and run Setup again."
+      StrCpy $R9 "${APPNAME} could not be updated: the install folder is, or contains,$\na shortcut-style link, and links are never copied or followed.$\n$\n$ShortDir$\n$\nYour current install was not changed. Ask your IT contact for help."
       Call Fail
     ${EndIf}
     ClearErrors
@@ -292,7 +349,7 @@ Section "Install"
     ${OrIfNot} ${FileExists} "$PLUGINSDIR\saved.ok"
       !insertmacro SAFE_RMDIR "" "$Stage"
       !insertmacro SAFE_RMDIR "" "$Keep"
-      StrCpy $R9 "${APPNAME} could not be updated: Setup could not check your pictures (PowerShell did not run: $0).$\n$\nYour current install was not changed, so no pictures were lost."
+      StrCpy $R9 "${APPNAME} could not be updated.$\n$\nSetup checks your own pictures before an update so none are lost,$\nand that check didn't finish (code $0). Nothing was changed.$\n$\nRestart the PC and run Setup again. If you see this again,$\nsend a photo of this message to your IT contact."
       Call Fail
     ${EndIf}
     StrCpy $5 1
@@ -300,7 +357,7 @@ Section "Install"
     Call IsLink
     ${If} $R5 = 1
       !insertmacro SAFE_RMDIR "" "$Stage"
-      StrCpy $R9 "${APPNAME} could not be updated: the pictures backup folder is a link.$\n$Keep$\n$\nYour current install was not changed."
+      StrCpy $R9 "${APPNAME} could not be updated: the pictures backup folder is a link:$\n$\n$Keep$\n$\nYour current install was not changed."
       Call Fail
     ${EndIf}
   ${EndIf}
@@ -366,6 +423,7 @@ Section "Install"
       ClearErrors
       Rename "$Old" "$INSTDIR"
       ${If} ${Errors}   ; both failed: delete nothing, say where everything is (R7-L2)
+        StrCpy $FailShort "Setup stopped. Nothing was deleted."
         StrCpy $R9 "${APPNAME} could not be updated, and the old install could not be put back automatically.$\n$\nNothing was deleted:$\nOld install: $Old$\nNew files: $Stage$\n$\nRename the old folder back to:$\n$INSTDIR$\nbefore running Setup again (Setup will refuse until you do)."
         Call KeepNote
         Call Fail
@@ -386,12 +444,12 @@ Section "Install"
 
   ; Shortcuts (per-user Start menu, same names as the IExpress installer)
   CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\ButtonLauncher.exe" "" "$INSTDIR\ButtonLauncher.exe" 0 SW_SHOWNORMAL "" "${APPNAME}"
-  CreateShortcut "$SMPROGRAMS\Uninstall ${APPNAME}.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\ButtonLauncher.exe" 0 SW_SHOWNORMAL "" "Uninstall ${APPNAME}"
+  Delete "$SMPROGRAMS\Uninstall ${APPNAME}.lnk"   ; UX-1: no Start menu uninstall entry (Settings > Apps covers it)
   ${If} $WantDesk = 1
     CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\ButtonLauncher.exe" "" "$INSTDIR\ButtonLauncher.exe" 0 SW_SHOWNORMAL "" "${APPNAME}"
-  ${Else}
+  ${ElseIf} $IsUpdate = 0
     Delete "$DESKTOP\${APPNAME}.lnk"
-  ${EndIf}
+  ${EndIf}                                      ; UX-5: an update keeps the desktop shortcut as it was
   Delete "$SMSTARTUP\${APPNAME}.lnk"            ; older builds used the Startup folder
 
   ; Start with Windows: HKCU Run, ON by default (/NOAUTOSTART turns it off, like -NoAutostart)
@@ -399,7 +457,13 @@ Section "Install"
   ClearErrors
   ${GetOptions} $0 "/NOAUTOSTART" $1
   ${If} ${Errors}
-    WriteRegStr HKCU "${RUNKEY}" "${KEYNAME}" '"$INSTDIR\ButtonLauncher.exe"'
+    ; UX-5: an update re-writes the Run value only if it is still there (the user may have turned it off)
+    ClearErrors
+    ReadRegStr $1 HKCU "${RUNKEY}" "${KEYNAME}"
+    ${If} $IsUpdate = 0
+    ${OrIfNot} ${Errors}
+      WriteRegStr HKCU "${RUNKEY}" "${KEYNAME}" '"$INSTDIR\ButtonLauncher.exe"'
+    ${EndIf}
   ${Else}
     DeleteRegValue HKCU "${RUNKEY}" "${KEYNAME}"
   ${EndIf}
@@ -424,12 +488,12 @@ Section "Install"
   WriteRegDWORD HKCU "${UNKEY}\${KEYNAME}" "EstimatedSize" $1
 
   Exec '"$INSTDIR\ButtonLauncher.exe"'
-  ${If} $WantDesk = 1
-    StrCpy $1 "the Start menu and the desktop"
+  ${If} $IsUpdate = 1
+    StrCpy $1 "updated"
   ${Else}
-    StrCpy $1 "the Start menu"
+    StrCpy $1 "installed"
   ${EndIf}
-  MessageBox MB_OK "${APPNAME} is installed.$\nFind it in $1 (type its name in Windows search).$\nUninstall from Settings > Apps." /SD IDOK
+  MessageBox MB_OK|MB_ICONINFORMATION "${APPNAME} is $1 and open now.$\n$\nTo open it later: click Start and type ${APPNAME}.$\nTo remove it: Settings > Apps." /SD IDOK
 SectionEnd
 
 Function un.onInit
@@ -443,19 +507,19 @@ Function un.onInit
   ${If} "$LOCALAPPDATA" == ""
   ${OrIf} "$INSTDIR" != "$LOCALAPPDATA\Programs\${APPNAME}"
   ${OrIf} $0 = 0
-    MessageBox MB_OK "Uninstall stopped: this doesn't look like the ${APPNAME} install folder.$\n$INSTDIR" /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: this doesn't look like the ${APPNAME} install folder:$\n$\n$INSTDIR$\n$\nNothing was removed. Ask your IT contact for help." /SD IDOK
     SetErrorLevel 1
     Quit
   ${EndIf}
   StrCpy $R6 "$INSTDIR"
   Call un.IsLink
   ${If} $R5 = 1
-    MessageBox MB_OK "Uninstall stopped: the install folder is a link (junction or symlink), so nothing was removed.$\n$INSTDIR" /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: the install folder is a shortcut-style link,$\nso nothing was removed:$\n$\n$INSTDIR$\n$\nAsk your IT contact for help." /SD IDOK
     SetErrorLevel 1
     Quit
   ${EndIf}
   ${IfNot} ${Silent}
-    MessageBox MB_YESNO "Remove ${APPNAME}?$\n$\nThis deletes the whole install folder, including your buttons (buttons.json) and any pictures you added." IDYES +2
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "Remove ${APPNAME} for this Windows user?$\n$\nThis also deletes your buttons and any pictures you added.$\nThey can't be brought back.$\n$\nTo keep them, choose No." IDYES +2
     Quit
   ${EndIf}
 FunctionEnd
@@ -476,7 +540,7 @@ Section "Uninstall"
   Push "$INSTDIR"
   Call un.WalkLinks
   ${If} $R8 > 0
-    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: the install folder contains a folder or file link (junction or symlink) that could not be removed safely, so nothing was removed.$\n$INSTDIR" /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: the install folder contains a shortcut-style link$\nthat could not be removed safely, so nothing was removed:$\n$\n$INSTDIR$\n$\nAsk your IT contact for help." /SD IDOK
     SetErrorLevel 2
     Quit
   ${EndIf}
@@ -506,9 +570,17 @@ Section "Uninstall"
     Delete "$LOCALAPPDATA\ButtonLauncher\email-count.dat.tmp"
     RMDir "$LOCALAPPDATA\ButtonLauncher"               ; non-recursive: stays if anything else is in it
   ${Else}
+    SetDetailsPrint listonly
     DetailPrint "Not touched (it is a link): $LOCALAPPDATA\ButtonLauncher"
+    SetDetailsPrint both
   ${EndIf}
   ; Same as the IExpress uninstaller: the whole folder goes, including buttons.json and pictures.
   SetOutPath "$TEMP"
   !insertmacro SAFE_RMDIR "un." "$INSTDIR"
+  ${If} ${FileExists} "$INSTDIR\*.*"
+    MessageBox MB_OK|MB_ICONEXCLAMATION "${APPNAME} was removed, but some files could not be deleted:$\n$\n$INSTDIR" /SD IDOK
+  ${Else}
+    MessageBox MB_OK|MB_ICONINFORMATION "${APPNAME} was removed for this Windows user." /SD IDOK
+  ${EndIf}
+  SetAutoClose true
 SectionEnd

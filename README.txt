@@ -120,8 +120,9 @@ MAKE AN INSTALLER FOR ANOTHER PC
   Build-Installer.ps1 > Run with PowerShell). It makes "<name> Setup.exe" in
   the installer-output folder with your current buttons and pictures inside.
   Copy that one file to the other PC and double-click it. No admin needed.
-  It installs to %LOCALAPPDATA%\Programs\<name>, adds desktop + Start menu
-  shortcuts, asks whether to start with Windows, and adds an uninstaller
+  It installs to %LOCALAPPDATA%\Programs\<name>, adds a Start menu shortcut,
+  asks once about a desktop shortcut (default No), turns Start with Windows
+  on, and adds an uninstaller
   (Settings > Apps, or Start menu > "Uninstall <name>").
   The name comes from "title" at the top of buttons.json.
   WARNING: the installer isn't digitally signed, so Windows SmartScreen will
@@ -163,13 +164,15 @@ SAFETY NOTES
 
 INSTALL (per-user, no admin)
   Setup puts the launcher in %LOCALAPPDATA%\Programs\<name>, adds a Start menu
-  shortcut, and lists it in Settings > Apps (Button Launcher) with an uninstall.
-  It asks once about a desktop shortcut (default No). Command line flags for
-  the "<name> Setup.ps1" fallback: -Desktop, -NoAutostart.
+  shortcut, and lists it in Settings > Apps (Launcher) with an uninstall.
+  It asks once about a desktop shortcut (default No). An update keeps your
+  buttons, pictures, desktop shortcut and Start with Windows setting.
+  Command line flags: ButtonLauncher-Setup-<version>.exe /DESKTOP /NOAUTOSTART
+  (the "<name> Setup.ps1" fallback: -Desktop, -NoAutostart).
   START WITH WINDOWS is ON by default (HKCU Run value "ButtonLauncher").
   To change it: unlock, right-click a panel > "Start with Windows".
   Uninstall removes the shortcuts, the Run value, the Settings > Apps entry
-  and the launcher's own folder only.
+  and the launcher's folder, including your buttons and any pictures you added.
   ButtonLauncher.exe and Setup.exe are not code-signed, so Windows SmartScreen
   may say "Windows protected your PC" the first time: click "More info" >
   "Run anyway" (only for copies you got from a trusted source).
