@@ -271,6 +271,7 @@ Check 'Kern Minor: light label (luminance > 0.5) -> black overlay, 30% peak; pas
 function Cr($a, $b) { $x = [Math]::Max($a, $b); $y = [Math]::Min($a, $b); ($x + 0.05) / ($y + 0.05) }
 $crs = foreach ($bg in '#4472C4', '#2E7D32', '#5F6368', '#7B3FBF', '#C40000') { $h = $bg.TrimStart('#'); $mix = '#' + (-join (0, 2, 4 | ForEach-Object { '{0:X2}' -f [int][Math]::Round([Convert]::ToInt32($h.Substring($_, 2), 16) * (1 - 0.30)) })); [Math]::Round((Cr (Get-HexLuminance '#FFFFFF') (Get-HexLuminance $mix)), 2) }
 Check "Kern Minor: white label at the 30% black peak stays >= 4.5:1 on recoloured tiles (flat fill: $($crs -join ', '))" (@($crs | Where-Object { $_ -lt 4.5 }).Count -eq 0)
+Check 'CC: a minimised panel stops the pulse and a restore resumes it (StateChanged -> Update-MailPulse)' ($src.Contains('$w.Add_StateChanged({ Update-MailPulse $e }.GetNewClosure())') -and $src.Contains('-and -not (Test-MailWinMinimized $e.tile)'))
 Check 'pulse follows visibility and rebuilds' ($src.Contains('$tile.Add_IsVisibleChanged({ Update-MailPulse $e }.GetNewClosure())') -and $src.Contains('$tile.Add_Unloaded({ Set-MailPulse $e $false }.GetNewClosure())') -and $src.Contains('Update-MailPulse $e   # Charles'))
 # Charles 1:58 PM: pulse the whole time unread > 0
 $sp = New-MailState; $seq = @()
@@ -599,7 +600,14 @@ function RunWorker([string]$script, [string]$step = 'connect') {
     $run = @{ ps = $p; sync = $sy; handle = $p.BeginInvoke() }
     $sw = [Diagnostics.Stopwatch]::StartNew(); while (-not $run.handle.IsCompleted -and $sw.Elapsed.TotalSeconds -lt 30) { Start-Sleep -Milliseconds 50 }
     $r = Get-MailRunResult $run; $p.Dispose(); $rs.Dispose(); $ss.Dispose(); return $r }
-$loop = $true; try { $lis = New-Object System.Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0); $lis.Start(); $lis.Stop() } catch { $loop = $false }
+$loop = $false; $lp = $null; $lc = $null; $la = $null   # CC LOW-C: a real connect + accept + one byte each way, not just a listener start
+try { $lp = New-Object System.Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0); $lp.Start(); $lc = New-Object System.Net.Sockets.TcpClient
+      $car = $lc.BeginConnect('127.0.0.1', $lp.LocalEndpoint.Port, $null, $null)
+      $aar = $lp.BeginAcceptTcpClient($null, $null)
+      if ($car.AsyncWaitHandle.WaitOne(3000) -and $aar.AsyncWaitHandle.WaitOne(3000)) { $lc.EndConnect($car); $la = $lp.EndAcceptTcpClient($aar)
+          $lc.GetStream().WriteByte(42); $la.GetStream().ReadTimeout = 3000; $b1 = $la.GetStream().ReadByte(); $la.GetStream().WriteByte(43); $lc.GetStream().ReadTimeout = 3000; $b2 = $lc.GetStream().ReadByte()
+          $loop = ($b1 -eq 42 -and $b2 -eq 43) } } catch { $loop = $false }
+finally { foreach ($o in $la, $lc) { try { if ($o) { $o.Close() } } catch {} }; try { if ($lp) { $lp.Stop() } } catch {} }
 if (-not $loop) { 'SKIP  real worker script on localhost (loopback is not available here)' }
 else {
 $lis = New-Object System.Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0); $lis.Start(); $port = $lis.LocalEndpoint.Port; $lis.Stop()   # a closed localhost port

@@ -3269,7 +3269,8 @@ function global:Add-MailOverlay($tile, $wrap, $g, $c, [string]$ir, $btn) {   # E
     $lab = Get-DisplayLabel $btn; $base = ([string]$lab.main -replace "`n", ' ').Trim(); if (-not $base) { $base = 'Email' }
     $e = @{ tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; glow = $ov; pulse = $null; peak = [double]$look.peak; glowColor = $look.color; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
     $tile.Add_IsVisibleChanged({ Update-MailPulse $e }.GetNewClosure())                # a hidden panel stops its pulse; shown again, it restarts
-    $tile.Add_Unloaded({ Set-MailPulse $e $false }.GetNewClosure())                    # a rebuilt panel (edit mode, layout) drops the old tile's pulse
+    $tile.Add_Unloaded({ Set-MailPulse $e $false }.GetNewClosure())
+    $tile.Add_Loaded({ if (-not $e.winHooked) { $w = [System.Windows.Window]::GetWindow($e.tile); if ($w) { $e.winHooked = $true; $w.Add_StateChanged({ Update-MailPulse $e }.GetNewClosure()) } } }.GetNewClosure())   # CC: a minimised panel stops its pulse; restored, it resumes                    # a rebuilt panel (edit mode, layout) drops the old tile's pulse
     $tile.Add_PreviewMouseLeftButtonUp({ Start-MailFollowUp })                      # the click itself still does exactly what it did
     $tile.Add_PreviewKeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { Start-MailFollowUp } })
     [void]$global:mail.ui.Add($e)
@@ -3303,9 +3304,10 @@ function global:Set-MailPulse($e, [bool]$on, [double]$peak = 0.45, [string]$colo
         $e.pulse = $sb; $sb.Begin($e.glow, $true)
     } elseif ($e.pulse) { try { $e.pulse.Remove($e.glow) } catch {}; $e.pulse = $null; $e.glow.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null); $e.glow.Opacity = 0 }
 }
+function global:Test-MailWinMinimized($el) { try { $w = [System.Windows.Window]::GetWindow($el); return [bool]($w -and $w.WindowState -eq 'Minimized') } catch { return $false } }
 function global:Update-MailPulse($e) {
     $m = $global:mail; if (-not $m) { return }
-    $on = [bool]$m.set.enabled -and (Test-MailPulseOn $m.state ([string]$m.set.style) (Test-MailAnimOn) ([bool]$global:cfg.locked) ([bool]$e.tile.IsVisible))
+    $on = [bool]$m.set.enabled -and (Test-MailPulseOn $m.state ([string]$m.set.style) (Test-MailAnimOn) ([bool]$global:cfg.locked) ([bool]$e.tile.IsVisible -and -not (Test-MailWinMinimized $e.tile)))
     Set-MailPulse $e $on ([double]$e.peak) ([string]$e.glowColor)
 }
 function global:Stop-MailPulse { if ($global:mail) { foreach ($e in @($global:mail.ui)) { Set-MailPulse $e $false } } }

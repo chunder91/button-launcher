@@ -161,7 +161,19 @@ $sigSrc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Fu
 Check 'idle: layout signature covers screens, work areas, DPI, visibility, handles, settings' ($sigSrc -match 'AllScreens' -and $sigSrc -match 'WorkingArea' -and $sigSrc -match 'Get-Dpi' -and $sigSrc -match 'IsVisible' -and $sigSrc -match 'hwnd' -and $sigSrc -match 'ConvertTo-Json')
 Check 'idle: relayout timer goes through Invoke-Relayout' ($src -match '\$global:relayoutTimer\.Add_Tick\(\{ \$global:relayoutTimer\.Stop\(\);[^\n]*Invoke-Relayout -Force:\$f')
 Check 'idle: show signal is a thread-pool wait, not a 400 ms poll' ($src -match 'RegisterWaitForSingleObject' -and $src -notmatch 'FromMilliseconds\(400\)\s*\r?\n\s*\$showTimer' -and $src -notmatch "showTimer\.Interval = \[TimeSpan\]::FromMilliseconds\(400\)")
-Check 'idle: no forever-repeating animations except the unread-email pulse (Set-MailPulse, only while unread > 0, 20 fps)' (([regex]::Matches($src, 'RepeatBehavior =')).Count -eq 1 -and $src.Contains('RepeatBehavior]::Forever') -and $src.Contains('SetDesiredFrameRate($sb, 20)'))
+function Test-OneForever([string]$text) {   # CC LOW-B: every 'RepeatBehavior' (property set, XAML attribute, SetValue/RepeatBehaviorProperty) must be on ONE line, inside Set-MailPulse
+    $hits = [regex]::Matches($text, 'RepeatBehavior'); if ($hits.Count -eq 0) { return $false }
+    $lines = @($hits | ForEach-Object { ($text.Substring(0, $_.Index) -split "`n").Count } | Sort-Object -Unique)
+    $pa = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$null)
+    $f = $pa.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-MailPulse' }, $true)
+    if (-not $f -or $lines.Count -ne 1) { return $false }
+    return ($lines[0] -ge $f.Extent.StartLineNumber -and $lines[0] -le $f.Extent.EndLineNumber)
+}
+Check 'idle: exactly one forever animation, the unread-email pulse inside Set-MailPulse (20 fps)' ((Test-OneForever $src) -and $src.Contains('SetDesiredFrameRate($sb, 20)'))
+$plants = @("`n`$x.RepeatBehavior='Forever'", "`n`$xaml = '<DoubleAnimation RepeatBehavior=`"Forever`"/>'", "`n`$a.SetValue([System.Windows.Media.Animation.Timeline]::RepeatBehaviorProperty, `$f)")
+$caught = @(foreach ($pl in $plants) { -not (Test-OneForever ($src + $pl)) })
+$inside = $src -replace '(function global:Set-MailPulse[^\n]*\n)', ('$1        $y.RepeatBehavior = 2' + "`n")
+Check "idle: the forever check catches a planted property set, XAML attribute and SetValue ($($caught -join ',')), and a second one inside Set-MailPulse" ((@($caught | Where-Object { $_ }).Count -eq 3) -and -not (Test-OneForever $inside))
 $ticks = [regex]::Matches($src, 'DispatcherTimer').Count
 Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback, VNC scan drain, VNC temp-file delete, VNC worker cleanup after close; v1.4.0 email count: poll, check drain, follow-ups after a click, Test wait)' ($ticks -eq 11)
 # First run: no file picker without a click
