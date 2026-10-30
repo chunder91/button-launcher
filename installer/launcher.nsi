@@ -137,6 +137,7 @@ Var WantDesk
 Var IsUpdate                    ; 1 = an existing Launcher install is being updated
 Var ShortDir                    ; $INSTDIR for messages, shortened to AppData\Local\... when it is under the profile
 Var NoReopen                    ; 1 = Fail must not reopen (a file was in use, so Launcher may still be running)
+Var Elevated                    ; 1 = Setup runs elevated (M24-L1): never start Launcher from here, it would run as admin
 Var FailShort                   ; status-line text for Fail (40 chars or fewer)
 
 Function .onInit
@@ -153,6 +154,11 @@ Function .onInit
   ${EndIf}
   StrCpy $FailShort "Setup stopped. Nothing was changed."
   StrCpy $NoReopen 0
+  StrCpy $Elevated 0                            ; M24-L1: detect only; an elevated install is not refused
+  System::Call 'shell32::IsUserAnAdmin()i.r0'
+  ${If} $0 <> 0
+    StrCpy $Elevated 1
+  ${EndIf}
   ; N4: an EMPTY leftover Programs\Launcher (no files, no links, not itself a link) counts as a fresh install
   ${If} ${FileExists} "$INSTDIR\*.*"
   ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
@@ -258,6 +264,7 @@ Function Fail   ; $R9 = message. Leaves the current install as it was.
   ; UX-2: Setup closed the running launcher; on an update, open the (unchanged) install again.
   ${If} $IsUpdate = 1
   ${AndIf} $NoReopen = 0
+  ${AndIf} $Elevated = 0
   ${AndIf} ${FileExists} "$INSTDIR\ButtonLauncher.exe"
     SetDetailsPrint listonly                    ; UI: keep "Execute: ..." out of the header
     Exec '"$INSTDIR\ButtonLauncher.exe"'
@@ -331,6 +338,7 @@ Section "Install"
     ${If} $R5 = 1
     ${OrIf} $R8 > 0
       RMDir "$Stage"
+      StrCpy $NoReopen 1                        ; M24-I1: never start an exe from a linked install folder
       StrCpy $R9 "${APPNAME} could not be updated: the install folder is, or contains a shortcut-style link, and links are never copied or followed.$\n$\n$ShortDir$\n$\nYour current install was not changed. Ask your IT contact for help."
       Call Fail
     ${EndIf}
@@ -500,12 +508,18 @@ Section "Install"
   ${Else}
     StrCpy $1 "installed"
   ${EndIf}
-  SetDetailsPrint listonly                      ; UI: keep "Execute: ..." out of the header
-  Exec '"$INSTDIR\ButtonLauncher.exe"'
+  ${If} $Elevated = 0
+    SetDetailsPrint listonly                    ; UI: keep "Execute: ..." out of the header
+    Exec '"$INSTDIR\ButtonLauncher.exe"'
+  ${EndIf}
   SetDetailsPrint textonly
   DetailPrint "${APPNAME} is $1."
   SetDetailsPrint listonly
-  MessageBox MB_OK|MB_ICONINFORMATION "${APPNAME} is $1 and open now.$\n$\nTo open it later: click Start and type ${APPNAME}.$\n$\nTo remove it: Settings > Apps." /SD IDOK
+  ${If} $Elevated = 0
+    MessageBox MB_OK|MB_ICONINFORMATION "${APPNAME} is $1 and open now.$\n$\nTo open it later: click Start and type ${APPNAME}.$\n$\nTo remove it: Settings > Apps." /SD IDOK
+  ${Else}
+    MessageBox MB_OK|MB_ICONINFORMATION "${APPNAME} is $1.$\n$\nTo open it: click Start and type ${APPNAME}.$\n$\nTo remove it: Settings > Apps." /SD IDOK
+  ${EndIf}
 SectionEnd
 
 Function un.onInit
