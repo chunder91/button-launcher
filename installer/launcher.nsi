@@ -202,21 +202,21 @@ Function .onInit
   ${OrIf} ${FileExists} "$INSTDIR\.buttonlauncher"
     StrCpy $IsUpdate 1
   ${EndIf}
-  StrCpy $R1 ""                                 ; M25-I1: elevated runs install for the signed-in admin account
-  ${If} $Elevated = 1
-    StrCpy $R1 "$\n$\nIf you signed in as a different administrator, ${APPNAME} will be set up for that account, not yours."
-  ${EndIf}
   ${IfNot} ${Silent}
-    ${If} $IsUpdate = 1
-      ${If} $Elevated = 1                       ; M24-L1: Setup never starts Launcher when elevated, so don't promise it
-        MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment. When the update is done, open it from Start by typing ${APPNAME}.$R1" IDOK +2
-        Abort
+    ${If} $Elevated = 1
+      ; ClaudeCode I1 / M25-I1: an elevated run installs for the account that approved it. One box, default No; /S keeps going.
+      ${If} $IsUpdate = 1
+        StrCpy $R1 "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment. When the update is done, open it from Start by typing ${APPNAME}."
       ${Else}
-        MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment and opens again when the update is done." IDOK +2
-        Abort
+        StrCpy $R1 "Install ${APPNAME}?$\n$\nIt will be added to the Start menu and will open each time you sign in. You can turn that off later from ${APPNAME}'s right-click menu."
       ${EndIf}
+      MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$R1$\n$\nSetup is running as an administrator. ${APPNAME} will be set up for the account that approved this, which may not be yours. To set it up for yourself, choose No and run Setup again without $\"Run as administrator$\".$\n$\nContinue anyway?" IDYES +2
+      Abort
+    ${ElseIf} $IsUpdate = 1
+      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment and opens again when the update is done." IDOK +2
+      Abort
     ${Else}
-      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Install ${APPNAME} for this Windows user?$\n$\nIt will be added to the Start menu and will open each time you sign in. You can turn that off later from ${APPNAME}'s right-click menu.$R1" IDOK +2
+      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Install ${APPNAME} for this Windows user?$\n$\nIt will be added to the Start menu and will open each time you sign in. You can turn that off later from ${APPNAME}'s right-click menu." IDOK +2
       Abort
     ${EndIf}
   ${EndIf}
