@@ -177,7 +177,7 @@ Function .onInit
   ${If} ${FileExists} "$INSTDIR\*.*"
   ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
   ${AndIfNot} ${FileExists} "$INSTDIR\.buttonlauncher"
-    MessageBox MB_OK|MB_ICONSTOP "Setup stopped. A folder named ${APPNAME} is already here,$\nand it doesn't look like ours:$\n$\n$ShortDir$\n$\nIt may belong to another program, so Setup left it alone.$\nNothing was changed. Ask your IT contact for help." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Setup stopped. A folder named ${APPNAME} is already here, and it doesn't look like ours:$\n$\n$ShortDir$\n$\nIt may belong to another program, so Setup left it alone. Nothing was changed. Ask your IT contact for help." /SD IDOK
     SetErrorLevel 1
     Quit
   ${EndIf}
@@ -185,7 +185,7 @@ Function .onInit
   ${IfNot} ${FileExists} "$INSTDIR\*.*"
     Call FindLeftover
     ${If} $4 != ""
-      MessageBox MB_OK|MB_ICONSTOP "${APPNAME} can't be installed yet.$\n$\nA copy of your earlier ${APPNAME} was found here:$\n$\n$4$\n$\nIt may hold your buttons, so Setup left it alone.$\nNothing was changed.$\n$\nAsk your IT contact to rename that folder to $\"${APPNAME}$\",$\nthen run Setup again." /SD IDOK
+      MessageBox MB_OK|MB_ICONSTOP "${APPNAME} can't be installed yet.$\n$\nA copy of your earlier ${APPNAME} was found here:$\n$\n$4$\n$\nIt may hold your buttons, so Setup left it alone. Nothing was changed.$\n$\nAsk your IT contact to rename that folder to $\"${APPNAME}$\", then run Setup again." /SD IDOK
       SetErrorLevel 1
       Quit
     ${EndIf}
@@ -197,10 +197,10 @@ Function .onInit
   ${EndIf}
   ${IfNot} ${Silent}
     ${If} $IsUpdate = 1
-      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment$\nand opens again when the update is done." IDOK +2
+      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment and opens again when the update is done." IDOK +2
       Abort
     ${Else}
-      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Install ${APPNAME} for this Windows user?$\n$\nIt will be added to the Start menu and will open each time you sign in.$\nYou can turn that off later from ${APPNAME}'s right-click menu." IDOK +2
+      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Install ${APPNAME} for this Windows user?$\n$\nIt will be added to the Start menu and will open each time you sign in. You can turn that off later from ${APPNAME}'s right-click menu." IDOK +2
       Abort
     ${EndIf}
   ${EndIf}
@@ -257,6 +257,7 @@ Function Fail   ; $R9 = message. Leaves the current install as it was.
   ; UX-2: Setup closed the running launcher; on an update, open the (unchanged) install again.
   ${If} $IsUpdate = 1
   ${AndIf} ${FileExists} "$INSTDIR\ButtonLauncher.exe"
+    SetDetailsPrint listonly                    ; UI: keep "Execute: ..." out of the header
     Exec '"$INSTDIR\ButtonLauncher.exe"'
     StrCpy $R9 "$R9$\n$\n${APPNAME} has been opened again, so you can keep using it."
   ${EndIf}
@@ -311,7 +312,7 @@ Section "Install"
   ${IfNot} ${FileExists} "$INSTDIR\*.*"
     Call FindLeftover                           ; also checked in .onInit; kept here in case one appeared since
     ${If} $4 != ""
-      StrCpy $R9 "${APPNAME} can't be installed yet.$\n$\nA copy of your earlier ${APPNAME} was found here:$\n$\n$4$\n$\nIt may hold your buttons, so Setup left it alone.$\nNothing was changed.$\n$\nAsk your IT contact to rename that folder to $\"${APPNAME}$\",$\nthen run Setup again."
+      StrCpy $R9 "${APPNAME} can't be installed yet.$\n$\nA copy of your earlier ${APPNAME} was found here:$\n$\n$4$\n$\nIt may hold your buttons, so Setup left it alone. Nothing was changed.$\n$\nAsk your IT contact to rename that folder to $\"${APPNAME}$\", then run Setup again."
       Call Fail
     ${EndIf}
   ${EndIf}
@@ -328,7 +329,7 @@ Section "Install"
     ${If} $R5 = 1
     ${OrIf} $R8 > 0
       RMDir "$Stage"
-      StrCpy $R9 "${APPNAME} could not be updated: the install folder is, or contains,$\na shortcut-style link, and links are never copied or followed.$\n$\n$ShortDir$\n$\nYour current install was not changed. Ask your IT contact for help."
+      StrCpy $R9 "${APPNAME} could not be updated: the install folder is, or contains a shortcut-style link, and links are never copied or followed.$\n$\n$ShortDir$\n$\nYour current install was not changed. Ask your IT contact for help."
       Call Fail
     ${EndIf}
     ClearErrors
@@ -352,7 +353,7 @@ Section "Install"
     ${OrIfNot} ${FileExists} "$PLUGINSDIR\saved.ok"
       !insertmacro SAFE_RMDIR "" "$Stage"
       !insertmacro SAFE_RMDIR "" "$Keep"
-      StrCpy $R9 "${APPNAME} could not be updated.$\n$\nSetup checks your own pictures before an update so none are lost,$\nand that check didn't finish (code $0). Nothing was changed.$\n$\nRestart the PC and run Setup again. If you see this again,$\nsend a photo of this message to your IT contact."
+      StrCpy $R9 "${APPNAME} could not be updated.$\n$\nSetup checks your own pictures before an update so none are lost, and that check didn't finish (code $0). Nothing was changed.$\n$\nRestart the PC and run Setup again. If you see this again, send a photo of this message to your IT contact."
       Call Fail
     ${EndIf}
     StrCpy $5 1
@@ -490,13 +491,17 @@ Section "Install"
   IntFmt $1 "0x%08X" $1
   WriteRegDWORD HKCU "${UNKEY}\${KEYNAME}" "EstimatedSize" $1
 
-  Exec '"$INSTDIR\ButtonLauncher.exe"'
   ${If} $IsUpdate = 1
     StrCpy $1 "updated"
   ${Else}
     StrCpy $1 "installed"
   ${EndIf}
-  MessageBox MB_OK|MB_ICONINFORMATION "${APPNAME} is $1 and open now.$\n$\nTo open it later: click Start and type ${APPNAME}.$\nTo remove it: Settings > Apps." /SD IDOK
+  SetDetailsPrint listonly                      ; UI: keep "Execute: ..." out of the header
+  Exec '"$INSTDIR\ButtonLauncher.exe"'
+  SetDetailsPrint textonly
+  DetailPrint "${APPNAME} is $1."
+  SetDetailsPrint listonly
+  MessageBox MB_OK|MB_ICONINFORMATION "${APPNAME} is $1 and open now.$\n$\nTo open it later: click Start and type ${APPNAME}.$\n$\nTo remove it: Settings > Apps." /SD IDOK
 SectionEnd
 
 Function un.onInit
@@ -517,12 +522,12 @@ Function un.onInit
   StrCpy $R6 "$INSTDIR"
   Call un.IsLink
   ${If} $R5 = 1
-    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: the install folder is a shortcut-style link,$\nso nothing was removed:$\n$\n$INSTDIR$\n$\nAsk your IT contact for help." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: the install folder is a shortcut-style link, so nothing was removed:$\n$\n$INSTDIR$\n$\nAsk your IT contact for help." /SD IDOK
     SetErrorLevel 1
     Quit
   ${EndIf}
   ${IfNot} ${Silent}
-    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "Remove ${APPNAME} for this Windows user?$\n$\nThis also deletes your buttons and any pictures you added.$\nThey can't be brought back.$\n$\nTo keep them, choose No." IDYES +2
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "Remove ${APPNAME} for this Windows user?$\n$\nThis also deletes your buttons and any pictures you added. They can't be brought back.$\n$\nTo keep them, choose No." IDYES +2
     Quit
   ${EndIf}
 FunctionEnd
@@ -546,7 +551,7 @@ Section "Uninstall"
   Push "$INSTDIR"
   Call un.WalkLinks
   ${If} $R8 > 0
-    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: the install folder contains a shortcut-style link$\nthat could not be removed safely, so nothing was removed:$\n$\n$INSTDIR$\n$\nAsk your IT contact for help." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Uninstall stopped: the install folder contains a shortcut-style link that could not be removed safely, so nothing was removed:$\n$\n$INSTDIR$\n$\nAsk your IT contact for help." /SD IDOK
     SetErrorLevel 2
     Quit
   ${EndIf}
