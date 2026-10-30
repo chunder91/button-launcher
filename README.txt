@@ -172,8 +172,6 @@ INSTALL (per-user, no admin)
   FOR IT: a silent /S install run as SYSTEM or as another admin account installs
   Launcher into that account, not the user's. Run Setup as the person who will
   use it, without elevation (no "Run as administrator").
-  An elevated /S run notes the folder it installed into in
-  install-note.txt in the install folder.
   START WITH WINDOWS is ON by default (HKCU Run value "ButtonLauncher").
   To change it: unlock, right-click a panel > "Start with Windows".
   Uninstall removes the shortcuts, the Run value, the Settings > Apps entry

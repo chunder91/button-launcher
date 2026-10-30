@@ -2756,8 +2756,9 @@ $global:MailDeadRuns  = New-Object System.Collections.ArrayList   # stopped chec
 $global:MailLogDetails = @('address not allowed', 'server closed', 'no greeting', 'login has characters IMAP cannot send', 'sign-in refused', 'no continuation', 'server closed at sign-in', 'no sign-in reply',
                            'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result', 'connection dropped', 'sign-in method not offered')   # the only words the log may carry
 $global:MailLogSteps = @('connect', 'tls', 'greeting', 'login', 'status', 'logout', 'timeout', 'lost-result')   # the failing step; fixed words only
-$global:MailLogWords = @('OK', 'NO', 'BAD', 'BYE')
-$global:MailWorkerDeadlineSec = 25   # CC L4: the worker gives up after 25 s; the UI cap in Start-MailRun is 45 s   # the server reply's status word only, never the text after it
+$global:MailLogWords = @('OK', 'NO', 'BAD', 'BYE')   # the server reply's status word only, never the text after it
+# CC L4: the worker gives up after 25 s; the UI cap in Start-MailRun is 45 s
+$global:MailWorkerDeadlineSec = 25
 
 # ---- IMAP protocol (pure; the worker runs these in a background runspace; tools/test-mail.ps1 drives them with a mock) ----
 function global:ConvertTo-ImapQuotedBytes([char[]]$chars) {   # RFC 3501 quoted string as ASCII bytes ('\' and '"' escaped); $null = needs a literal; CR, LF, NUL throw

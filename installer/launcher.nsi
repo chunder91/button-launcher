@@ -486,16 +486,6 @@ Section "Install"
   ${EndIf}
   SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
   SetOutPath "$INSTDIR"
-  ${If} $Elevated = 1                           ; CC M2: an elevated /S run also leaves the same fixed line in a file IT can read
-  ${AndIf} ${Silent}
-    ClearErrors
-    FileOpen $0 "$INSTDIR\install-note.txt" a
-    ${IfNot} ${Errors}
-      FileSeek $0 0 END
-      FileWrite $0 "Setup ran elevated (/S): installing for this account into $INSTDIR$\r$\n"
-      FileClose $0
-    ${EndIf}
-  ${EndIf}
 
   ; Shortcuts (per-user Start menu, same names as the IExpress installer)
   CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\ButtonLauncher.exe" "" "$INSTDIR\ButtonLauncher.exe" 0 SW_SHOWNORMAL "" "${APPNAME}"
