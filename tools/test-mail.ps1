@@ -9,7 +9,7 @@ $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $roo
 $src = $ast.Extent.Text
 $fns = 'Get-ButtonType', 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapPlainBytes', 'Get-ImapCaps', 'Read-ImapLine', 'Read-ImapStreamLine', 'Write-MailLogLine', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker', 'Get-MailWorkerScript',
        'New-MailState', 'Get-MailFreshState', 'Update-MailState', 'Step-MailResume', 'Get-MailLostResult', 'Get-MailWorkerError', 'Get-MailRunResult', 'Get-MailNextDelaySec', 'Get-MailBadgeText', 'Get-MailBadgeWidth', 'Test-MailShowBadge', 'Test-MailShowRing',
-       'Get-MailMotion', 'Format-MailTime', 'Get-MailCountText', 'Get-MailTipLine', 'Get-MailMenuLine', 'Get-MailAccessName', 'Get-MailTestText', 'Format-MailLogLine', 'Get-MailSecretPath', 'Get-MailSettingsPath', 'Remove-MailLogin',
+       'Get-MailMotion', 'Test-MailPulseOn', 'Format-MailTime', 'Get-MailCountText', 'Get-MailTipLine', 'Get-MailMenuLine', 'Get-MailAccessName', 'Get-MailTestText', 'Format-MailLogLine', 'Get-MailSecretPath', 'Get-MailSettingsPath', 'Remove-MailLogin',
        'Get-MailAddress', 'Test-MailAddress', 'Test-MailTile', 'ConvertTo-MailSettings', 'Get-MailSettingsJson', 'ConvertTo-MailFullAddress', 'Get-MailInterval', 'Get-MailAddressProblem', 'Write-LauncherError'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
@@ -117,7 +117,7 @@ $o = Update-MailState $s @{ kind = 'net'; epoch = 0 } $now; Check 'sleep: a chec
 foreach ($c in @(@(0, ''), @(1, '1'), @(9, '9'), @(10, '10'), @(99, '99'), @(100, '99+'), @(54321, '99+'))) { Check "badge text $($c[0]) -> '$($c[1])'" ((Get-MailBadgeText $c[0]) -ceq $c[1]) }
 Check 'badge widths 18 / 24 / 30' ((Get-MailBadgeWidth '3') -eq 18 -and (Get-MailBadgeWidth '27') -eq 24 -and (Get-MailBadgeWidth '99+') -eq 30)
 Check 'animations off -> badge only' ((Get-MailMotion 'flash' $false) -eq 'badge' -and (Get-MailMotion 'pulse' $false) -eq 'badge' -and (Get-MailMotion 'pulse' $true) -eq 'pulse')
-Check 'unknown style -> flash (Charles default)' ((Get-MailMotion 'zap' $true) -eq 'flash')
+Check 'unknown or old flash style -> pulse (Charles default)' ((Get-MailMotion 'zap' $true) -eq 'pulse' -and (Get-MailMotion 'flash' $true) -eq 'pulse' -and (Get-MailMotion 'badge' $true) -eq 'badge')
 
 # --- copy (Squint) ---
 $s = New-MailState; Check 'tip: checking' ((Get-MailTipLine $s $now) -ceq 'Checking email...')
@@ -139,7 +139,7 @@ Check 'test result ok' ((Get-MailTestText @{ kind = 'ok'; unseen = 3 }).text -ce
 Check 'test result auth' ((Get-MailTestText @{ kind = 'auth' }).text -ceq 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.')
 Check 'test result net' ((Get-MailTestText @{ kind = 'net' }).text -ceq 'Can''t reach the mail server. Check this PC is online, then press Test again.')
 Check 'UI strings use email, not mail (bar the approved heading)' (-not ([regex]::Matches($src, "'[^'\r\n]*\b[Mm]ail count[^'\r\n]*'")).Count)
-Check 'heading: When new email arrives:' ($src.Contains("'When new email arrives:'"))
+Check 'heading: While there are unread emails:, options Pulse and Just show the number' ($src.Contains("'While there are unread emails:'") -and $src.Contains("@(@('pulse', 'Pulse'), @('badge', 'Just show the number'))") -and -not $src.Contains('When new email arrives'))
 Check 'setup copy present' ($src.Contains("'Show unread email count on the Email button'") -and $src.Contains("'Uses your Jartrek email, the same login as webmail.'") -and $src.Contains("'Everyone who uses this Windows login on this PC will see how many unread emails this account has.'") -and $src.Contains("'Turn off the email count and forget this login on this PC?'"))
 Check 'menu items: Check email now, Setup item Unread email count...' ($src.Contains("'Check email now'") -and $src.Contains("'Unread email count...'"))
 
@@ -149,7 +149,8 @@ foreach ($a in 'test.user@jartrek.net', 'first.last+x@jartrek.net') { Check "add
 foreach ($a in '', 'cc', 'cc@', "test.user@jartrek.net`r`nx", "test.user@jartrek.net`n", 'c c@jartrek.net', 'cc@jartrek', '"x"@jartrek.net') { Check ("address rejected: " + ($a -replace "`r", '\r' -replace "`n", '\n')) (-not (Test-MailAddress $a)) }
 $j = Get-MailSettingsJson @{ enabled = $true; address = 'test.user@example.invalid'; style = 'pulse'; password = $fake; secret = $fake }
 Check 'settings json: only enabled/address/style, no password' ($j -ceq '{"enabled":true,"address":"test.user@example.invalid","style":"pulse","interval":3}' -and -not $j.Contains($fake))
-Check 'settings default: off, Flash' ((ConvertTo-MailSettings @{}).enabled -eq $false -and (ConvertTo-MailSettings @{}).style -eq 'flash')
+Check 'settings default: off, Pulse' ((ConvertTo-MailSettings @{}).enabled -eq $false -and (ConvertTo-MailSettings @{}).style -eq 'pulse' -and $src.Contains("`$radios['pulse'].IsChecked = `$true"))
+foreach ($c in @(@('flash', 'pulse'), @('pulse', 'pulse'), @('badge', 'badge'), @('Badge', 'pulse'), @($null, 'pulse'), @('zap', 'pulse'))) { Check "migration: saved style '$($c[0])' -> $($c[1])" ((ConvertTo-MailSettings @{ style = $c[0] }).style -ceq $c[1]) }
 Check 'settings: enabled needs a valid address' (-not (ConvertTo-MailSettings @{ enabled = $true; address = 'no pe' }).enabled)
 $ll = Format-MailLogLine @{ kind = 'auth'; detail = $fake; unseen = -1; password = $fake; user = 'test.user@example.invalid' }
 Check 'log line: no password, no address' (-not $ll.Contains($fake) -and -not $ll.Contains('example.invalid') -and $ll -ceq 'email count: auth')
@@ -257,8 +258,20 @@ Check 'secret file under LocalApplicationData, not beside buttons.json' ($src -m
 Check 'no -AsPlainText / plain conversion of the password' (-not ($codeText -match '(?i)AsPlainText|PtrToStringAuto|PtrToStringBSTR|PtrToStringUni|NetworkCredential'))
 Check 'Save-Config never writes email settings' (-not (($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Save-Config' }, $true)).Extent.Text -match '(?i)mail'))
 Check 'polling skips a stopped (sign-in failed) count unless the user asked' ($src -match 'if \(\$m\.state\.stopped -and -not \$byUser\) \{ return \}')
-Check 'flash cancelled by hover and click' ($src -match 'Add_MouseEnter\(\{ Stop-MailFlash \}\)' -and $src -match 'Add_PreviewMouseLeftButtonDown\(\{ Stop-MailFlash \}\)')
-Check 'flash: 3 x 500 ms on at 1 Hz with 60 ms ramps' ($src.Contains('$fm = @(0, 60, 500, 560, 1000, 1060, 1500, 1560, 2000, 2060, 2500, 2560)'))
+Check 'no flash left: no Stop-MailFlash, no 3-flash keyframes, no flash option' (-not ($src -match 'Stop-MailFlash|Flash the button|\$fm = @\(0, 60, 500'))
+$ps0 = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-MailPulse' }, $true).Extent.Text
+Check 'pulse: one Storyboard, 0 -> 0.45, 1200 ms each way (2.4 s cycle), sine, forever, 20 fps, started once' ($ps0 -match "DoubleAnimation 0\.0, 0\.45, \(\[System\.Windows\.Duration\]\[TimeSpan\]::FromMilliseconds\(1200\)\)" -and $ps0.Contains('SineEase') -and $ps0.Contains('AutoReverse = $true') -and $ps0.Contains('RepeatBehavior]::Forever') -and $ps0.Contains('SetDesiredFrameRate($sb, 20)') -and $ps0.Contains('if ($e.pulse) { return }') -and $ps0.Contains('$e.pulse.Remove($e.glow)') -and $ps0 -notmatch 'DispatcherTimer')
+Check 'pulse follows visibility and rebuilds' ($src.Contains('$tile.Add_IsVisibleChanged({ Update-MailPulse $e }.GetNewClosure())') -and $src.Contains('$tile.Add_Unloaded({ Set-MailPulse $e $false }.GetNewClosure())') -and $src.Contains('Update-MailPulse $e   # Charles'))
+# Charles 1:58 PM: pulse the whole time unread > 0
+$sp = New-MailState; $seq = @()
+foreach ($r in @(@{ kind = 'ok'; unseen = 0 }, @{ kind = 'ok'; unseen = 2 }, @{ kind = 'ok'; unseen = 5 }, @{ kind = 'ok'; unseen = 1 }, @{ kind = 'ok'; unseen = 0 })) { [void](Update-MailState $sp $r $now); $seq += [bool](Test-MailPulseOn $sp 'pulse' $true $true $true) }
+Check "pulse follows the count 0, 2, 5, 1, 0 -> off, on, on, on, off ($($seq -join ','))" (($seq -join ',') -ceq 'False,True,True,True,False')
+$sp = New-MailState; [void](Update-MailState $sp @{ kind = 'ok'; unseen = 4 } $now)
+Check 'pulse on the first check after launch when unread > 0 (no "new" needed)' (Test-MailPulseOn $sp 'pulse' $true $true $true)
+Check 'no pulse in edit mode, on a hidden panel, with animations off, or with Just show the number' (-not (Test-MailPulseOn $sp 'pulse' $true $false $true) -and -not (Test-MailPulseOn $sp 'pulse' $true $true $false) -and -not (Test-MailPulseOn $sp 'pulse' $false $true $true) -and -not (Test-MailPulseOn $sp 'badge' $true $true $true))
+$sq = New-MailState; [void](Update-MailState $sq @{ kind = 'ok'; unseen = 4 } $now); [void](Update-MailState $sq @{ kind = 'auth' } $now)
+$sr = New-MailState; [void](Update-MailState $sr @{ kind = 'ok'; unseen = 4 } $now); [void](Update-MailState $sr @{ kind = 'net' } $now); [void](Update-MailState $sr @{ kind = 'net' } $now)
+Check 'pulse stops when the count stops (sign-in) or goes offline' (-not (Test-MailPulseOn $sq 'pulse' $true $true $true) -and -not (Test-MailPulseOn $sr 'pulse' $true $true $true))
 Check 'badge: Kern -6 top, -8 right' ($src.Contains('SetLeft($bd, $ipx - 8); [System.Windows.Controls.Canvas]::SetTop($bd, -6)'))
 Check 'motion follows Windows animation setting' ($src -match 'ClientAreaAnimation')
 Check 'exit stops the email check' ($src -match 'try \{ Stop-Mail \} catch \{\}')
@@ -318,7 +331,7 @@ Check 'not configured: the setup dialog builds both fields through New-D2Field a
 $kinds = @((Get-MailTestText @{ kind = 'ok'; unseen = 2 }).kind, (Get-MailTestText @{ kind = 'auth' }).kind, (Get-MailTestText @{ kind = 'auth'; unclear = $true }).kind, (Get-MailTestText @{ kind = 'net' }).kind, (Get-MailTestText @{ kind = 'cert' }).kind)
 Check 'Test results: ok, clear fail, unclear fail, network, certificate' (($kinds -join ',') -eq 'ok,auth,unclear,net,cert')
 Check 'Test results: the dialog has a branch for each and sets only Text/Foreground on its TextBlocks' ($sd.Contains("'ok' { `$ri.Text") -and $sd.Contains("'auth' { `$ri.Text") -and $sd.Contains("{ `$_ -eq 'net' -or `$_ -eq 'unclear' -or `$_ -eq 'cert' -or `$_ -eq 'proto' -or `$_ -eq 'lost' -or `$_ -eq 'internal' -or `$_ -eq 'method' }") -and $sd -notmatch '\$r[it]\.Background')
-foreach ($st in 'flash', 'pulse', 'badge') { Check "style ${st}: motion path picked, badge only when animations are off" ((Get-MailMotion $st $true) -eq $st -and (Get-MailMotion $st $false) -eq 'badge') }
+foreach ($st in 'pulse', 'badge') { Check "style ${st}: motion path picked, badge only when animations are off" ((Get-MailMotion $st $true) -eq $st -and (Get-MailMotion $st $false) -eq 'badge') }
 $ov = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Add-MailOverlay' }, $true)
 Check 'flash/pulse/badge overlay: every property set exists on its element (property table)' ($ov -and @(Find-WpfPropMisuse $ov).Count -eq 0)
 # --- v1.4.0 laptop bug (4:38 PM): pressing Test -> "The property 'busy' cannot be found on this object" ---
@@ -382,8 +395,8 @@ Check 'interval choices are 2, 3, 5, 10, 15, 30; default 3' (($global:MailInterv
 $s0 = New-MailState
 Check 'timer uses the saved interval (2 min -> 120 s, 10 -> 600 s, hand-edited 1 -> 180 s)' ((Get-MailNextDelaySec $s0 2) -eq 120 -and (Get-MailNextDelaySec $s0 10) -eq 600 -and (Get-MailNextDelaySec $s0 1) -eq 180 -and (Get-MailNextDelaySec $s0) -eq 180)
 $s0.fails = 2; Check 'network backoff never sooner than the interval' ((Get-MailNextDelaySec $s0 3) -eq 360 -and (Get-MailNextDelaySec $s0 30) -eq 1800)
-$js = Get-MailSettingsJson @{ enabled = $true; address = 'test.user@example.invalid'; style = 'flash'; interval = 5; password = $fake }
-Check 'interval is stored in the non-secret settings; nothing else survives (no password)' ($js -ceq '{"enabled":true,"address":"test.user@example.invalid","style":"flash","interval":5}')
+$js = Get-MailSettingsJson @{ enabled = $true; address = 'test.user@example.invalid'; style = 'flash'; interval = 5; password = $fake }   # an old flash setting is saved back as pulse
+Check 'interval is stored in the non-secret settings; nothing else survives (no password)' ($js -ceq '{"enabled":true,"address":"test.user@example.invalid","style":"pulse","interval":5}')
 Check 'Save applies the interval at once (no restart)' ($sd2.Contains('interval = $iv }') -and $sd2.Contains('Set-MailTimer (Get-MailNextDelaySec $global:mail.state $set.interval)') -and $sd2.Contains('Start-MailPolling -firstSec (60 * $set.interval)') -and $src.Contains('Set-MailTimer (Get-MailNextDelaySec $m.state $m.set.interval)'))
 # --- the password never reaches the log (failing sign-in path) ---
 $global:logPath = Join-Path ([IO.Path]::GetTempPath()) ('bl-maillog-' + [guid]::NewGuid() + '.log')
@@ -576,12 +589,28 @@ function RunWorker([string]$script, [string]$step = 'connect') {
     $run = @{ ps = $p; sync = $sy; handle = $p.BeginInvoke() }
     $sw = [Diagnostics.Stopwatch]::StartNew(); while (-not $run.handle.IsCompleted -and $sw.Elapsed.TotalSeconds -lt 30) { Start-Sleep -Milliseconds 50 }
     $r = Get-MailRunResult $run; $p.Dispose(); $rs.Dispose(); $ss.Dispose(); return $r }
+$loop = $true; try { $lis = New-Object System.Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0); $lis.Start(); $lis.Stop() } catch { $loop = $false }
+if (-not $loop) { 'SKIP  real worker script on localhost (loopback is not available here)' }
+else {
 $lis = New-Object System.Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0); $lis.Start(); $port = $lis.LocalEndpoint.Port; $lis.Stop()   # a closed localhost port
 $r = RunWorker ($wsP -replace "'mail\.jartrek\.net', 993", "'127.0.0.1', $port")
-Check 'real worker script in a runspace (localhost, closed port): its result comes back as net step=connect' ($r -is [hashtable] -and $r.kind -eq 'net' -and $r.step -eq 'connect')
+Check 'EndInvoke smoke: real worker script in a runspace (localhost, closed port): its result comes back as net step=connect' ($r -is [hashtable] -and $r.kind -eq 'net' -and $r.step -eq 'connect')
 $lis = New-Object System.Net.Sockets.TcpListener([Net.IPAddress]::Loopback, 0); $lis.Start(); $port = $lis.LocalEndpoint.Port
 $r = RunWorker ($wsP -replace "'mail\.jartrek\.net', 993", "'127.0.0.1', $port"); $lis.Stop()
 Check 'real worker script (localhost, accept then no TLS reply): its result comes back (net/cert at tls or timeout), not lost' ($r -is [hashtable] -and $r.kind -in 'net', 'cert' -and $r.step -in 'tls', 'timeout')
+}
+# CC process fix: EndInvoke smoke with the mock: the generated worker functions run a full session in a real runspace and the ok result comes back through Get-MailRunResult
+$wsFns = ($wsP -split "`n" | Where-Object { $_ -notmatch '^try \{ Invoke-MailCheckWorker' }) -join "`n"
+$mockRun = $wsFns + "`n`$q = New-Object System.Collections.Queue; foreach (`$l in '* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR] hi', 'a1 OK in', '* STATUS INBOX (UNSEEN 7)', 'a2 OK done', 'a3 OK bye') { `$q.Enqueue(`$l) }`nInvoke-ImapSession { `$q.Dequeue() } { param([byte[]]`$b) } 'test.user@example.invalid' 'not-real'.ToCharArray() `$args[2]"
+$r = RunWorker $mockRun
+Check 'EndInvoke smoke with the mock: ok, 7 unread comes back from a real runspace' ($r -is [hashtable] -and $r.kind -eq 'ok' -and $r.unseen -eq 7)
+# CC process fix: every generated script and every .ps1 parses
+$gen = @{ 'mail worker' = $wsP; 'mail worker tail' = $global:MailWorkerTail }
+foreach ($v in 'VncScanScript', 'VncNameScript') { $st = $ast.EndBlock.Statements | Where-Object { $_.Extent.Text -match ('^\$global:' + $v + '\s*=') } | Select-Object -First 1; if ($st) { $gen[$v] = $st.Right.Expression.ScriptBlock.EndBlock.Extent.Text; if (-not $gen[$v]) { $gen[$v] = $st.Right.Extent.Text } } else { $gen[$v] = $null } }
+foreach ($k in $gen.Keys) { $pe = $null; if ($null -ne $gen[$k]) { [void][System.Management.Automation.Language.Parser]::ParseInput([string]$gen[$k], [ref]$null, [ref]$pe) }; Check "generated script parses: $k" ($null -ne $gen[$k] -and $pe.Count -eq 0) }
+$ps1 = @(Get-ChildItem -LiteralPath $root -Recurse -File -Filter *.ps1 | Where-Object { $_.FullName -notmatch '[\\/](installer-output|\.git)[\\/]' })
+$bad = @(foreach ($f in $ps1) { $pe = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$pe); if ($pe.Count) { $f.Name } })
+Check "every .ps1 parses ($($ps1.Count) files$(if ($bad) { ': ' + ($bad -join ', ') }))" ($ps1.Count -ge 5 -and $bad.Count -eq 0)
 $boom = "function global:Invoke-MailCheckWorker { `$args[2].step = 'tls'`n `$x = `$null`n `$x.Foo() }`n" + $global:MailWorkerTail
 $r = RunWorker $boom
 Check 'worker that throws -> worker-error with type, line and step (no message)' ($r.kind -eq 'internal' -and $r.step -eq 'worker-error' -and $r.etype -ceq 'System.Management.Automation.RuntimeException' -and $r.eline -eq 3 -and $r.estep -eq 'tls' -and -not $r.ContainsKey('message'))

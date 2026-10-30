@@ -161,7 +161,7 @@ $sigSrc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Fu
 Check 'idle: layout signature covers screens, work areas, DPI, visibility, handles, settings' ($sigSrc -match 'AllScreens' -and $sigSrc -match 'WorkingArea' -and $sigSrc -match 'Get-Dpi' -and $sigSrc -match 'IsVisible' -and $sigSrc -match 'hwnd' -and $sigSrc -match 'ConvertTo-Json')
 Check 'idle: relayout timer goes through Invoke-Relayout' ($src -match '\$global:relayoutTimer\.Add_Tick\(\{ \$global:relayoutTimer\.Stop\(\);[^\n]*Invoke-Relayout -Force:\$f')
 Check 'idle: show signal is a thread-pool wait, not a 400 ms poll' ($src -match 'RegisterWaitForSingleObject' -and $src -notmatch 'FromMilliseconds\(400\)\s*\r?\n\s*\$showTimer' -and $src -notmatch "showTimer\.Interval = \[TimeSpan\]::FromMilliseconds\(400\)")
-Check 'idle: no forever-repeating animations' ($src -notmatch 'RepeatBehavior')
+Check 'idle: no forever-repeating animations except the unread-email pulse (Set-MailPulse, only while unread > 0, 20 fps)' (([regex]::Matches($src, 'RepeatBehavior =')).Count -eq 1 -and $src.Contains('RepeatBehavior]::Forever') -and $src.Contains('SetDesiredFrameRate($sb, 20)'))
 $ticks = [regex]::Matches($src, 'DispatcherTimer').Count
 Check 'idle: only the known timers exist (relayout debounce, toast, ScreenConnect wait, show fallback, VNC scan drain, VNC temp-file delete, VNC worker cleanup after close; v1.4.0 email count: poll, check drain, follow-ups after a click, Test wait)' ($ticks -eq 11)
 # First run: no file picker without a click

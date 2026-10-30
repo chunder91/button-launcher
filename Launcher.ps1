@@ -2739,12 +2739,12 @@ function global:Show-VncPicker($btn) {
 }
 
 # ================= v1.4.0 unread email count on the Email tile (opt-in, per Windows user) =================
-# Charles: off by default; Flash by default once on; each Windows user signs in with their own @jartrek.net login; INBOX only.
+# Charles: off by default; Pulse (while unread > 0) by default once on; each Windows user signs in with their own @jartrek.net login; INBOX only.
 # IMAP over implicit TLS to mail.jartrek.net:993. The only commands ever sent: AUTHENTICATE PLAIN (when the greeting lists AUTH=PLAIN) or LOGIN, STATUS INBOX (UNSEEN), LOGOUT.
 # The certificate is checked by Windows itself (no custom validation callback; global .NET network settings untouched); a failure is an error.
 # The password: a DPAPI CurrentUser blob (ConvertFrom-SecureString, no key) in %LOCALAPPDATA%\ButtonLauncher\email-count.dat,
 # read back only as a SecureString; plaintext exists only as a char[]/byte[] inside the worker and is zeroed after the write.
-# Squint: copy, flow, shared-PC warning, stop polling on a sign-in failure. Kern: badge, pulse, flash, error ring, setup dialog.
+# Squint: copy, flow, shared-PC warning, stop polling on a sign-in failure. Kern: badge, pulse, error ring, setup dialog.
 $global:MailDomain   = '@jartrek.net'
 $global:mail         = $null        # @{ set; state; ui }
 $global:mailRun      = $null        # the one check in flight
@@ -2978,7 +2978,9 @@ function global:Get-MailBadgeText([int]$n) { if ($n -le 0) { '' } elseif ($n -ge
 function global:Get-MailBadgeWidth([string]$t) { switch ($t.Length) { 0 { 18 } 1 { 18 } 2 { 24 } default { 30 } } }   # Kern: fixed width per bucket
 function global:Test-MailShowBadge($s) { ($s.phase -eq 'ok' -or $s.phase -eq 'retry') -and [int]$s.count -gt 0 }
 function global:Test-MailShowRing($s) { $s.phase -eq 'authfail' -or $s.phase -eq 'methodfail' -or $s.phase -eq 'offline' }   # the count is hidden whenever the ring shows
-function global:Get-MailMotion([string]$style, [bool]$animOn) { if (-not $animOn) { return 'badge' }; if ($style -in 'pulse', 'flash', 'badge') { return $style }; return 'flash' }
+function global:Get-MailMotion([string]$style, [bool]$animOn) { if (-not $animOn) { return 'badge' }; if ($style -ceq 'badge') { return 'badge' }; return 'pulse' }   # Charles 1:58 PM: Pulse (default) or Just show the number
+function global:Test-MailPulseOn($s, [string]$style, [bool]$animOn, [bool]$locked, [bool]$visible) {   # Charles: pulse the whole time unread > 0; never in edit mode, on a hidden panel, or with animations off
+    (Test-MailShowBadge $s) -and (Get-MailMotion $style $animOn) -eq 'pulse' -and $locked -and $visible }
 function global:Format-MailTime($t, [datetime]$now) {   # Squint: '9:41 AM' today, 'Oct 28, 4:10 PM' otherwise
     if ($null -eq $t) { return '' }
     $c = [Globalization.CultureInfo]::GetCultureInfo('en-US'); $d = [datetime]$t
@@ -3079,7 +3081,7 @@ function global:Get-MailDir { Join-Path ([Environment]::GetFolderPath('LocalAppl
 function global:Get-MailSettingsPath { Join-Path (Get-MailDir) 'email-count.json' }
 function global:Get-MailSecretPath { Join-Path (Get-MailDir) 'email-count.dat' }
 function global:ConvertTo-MailSettings($o) {   # only these four keys survive, validated (never the password: that is only in the DPAPI file)
-    $style = [string]$o.style; if ($style -notin 'pulse', 'flash', 'badge') { $style = 'flash' }   # Charles: Flash by default
+    $style = if ([string]$o.style -ceq 'badge') { 'badge' } else { 'pulse' }   # Charles: Pulse by default; old 'flash' and 'pulse' -> pulse, 'badge' -> Just show the number
     $addr = ConvertTo-MailFullAddress ([string]$o.address); if (-not (Test-MailAddress $addr)) { $addr = '' }
     return @{ enabled = ([bool]$o.enabled -and [bool]$addr); address = $addr; style = $style; interval = (Get-MailInterval $o.interval) }
 }
@@ -3213,7 +3215,7 @@ function global:Disable-Mail {   # Turn off: forget the login on this PC and cle
     Update-MailUi $false
 }
 
-# ---- tile visuals (Kern D2): badge, error ring, flash overlay; opacity / scale only ----
+# ---- tile visuals (Kern D2): badge, error ring, pulse glow overlay; opacity only ----
 function global:Test-MailAnimOn { try { return [bool][System.Windows.SystemParameters]::ClientAreaAnimation } catch { return $true } }   # re-read on every update
 function global:New-MailKeyAnim([double[]]$ms, [double[]]$val, [bool]$sine) {
     $k = New-Object System.Windows.Media.Animation.DoubleAnimationUsingKeyFrames
@@ -3254,11 +3256,11 @@ function global:Add-MailOverlay($tile, $wrap, $g, $c, [string]$ir, $btn) {   # E
     [System.Windows.Controls.Canvas]::SetLeft($rg, $ipx - 3); [System.Windows.Controls.Canvas]::SetTop($rg, -1)   # centred where the badge centre is
     [void]$cv.Children.Add($rg); [void]$cv.Children.Add($bd)
     $lab = Get-DisplayLabel $btn; $base = ([string]$lab.main -replace "`n", ' ').Trim(); if (-not $base) { $base = 'Email' }
-    $e = @{ tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; flash = $ov; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
-    $tile.Add_MouseEnter({ Stop-MailFlash })                                            # hover wins over the flash
-    $tile.Add_PreviewMouseLeftButtonDown({ Stop-MailFlash })
+    $e = @{ tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; glow = $ov; pulse = $null; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
+    $tile.Add_IsVisibleChanged({ Update-MailPulse $e }.GetNewClosure())                # a hidden panel stops its pulse; shown again, it restarts
+    $tile.Add_Unloaded({ Set-MailPulse $e $false }.GetNewClosure())                    # a rebuilt panel (edit mode, layout) drops the old tile's pulse
     $tile.Add_PreviewMouseLeftButtonUp({ Start-MailFollowUp })                      # the click itself still does exactly what it did
-    $tile.Add_PreviewKeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { Stop-MailFlash; Start-MailFollowUp } })
+    $tile.Add_PreviewKeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { Start-MailFollowUp } })
     [void]$global:mail.ui.Add($e)
     Set-MailEntry $e $false
 }
@@ -3273,15 +3275,29 @@ function global:Add-MailMenu($menu) {   # Squint: status line first, then Check 
         foreach ($x in @($st, $ck, $se, $sep)) { $x.Visibility = $v }
         if ($on) { $st.Header = Get-MailMenuLine $global:mail.state (Get-Date); $ck.IsEnabled = -not $global:mailRun } }.GetNewClosure())
 }
-function global:Stop-MailFlash {
-    if (-not $global:mail) { return }
-    foreach ($e in @($global:mail.ui)) { $e.flash.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null); $e.flash.Opacity = 0 }
+function global:Set-MailPulse($e, [bool]$on) {   # one Storyboard per tile on the yellow overlay: 0 -> 0.45 -> 0 every 2.4 s, sine ease, 20 fps; started once, removed when off
+    if ($on) {
+        if ($e.pulse) { return }   # already running: a count change never restarts it
+        $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, 0.45, ([System.Windows.Duration][TimeSpan]::FromMilliseconds(1200))
+        $ez = New-Object System.Windows.Media.Animation.SineEase; $ez.EasingMode = 'EaseInOut'; $a.EasingFunction = $ez; $a.AutoReverse = $true
+        [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($a, (New-Object System.Windows.PropertyPath 'Opacity'))
+        $sb = New-Object System.Windows.Media.Animation.Storyboard; [void]$sb.Children.Add($a)
+        $sb.RepeatBehavior = [System.Windows.Media.Animation.RepeatBehavior]::Forever
+        [System.Windows.Media.Animation.Timeline]::SetDesiredFrameRate($sb, 20)
+        $e.pulse = $sb; $sb.Begin($e.glow, $true)
+    } elseif ($e.pulse) { try { $e.pulse.Remove($e.glow) } catch {}; $e.pulse = $null; $e.glow.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null); $e.glow.Opacity = 0 }
 }
+function global:Update-MailPulse($e) {
+    $m = $global:mail; if (-not $m) { return }
+    $on = [bool]$m.set.enabled -and (Test-MailPulseOn $m.state ([string]$m.set.style) (Test-MailAnimOn) ([bool]$global:cfg.locked) ([bool]$e.tile.IsVisible))
+    Set-MailPulse $e $on
+}
+function global:Stop-MailPulse { if ($global:mail) { foreach ($e in @($global:mail.ui)) { Set-MailPulse $e $false } } }
 function global:Set-MailEntry($e, [bool]$grew) {
     $m = $global:mail; $s = $m.state; $op = [System.Windows.UIElement]::OpacityProperty
     $bd = $e.badge
     if (-not $m.set.enabled) {
-        Stop-MailFlash; $bd.BeginAnimation($op, $null); $bd.Opacity = 0; $bd.Visibility = 'Collapsed'; $e.ring.Visibility = 'Collapsed'
+        Set-MailPulse $e $false; $bd.BeginAnimation($op, $null); $bd.Opacity = 0; $bd.Visibility = 'Collapsed'; $e.ring.Visibility = 'Collapsed'
         $e.tile.ToolTip = $e.tip0; $e.tile.ClearValue([System.Windows.Automation.AutomationProperties]::NameProperty); return }
     $now = Get-Date
     $e.tile.ToolTip = "Open email`n" + (Get-MailTipLine $s $now)
@@ -3293,22 +3309,10 @@ function global:Set-MailEntry($e, [bool]$grew) {
         $appear = $bd.Visibility -ne 'Visible'
         $bd.Visibility = 'Visible'
         $sx = [System.Windows.Media.ScaleTransform]::ScaleXProperty; $sy = [System.Windows.Media.ScaleTransform]::ScaleYProperty
-        if ($grew -and $motion -eq 'pulse') {   # Kern 2: appear 150 ms (0.6 -> 1), then 3 x 1200 ms sine pulses, then steady
-            $t0 = if ($appear) { 150 } else { 0 }
-            $ms = @(0); $sv = @($(if ($appear) { 0.6 } else { 1.0 })); $ov = @($(if ($appear) { 0.0 } else { 1.0 }))
-            if ($appear) { $ms += 150; $sv += 1.0; $ov += 1.0 }
-            for ($k = 0; $k -lt 3; $k++) { $ms += ($t0 + $k * 1200 + 600); $sv += 1.12; $ov += 0.75; $ms += ($t0 + $k * 1200 + 1200); $sv += 1.0; $ov += 1.0 }
-            $e.scale.BeginAnimation($sx, (New-MailKeyAnim $ms $sv $true)); $e.scale.BeginAnimation($sy, (New-MailKeyAnim $ms $sv $true))
-            $bd.BeginAnimation($op, (New-MailKeyAnim $ms $ov $true))
-        } else {
-            $e.scale.BeginAnimation($sx, $null); $e.scale.BeginAnimation($sy, $null); $e.scale.ScaleX = 1; $e.scale.ScaleY = 1
-            if ($appear) { $fade = if ($motion -eq 'badge') { 120 } else { 150 }
-                $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, 1.0, ([System.Windows.Duration][TimeSpan]::FromMilliseconds($fade)); $bd.BeginAnimation($op, $a) }
-            elseif ($bd.Opacity -lt 1) { $bd.BeginAnimation($op, $null); $bd.Opacity = 1 }
-        }
-        if ($grew -and $motion -eq 'flash' -and -not $e.tile.IsMouseOver) {   # Kern 7b: 3 flashes at 1 Hz, 500 on / 500 off, 60 ms ramps
-            $fm = @(0, 60, 500, 560, 1000, 1060, 1500, 1560, 2000, 2060, 2500, 2560); $fv = @(0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0)
-            $e.flash.BeginAnimation($op, (New-MailKeyAnim $fm $fv $false)) }
+        $e.scale.BeginAnimation($sx, $null); $e.scale.BeginAnimation($sy, $null); $e.scale.ScaleX = 1; $e.scale.ScaleY = 1   # the badge never bounces; the tile pulses (Update-MailPulse)
+        if ($appear) { $fade = if ($motion -eq 'badge') { 120 } else { 150 }
+            $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, 1.0, ([System.Windows.Duration][TimeSpan]::FromMilliseconds($fade)); $bd.BeginAnimation($op, $a) }
+        elseif ($bd.Opacity -lt 1) { $bd.BeginAnimation($op, $null); $bd.Opacity = 1 }
         if ($grew) { try { $peer = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($e.tile); if ($peer) { $peer.RaiseAutomationEvent([System.Windows.Automation.Peers.AutomationEvents]::LiveRegionChanged) } } catch {} }   # polite, only when it goes up
     } else {
         $e.scale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleXProperty, $null); $e.scale.BeginAnimation([System.Windows.Media.ScaleTransform]::ScaleYProperty, $null)
@@ -3317,13 +3321,14 @@ function global:Set-MailEntry($e, [bool]$grew) {
             $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, ([System.Windows.Duration][TimeSpan]::FromMilliseconds($fade))
             $a.Add_Completed({ if ($bd.Opacity -lt 0.01) { $bd.Visibility = 'Collapsed' } }.GetNewClosure())
             $bd.BeginAnimation($op, $a) }
-        if ((Test-MailShowRing $s)) { Stop-MailFlash }
     }
+    Update-MailPulse $e   # Charles: on the whole time unread > 0, off at 0, on a stop or an error
 }
 function global:Update-MailUi([bool]$grew) {   # drops tiles from old panel builds, then redraws each Email tile
     $m = $global:mail; if (-not $m) { return }
     $keep = New-Object System.Collections.ArrayList
     foreach ($e in @($m.ui)) { if ($e.wrap.Parent -or ([DateTime]::UtcNow - $e.born).TotalSeconds -lt 5) { [void]$keep.Add($e) } }
+    foreach ($e in @($m.ui)) { if (-not $keep.Contains($e)) { Set-MailPulse $e $false } }
     $m.ui = $keep
     foreach ($e in @($m.ui)) { try { Set-MailEntry $e $grew } catch { Add-Content -LiteralPath $global:logPath -Value ('{0}  email count display: {1}' -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue } }
 }
@@ -3471,12 +3476,12 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
     [System.Windows.Automation.AutomationProperties]::SetName($wi, 'Warning')
     $wt = New-Object System.Windows.Controls.TextBlock; $wt.Text = 'Everyone who uses this Windows login on this PC will see how many unread emails this account has.'; $wt.FontSize = 13; $wt.Foreground = Brush '#FBBF24'; $wt.TextWrapping = 'Wrap'
     [void]$wd.Children.Add($wi); [void]$wd.Children.Add($wt); $warn.Child = $wd; [void]$acct.Children.Add($warn)
-    $h2 = New-D2Label 'When new email arrives:' '#FFFFFF' 14; $h2.FontWeight = [System.Windows.FontWeights]::SemiBold; [void]$acct.Children.Add($h2)
+    $h2 = New-D2Label 'While there are unread emails:' '#FFFFFF' 14; $h2.FontWeight = [System.Windows.FontWeights]::SemiBold; [void]$acct.Children.Add($h2)
     $s2 = $d.TryFindResource('D2Radio'); $radios = @{}
-    foreach ($o in @(@('pulse', 'Pulse the number'), @('flash', 'Flash the button 3 times'), @('badge', 'Just show the number'))) {
+    foreach ($o in @(@('pulse', 'Pulse'), @('badge', 'Just show the number'))) {
         $rb = New-Object System.Windows.Controls.RadioButton; $rb.GroupName = 'mailStyle'; $rb.Content = $o[1]; if ($s2) { $rb.Style = $s2 } else { $rb.Foreground = Brush '#FFFFFF'; $rb.FontSize = 14; $rb.Margin = '0,4' }
         $rb.IsChecked = ([string]$was.style -eq $o[0]); $radios[$o[0]] = $rb; [void]$acct.Children.Add($rb) }
-    if (-not ($radios.Values | Where-Object { $_.IsChecked })) { $radios['flash'].IsChecked = $true }   # Charles: Flash by default
+    if (-not ($radios.Values | Where-Object { $_.IsChecked })) { $radios['pulse'].IsChecked = $true }   # Charles: Pulse by default
     $h3 = New-D2Label 'Check for new email every:' '#FFFFFF' 14; $h3.FontWeight = [System.Windows.FontWeights]::SemiBold; $h3.Margin = '0,16,0,6'; [void]$acct.Children.Add($h3)
     $cbI = New-Object System.Windows.Controls.ComboBox; $cbI.Width = 140; $cbI.Height = 32; $cbI.HorizontalAlignment = 'Left'; $cbI.FontSize = 14; $cbI.Margin = '0'   # Kern: 16 to the buttons comes from the row
     $s3 = $d.TryFindResource('D2Combo'); if ($s3) { $cbI.Style = $s3 }
@@ -3543,7 +3548,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
             return }
         $addr = Get-MailAddress $ta.Text
         $why = Get-MailAddressProblem $addr; if ($why) { & $showResult 'auth' $why; [void]$ta.Focus(); return }   # Squint: Save says it too
-        $style = 'flash'; foreach ($k in @($radios.Keys)) { if ($radios[$k].IsChecked) { $style = $k } }
+        $style = 'pulse'; foreach ($k in @($radios.Keys)) { if ($radios[$k].IsChecked) { $style = $k } }
         if ($pb.SecurePassword.Length -gt 0) { $ss = $pb.SecurePassword; try { Save-MailSecret $ss } finally { $ss.Dispose() } }
         $iv = Get-MailInterval $(if ($cbI.SelectedIndex -ge 0) { $ds.ivals[$cbI.SelectedIndex] } else { 3 })
         $set = ConvertTo-MailSettings @{ enabled = $true; address = $addr; style = $style; interval = $iv }

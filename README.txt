@@ -27,6 +27,8 @@ WHAT EACH BUTTON DOES
                        then Save. Each Windows user signs in separately; the
                        password is encrypted by Windows for that user only.
                        Right-click Email for Check email now and its status.
+                       While there are unread emails the button pulses softly
+                       (or pick Just show the number in the same window).
   USER GUIDE buttons   First click asks you to pick the PDF; after that it
                        just opens it.
   PLCE                 PA State Police Liquor Control Enforcement page.
