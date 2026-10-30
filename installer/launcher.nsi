@@ -126,7 +126,6 @@ FunctionEnd
     ${Else}
       SetDetailsPrint listonly       ; status line: 40 chars or fewer
       DetailPrint "Not removed (links left inside): ${dir}"
-      SetDetailsPrint listonly
     ${EndIf}
   ${EndIf}
 !macroend
@@ -137,6 +136,7 @@ Var Keep
 Var WantDesk
 Var IsUpdate                    ; 1 = an existing Launcher install is being updated
 Var ShortDir                    ; $INSTDIR for messages, shortened to AppData\Local\... when it is under the profile
+Var NoReopen                    ; 1 = Fail must not reopen (a file was in use, so Launcher may still be running)
 Var FailShort                   ; status-line text for Fail (40 chars or fewer)
 
 Function .onInit
@@ -152,6 +152,7 @@ Function .onInit
     StrCpy $ShortDir "AppData\Local\Programs\${APPNAME}"
   ${EndIf}
   StrCpy $FailShort "Setup stopped. Nothing was changed."
+  StrCpy $NoReopen 0
   ; N4: an EMPTY leftover Programs\Launcher (no files, no links, not itself a link) counts as a fresh install
   ${If} ${FileExists} "$INSTDIR\*.*"
   ${AndIfNot} ${FileExists} "$INSTDIR\Launcher.ps1"
@@ -256,6 +257,7 @@ FunctionEnd
 Function Fail   ; $R9 = message. Leaves the current install as it was.
   ; UX-2: Setup closed the running launcher; on an update, open the (unchanged) install again.
   ${If} $IsUpdate = 1
+  ${AndIf} $NoReopen = 0
   ${AndIf} ${FileExists} "$INSTDIR\ButtonLauncher.exe"
     SetDetailsPrint listonly                    ; UI: keep "Execute: ..." out of the header
     Exec '"$INSTDIR\ButtonLauncher.exe"'
@@ -414,6 +416,7 @@ Section "Install"
     Rename "$INSTDIR" "$Old"
     ${If} ${Errors}
       !insertmacro SAFE_RMDIR "" "$Stage"
+      StrCpy $NoReopen 1                          ; file in use: Launcher may still run; never start a second copy
       StrCpy $R9 "${APPNAME} could not be updated (a file may be in use). Your current install was not changed."
       Call DropKeep
       Call Fail
@@ -434,6 +437,7 @@ Section "Install"
       ${EndIf}
     ${EndIf}
     !insertmacro SAFE_RMDIR "" "$Stage"
+    StrCpy $NoReopen 1                          ; file in use: Launcher may still run; never start a second copy
     StrCpy $R9 "${APPNAME} could not be updated (a file may be in use). Your current install was not changed."
     Call DropKeep
     Call Fail
@@ -448,7 +452,7 @@ Section "Install"
 
   ; Shortcuts (per-user Start menu, same names as the IExpress installer)
   CreateShortcut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\ButtonLauncher.exe" "" "$INSTDIR\ButtonLauncher.exe" 0 SW_SHOWNORMAL "" "${APPNAME}"
-  Delete "$SMPROGRAMS\Uninstall ${APPNAME}.lnk"   ; UX-1: no Start menu uninstall entry (Settings > Apps covers it)
+  CreateShortcut "$SMPROGRAMS\Uninstall ${APPNAME}.lnk" "$INSTDIR\Uninstall.exe" "" "$INSTDIR\ButtonLauncher.exe" 0 SW_SHOWNORMAL "" "Uninstall ${APPNAME}"
   ${If} $WantDesk = 1
     CreateShortcut "$DESKTOP\${APPNAME}.lnk" "$INSTDIR\ButtonLauncher.exe" "" "$INSTDIR\ButtonLauncher.exe" 0 SW_SHOWNORMAL "" "${APPNAME}"
   ${ElseIf} $IsUpdate = 0
@@ -583,7 +587,6 @@ Section "Uninstall"
   ${Else}
     SetDetailsPrint listonly
     DetailPrint "Not touched (it is a link): $LOCALAPPDATA\ButtonLauncher"
-    SetDetailsPrint listonly
   ${EndIf}
   ; Same as the IExpress uninstaller: the whole folder goes, including buttons.json and pictures.
   SetOutPath "$TEMP"
