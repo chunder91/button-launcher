@@ -1,4 +1,4 @@
-# Dry-run checks for Build-Installer.ps1 (no install, no build). Runs on pwsh (Linux or Windows).
+﻿# Dry-run checks for Build-Installer.ps1 (no install, no build). Runs on pwsh (Linux or Windows).
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $path = Join-Path $root 'Build-Installer.ps1'
@@ -348,6 +348,11 @@ $adm = [regex]::Match($init, '(?s)\$\{IfNot\} \$\{Silent\}\s+\$\{If\} \$Elevated
 Check 'I1: elevated interactive run shows ONE Yes/No box, default No, that aborts on No' ($adm -match '(?s)MessageBox MB_YESNO\|MB_ICONEXCLAMATION\|MB_DEFBUTTON2 "\$R1\$\\n\$\\nSetup is running as an administrator\. \$\{APPNAME\} will be set up for the account that approved this, which may not be yours\. To set it up for yourself, choose No and run Setup again without \$\\"Run as administrator\$\\"\.\$\\n\$\\nIf you didn''t choose Run as administrator, choose Yes\. Continue anyway\?" IDYES \+2\s+Abort\s*$' -and ([regex]::Matches($adm, 'MessageBox')).Count -eq 1 -and $iElev -gt 0 -and $init.IndexOf('Setup is running as an administrator') -gt $iElev -and $init.IndexOf('Setup is running as an administrator') -lt $init.IndexOf('Also put a shortcut'))
 Check 'I1: the elevated box carries the update text (no "opens again") or the install text; /S skips it' ($adm -match 'StrCpy \$R1 "Update \$\{APPNAME\} to \$\{VERSION\}\?\$\\n\$\\nYour buttons and pictures are kept\. \$\{APPNAME\} closes for a moment\. When the update is done, open it from Start by typing \$\{APPNAME\}\."' -and $adm -match 'StrCpy \$R1 "Install \$\{APPNAME\}\?' -and $adm -notmatch 'opens again' -and $init -notmatch 'different administrator' -and ([regex]::Matches($init, 'opens again')).Count -eq 1)
 Check 'recheck 3: manifest asks for no elevation (RequestExecutionLevel user), so "If you didn''t choose Run as administrator, choose Yes" holds' ($code -match '(?m)^RequestExecutionLevel user\s*$' -and $code -notmatch '(?m)^RequestExecutionLevel (admin|highest)')
+$nl = $nsi -split "`r?`n"
+$sop = @(0..($nl.Count - 1) | Where-Object { $nl[$_] -match '^\s*SetOutPath\b' })
+Check "Kern r2-12: every SetOutPath ($($sop.Count)) has SetDetailsPrint listonly right before it" ($sop.Count -ge 8 -and @($sop | Where-Object { $nl[$_ - 1] -notmatch '^\s*SetDetailsPrint listonly\b' }).Count -eq 0)
+$txo = @(0..($nl.Count - 1) | Where-Object { $nl[$_] -match '^\s*SetDetailsPrint textonly\b' })
+Check "Kern r2-12: every textonly ($($txo.Count)) is one DetailPrint then back to listonly (no SetOutPath/nsExec/System::Call/Exec in textonly)" ($txo.Count -ge 4 -and @($txo | Where-Object { $nl[$_ + 1] -notmatch '^\s*DetailPrint ' -or $nl[$_ + 2] -notmatch '^\s*SetDetailsPrint listonly\b' }).Count -eq 0 -and $nsi -notmatch 'SetDetailsPrint (both|lastused|none)')
 Check 'M26-I1: an elevated /S run logs that it ran elevated and the target folder' ($inst -match '(?s)\$\{If\} \$Elevated = 1[^\n]*\s+\$\{AndIf\} \$\{Silent\}\s+SetDetailsPrint listonly\s+DetailPrint "Setup ran elevated \(/S\): installing for this account into \$INSTDIR"\s+\$\{EndIf\}' -and $code -notmatch 'GetOptions \$0 "/(LOG|ELEV)')
 $psLines = @($lines | Where-Object { $_ -match '^!define PS\b' })
 Check 'M26-I2: !define PS is pinned to System32 Windows PowerShell with the expected flags' ($psLines.Count -eq 1 -and $psLines[0] -ceq '!define PS `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -Command`')

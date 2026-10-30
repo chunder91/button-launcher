@@ -375,6 +375,7 @@ Section "Install"
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_KEEP", t "$Keep")i'
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_KNOWN", t "$PLUGINSDIR\known-pictures.txt")i'
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_OK", t "$PLUGINSDIR\saved.ok")i'
+    SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
     SetOutPath "$TEMP"
     nsExec::ExecToLog `${PS} "& {${PICS_SAVE}}"`
     Pop $0
@@ -397,10 +398,12 @@ Section "Install"
   ${EndIf}
   Delete "$Stage\Uninstall.ps1"                 ; older IExpress uninstaller; Uninstall.exe replaces it
   ClearErrors
+  SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
   SetOutPath "$Stage"
   SetOverwrite on
   !insertmacro PAYLOAD_FILES
   ${If} ${Errors}
+    SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
     SetOutPath "$TEMP"
     !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be installed: unpacking the files failed.$\n$\nNothing was added to the Start menu or the registry. Your current install was not changed."
@@ -413,6 +416,7 @@ Section "Install"
   ${If} $5 = 1
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_DIR", t "$Stage")i'
     System::Call 'kernel32::SetEnvironmentVariable(t "BL_OK", t "$PLUGINSDIR\restored.ok")i'
+    SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
     SetOutPath "$TEMP"                          ; child cwd must not be the stage, or the swap rename fails
     nsExec::ExecToLog `${PS} "& {${PICS_RESTORE}}"`
     Pop $0
@@ -431,12 +435,14 @@ Section "Install"
   ${OrIfNot} ${FileExists} "$Stage\ButtonLauncher.exe"
   ${OrIfNot} ${FileExists} "$Stage\buttons.default.json"
   ${OrIfNot} ${FileExists} "$Stage\Uninstall.exe"
+    SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
     SetOutPath "$TEMP"
     !insertmacro SAFE_RMDIR "" "$Stage"
     StrCpy $R9 "${APPNAME} could not be installed: core files are missing after unpacking.$\n$\nNothing was added to the Start menu or the registry. Your current install was not changed."
     Call DropKeep
     Call Fail
   ${EndIf}
+  SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
   SetOutPath "$TEMP"
   StrCpy $2 0                                   ; 1 = an old install was moved aside
   ${If} ${FileExists} "$INSTDIR\*.*"
@@ -476,6 +482,7 @@ Section "Install"
   ${If} $5 = 1
     !insertmacro SAFE_RMDIR "" "$Keep"          ; pictures are in the new install now
   ${EndIf}
+  SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
   SetOutPath "$INSTDIR"
 
   ; Shortcuts (per-user Start menu, same names as the IExpress installer)
@@ -623,6 +630,7 @@ Section "Uninstall"
     DetailPrint "Not touched (it is a link): $LOCALAPPDATA\ButtonLauncher"
   ${EndIf}
   ; Same as the IExpress uninstaller: the whole folder goes, including buttons.json and pictures.
+  SetDetailsPrint listonly                    ; Kern r2-12: never "Output folder: ..." in the header
   SetOutPath "$TEMP"
   !insertmacro SAFE_RMDIR "un." "$INSTDIR"
   ${If} ${FileExists} "$INSTDIR\*.*"
