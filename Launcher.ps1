@@ -3232,15 +3232,16 @@ function global:Get-HexLuminance([string]$hex) {   # WCAG relative luminance of 
     return 0.2126 * $l[0] + 0.7152 * $l[1] + 0.0722 * $l[2]
 }
 function global:Get-MailPulseHint([bool]$animOn) { if ($animOn) { 'The pulse stops once every email is read.' } else { 'Windows animations are off, so Launcher just shows the number.' } }   # Squint: the hint under Pulse
-function global:Get-MailPulseLook([string]$labelHex) {   # Kern Minor: a light label (luminance > 0.5, a recoloured dark tile) gets a black overlay at 30%; otherwise the yellow one at 45%
-    if ((Get-HexLuminance $labelHex) -gt 0.5) { return @{ color = '#000000'; peak = 0.30 } }
-    return @{ color = 'yellow'; peak = 0.45 }
+function global:Get-MailPulseLook([string]$labelHex) {   # Charles 2:17 PM 'Red pulse at 3.5 seconds': the tile fades to red and back. Dark label (default Email #111111): coral #F87A6F -> #E5675E (>= 4.5:1 every frame).
+    # Kern: a light label (luminance > 0.5, a user-recoloured dark tile) gets a deep red #B3261E -> #A1221B instead, so the white label stays >= 4.5:1 (7.1+:1 at the peak)
+    if ((Get-HexLuminance $labelHex) -gt 0.5) { return @{ top = '#B3261E'; bottom = '#A1221B'; peak = 1.0 } }
+    return @{ top = '#F87A6F'; bottom = '#E5675E'; peak = 1.0 }
 }
 function global:Add-MailOverlay($tile, $wrap, $g, $c, [string]$ir, $btn) {   # Email tile only: built collapsed; nothing runs until the count is on
     if (-not $global:mail) { return }
     $ov = New-Object System.Windows.Controls.Border; $ov.IsHitTestVisible = $false; $ov.Opacity = 0; $ov.CornerRadius = $ir
     $look = Get-MailPulseLook ([string](Get-TileColors $btn).fg)
-    $ov.Background = if ($look.color -eq 'yellow') { New-VGrad '#C49A0C' '#A8850A' } else { Brush $look.color }   # Kern 7b: frozen darker yellow (black under a light label), only its Opacity toggles
+    $ov.Background = New-VGrad $look.top $look.bottom   # frozen red gradient under the icon and label; only its Opacity animates (0 = the tile's own colour, 1 = red)
     $g.Children.Insert([Math]::Max(0, $g.Children.IndexOf($c.el)), $ov)          # under the icon and label
     $cv = New-Object System.Windows.Controls.Canvas; $cv.IsHitTestVisible = $false; $cv.ClipToBounds = $false
     [System.Windows.Controls.Panel]::SetZIndex($cv, 2)
@@ -3267,10 +3268,10 @@ function global:Add-MailOverlay($tile, $wrap, $g, $c, [string]$ir, $btn) {   # E
     [System.Windows.Controls.Canvas]::SetLeft($rg, $ipx - 3); [System.Windows.Controls.Canvas]::SetTop($rg, -1)   # centred where the badge centre is
     [void]$cv.Children.Add($rg); [void]$cv.Children.Add($bd)
     $lab = Get-DisplayLabel $btn; $base = ([string]$lab.main -replace "`n", ' ').Trim(); if (-not $base) { $base = 'Email' }
-    $e = @{ tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; glow = $ov; pulse = $null; peak = [double]$look.peak; glowColor = $look.color; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
+    $e = @{ tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; glow = $ov; pulse = $null; peak = [double]$look.peak; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
     $tile.Add_IsVisibleChanged({ Update-MailPulse $e }.GetNewClosure())                # a hidden panel stops its pulse; shown again, it restarts
     $tile.Add_Unloaded({ Set-MailPulse $e $false }.GetNewClosure())
-    $tile.Add_Loaded({ if (-not $e.winHooked) { $w = [System.Windows.Window]::GetWindow($e.tile); if ($w) { $e.winHooked = $true; $w.Add_StateChanged({ Update-MailPulse $e }.GetNewClosure()) } } }.GetNewClosure())   # CC: a minimised panel stops its pulse; restored, it resumes                    # a rebuilt panel (edit mode, layout) drops the old tile's pulse
+    $tile.Add_Loaded({ [void](Add-MailStateHookOnce ([System.Windows.Window]::GetWindow($e.tile)) { param($w) $w.Add_StateChanged({ foreach ($x in @($global:mail.ui)) { Update-MailPulse $x } }) }) }.GetNewClosure())   # CC: minimised stops the pulse, restore resumes; LJ M34-I1: one handler per window, however often tiles rebuild                    # a rebuilt panel (edit mode, layout) drops the old tile's pulse
     $tile.Add_PreviewMouseLeftButtonUp({ Start-MailFollowUp })                      # the click itself still does exactly what it did
     $tile.Add_PreviewKeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { Start-MailFollowUp } })
     [void]$global:mail.ui.Add($e)
@@ -3291,10 +3292,9 @@ function global:Add-MailMenu($menu) {   # Squint: status line first, then Check 
         if ($on) { $st.Header = Get-MailMenuLine $global:mail.state (Get-Date); $ck.IsEnabled = -not $global:mailRun } }.GetNewClosure())
 }
 $global:MailPulseCycleMs = 3500   # Charles 2:11 PM: one full pulse (in and out) every 3.5 s, about 0.29 Hz (he picks 3.5 or 5 s)
-function global:Set-MailPulse($e, [bool]$on, [double]$peak = 0.45, [string]$color = '') {   # one Storyboard per tile on the overlay ($color: yellow or black, Kern Minor): 0 -> $peak -> 0 every $global:MailPulseCycleMs ms, sine ease, 20 fps; started once, removed when off
+function global:Set-MailPulse($e, [bool]$on, [double]$peak = 1.0) {   # one Storyboard per tile on the red overlay: 0 -> $peak -> 0 every $global:MailPulseCycleMs ms, sine ease, 20 fps; started once, removed when off
     if ($on) {
         if ($e.pulse) { return }   # already running: a count change never restarts it
-        if ($color -and $color -ne 'yellow') { $e.glow.Background = Brush $color }
         $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, $peak, ([System.Windows.Duration][TimeSpan]::FromMilliseconds($global:MailPulseCycleMs / 2))
         $ez = New-Object System.Windows.Media.Animation.SineEase; $ez.EasingMode = 'EaseInOut'; $a.EasingFunction = $ez; $a.AutoReverse = $true
         [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($a, (New-Object System.Windows.PropertyPath 'Opacity'))
@@ -3304,11 +3304,13 @@ function global:Set-MailPulse($e, [bool]$on, [double]$peak = 0.45, [string]$colo
         $e.pulse = $sb; $sb.Begin($e.glow, $true)
     } elseif ($e.pulse) { try { $e.pulse.Remove($e.glow) } catch {}; $e.pulse = $null; $e.glow.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null); $e.glow.Opacity = 0 }
 }
+$global:MailStateHooked = New-Object 'System.Collections.Generic.HashSet[object]'   # LJ M34-I1: windows that already have the StateChanged handler
+function global:Add-MailStateHookOnce($w, [scriptblock]$add) { if (-not $w -or $global:MailStateHooked.Contains($w)) { return $false }; [void]$global:MailStateHooked.Add($w); & $add $w; return $true }
 function global:Test-MailWinMinimized($el) { try { $w = [System.Windows.Window]::GetWindow($el); return [bool]($w -and $w.WindowState -eq 'Minimized') } catch { return $false } }
 function global:Update-MailPulse($e) {
     $m = $global:mail; if (-not $m) { return }
     $on = [bool]$m.set.enabled -and (Test-MailPulseOn $m.state ([string]$m.set.style) (Test-MailAnimOn) ([bool]$global:cfg.locked) ([bool]$e.tile.IsVisible -and -not (Test-MailWinMinimized $e.tile)))
-    Set-MailPulse $e $on ([double]$e.peak) ([string]$e.glowColor)
+    Set-MailPulse $e $on ([double]$e.peak)
 }
 function global:Stop-MailPulse { if ($global:mail) { foreach ($e in @($global:mail.ui)) { Set-MailPulse $e $false } } }
 function global:Set-MailEntry($e, [bool]$grew) {
