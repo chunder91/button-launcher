@@ -291,4 +291,44 @@ Check 'uninstall: the ButtonLauncher folder only if empty (RMDir without /r)' (@
 $lk = [regex]::Match($un, '(?s)StrCpy \$R6 "\$LOCALAPPDATA\\ButtonLauncher"\s+Call un\.IsLink[^\r\n]*\s+\$\{If\} \$R5 = 0(.*?)\$\{Else\}(.*?)\$\{EndIf\}')
 Check 'uninstall: link check on %LOCALAPPDATA%\ButtonLauncher first; a link skips every delete and the RMDir' ($lk.Success -and ([regex]::Matches($lk.Groups[1].Value, '(?m)^\s*(Delete|RMDir) ')).Count -eq 5 -and $lk.Groups[2].Value -notmatch '(?m)^\s*(Delete|RMDir) ')
 
+# v1.4.0 installer review (Squint UX 1-7, Kern UI 1-6)
+$init = [regex]::Match($nsi, '(?s)Function \.onInit.*?FunctionEnd').Value
+$uinit = [regex]::Match($nsi, '(?s)Function un\.onInit.*?FunctionEnd').Value
+$failFn = [regex]::Match($nsi, '(?s)Function Fail .*?FunctionEnd').Value
+$inst = [regex]::Match($nsi, '(?s)Section "Install".*?SectionEnd').Value
+$code = (($nsi -split "`r?`n") | ForEach-Object { $_ -replace '\s;.*$', '' }) -join "`n"
+Check 'UX-1: uninstall confirm defaults to No with a warning icon' ($uinit -match 'MessageBox MB_YESNO\|MB_ICONEXCLAMATION\|MB_DEFBUTTON2 "Remove \$\{APPNAME\} for this Windows user\?')
+Check 'UX-1: uninstall confirm says buttons and pictures are deleted for good' ($uinit -match "deletes your buttons and any pictures you added\.\`$\\nThey can't be brought back")
+Check 'UX-1: no Start menu uninstall shortcut is created' ($code -notmatch 'CreateShortcut "\$SMPROGRAMS\\Uninstall' -and $inst -match 'Delete "\$SMPROGRAMS\\Uninstall \$\{APPNAME\}\.lnk"')
+Check 'UX-2: Fail reopens the unchanged install on an update and says so' ($failFn -match '(?s)\$\{If\} \$IsUpdate = 1\s+\$\{AndIf\} \$\{FileExists\} "\$INSTDIR\\ButtonLauncher\.exe"\s+Exec ''"\$INSTDIR\\ButtonLauncher\.exe"''\s+StrCpy \$R9 "\$R9.*has been opened again, so you can keep using it\."' -and $failFn.IndexOf('Exec ') -lt $failFn.IndexOf('MessageBox'))
+Check 'UX-3/5: update prompt "Update Launcher to <ver>?" says buttons and pictures are kept' ($init -match 'Update \$\{APPNAME\} to \$\{VERSION\}\?\$\\n\$\\nYour buttons and pictures are kept')
+Check 'UX-5: update is detected from Launcher.ps1 or .buttonlauncher' ($init -match '(?s)StrCpy \$IsUpdate 0\s+\$\{If\} \$\{FileExists\} "\$INSTDIR\\Launcher\.ps1"\s+\$\{OrIf\} \$\{FileExists\} "\$INSTDIR\\\.buttonlauncher"\s+StrCpy \$IsUpdate 1')
+Check 'UX-5: update skips the desktop question' ($init -match '(?s)\$\{ElseIf\} \$IsUpdate = 1\s+;[^\n]*\s+\$\{ElseIfNot\} \$\{Silent\}\s+MessageBox MB_YESNO\|MB_ICONQUESTION\|MB_DEFBUTTON2 "Also put a shortcut on the desktop\?"')
+Check 'UX-5: update never deletes the desktop shortcut (fresh install only)' ($inst -match '(?s)\$\{ElseIf\} \$IsUpdate = 0\s+Delete "\$DESKTOP\\\$\{APPNAME\}\.lnk"' -and ([regex]::Matches($inst, 'Delete "\$DESKTOP')).Count -eq 1)
+Check 'UX-5: update re-writes the Run value only if it is still there; /NOAUTOSTART still removes it' ($inst -match '(?s)ClearErrors\s+ReadRegStr \$1 HKCU "\$\{RUNKEY\}" "\$\{KEYNAME\}"\s+\$\{If\} \$IsUpdate = 0\s+\$\{OrIfNot\} \$\{Errors\}\s+WriteRegStr HKCU "\$\{RUNKEY\}"' -and $inst -match 'DeleteRegValue HKCU "\$\{RUNKEY\}" "\$\{KEYNAME\}"')
+$iLeft = $init.IndexOf('Call FindLeftover'); $iAsk = $init.IndexOf('MessageBox MB_OKCANCEL')
+Check 'UX-4: leftover Launcher.old-/.new- refusal runs in .onInit before the first question' ($iLeft -gt 0 -and $iAsk -gt $iLeft -and $init -match "(?s)Call FindLeftover\s+\`$\{If\} \`$4 != `"`"\s+MessageBox MB_OK\|MB_ICONSTOP `"\`$\{APPNAME\} can't be installed yet.*?SetErrorLevel 1\s+Quit")
+Check 'UX-4: refusal names the folder actually found and the IT contact, not "Launcher.old-..." or "support"' ($nsi -notmatch 'Launcher\.old-\.\.\.' -and $nsi -notmatch 'contact support' -and $init -match 'found here:\$\\n\$\\n\$4\$\\n' -and $init -match 'Ask your IT contact to rename that folder')
+$fl = [regex]::Match($nsi, '(?s)Function FindLeftover.*?FunctionEnd').Value
+Check 'UX-4: FindLeftover checks .old-* then .new-*' ($fl -match '(?s)FindFirst \$3 \$4 "\$INSTDIR\.old-\*".*FindFirst \$3 \$4 "\$INSTDIR\.new-\*"')
+Check 'UX-3: no "did not run" PowerShell copy; next step and IT contact given' ($nsi -notmatch 'did not run' -and $inst -match "that check didn't finish \(code \`$0\)\. Nothing was changed\.\`$\\n\`$\\nRestart the PC and run Setup again")
+Check 'UI-1: Fail puts the full text in the log only and a short status line' ($failFn -match '(?s)SetDetailsPrint listonly\s+DetailPrint "\$R9"\s+SetDetailsPrint textonly\s+DetailPrint "\$FailShort"\s+SetDetailsPrint both')
+$shorts = @([regex]::Matches($nsi, 'StrCpy \$FailShort "([^"]*)"') | ForEach-Object { $_.Groups[1].Value })
+Check 'UI-1: every status-line text is 40 chars or fewer' ($shorts.Count -ge 2 -and @($shorts | Where-Object { $_.Length -gt 40 }).Count -eq 0 -and $shorts -contains 'Setup stopped. Nothing was changed.')
+$dps = @(($nsi -split "`r?`n") | Select-String -Pattern '^\s*DetailPrint ' | ForEach-Object { $_.LineNumber })
+$lines = $nsi -split "`r?`n"
+Check 'UI-1: every other DetailPrint is log-only (listonly right before)' (@($dps | Where-Object { $lines[$_ - 1] -notmatch 'DetailPrint "\$FailShort"' -and $lines[$_ - 2] -notmatch 'SetDetailsPrint listonly' }).Count -eq 0)
+Check 'UX-6/UI-3: log hidden, auto-close, Windows colours' ($code -match '(?m)^ShowInstDetails hide' -and $code -match '(?m)^ShowUninstDetails hide' -and $code -match '(?m)^AutoCloseWindow true' -and $code -match '(?m)^InstallColors /windows')
+Check 'UI-4: XPStyle on' ($code -match '(?m)^XPStyle on')
+Check 'UX-6/UI-6: success box has an info icon and plain copy' ($inst -match 'MessageBox MB_OK\|MB_ICONINFORMATION "\$\{APPNAME\} is \$1 and open now\.\$\\n\$\\nTo open it later: click Start and type \$\{APPNAME\}\.')
+Check 'UX-6: uninstall ends with a removed box and auto-closes' ($un -match 'MB_ICONINFORMATION "\$\{APPNAME\} was removed for this Windows user\."' -and $un -match 'SetAutoClose true')
+Check 'UX-7/UI-6: every MessageBox has an icon' (@([regex]::Matches($code, 'MessageBox (\S+)') | Where-Object { $_.Groups[1].Value -notmatch 'MB_ICON' }).Count -eq 0)
+Check 'UX-7: no jargon in prompts (junction/symlink/marker/panel)' (@([regex]::Matches($code, '(?m)(MessageBox[^\n]*|StrCpy \$R9 [^\n]*)') | Where-Object { $_.Value -match 'junction|symlink|marker|\.buttonlauncher|Launcher\.ps1|a panel' }).Count -eq 0)
+Check 'UI-2: refusal paths sit on their own line' (@([regex]::Matches($code, '(?m)(MessageBox[^\n]*|StrCpy \$R9 [^\n]*)') | Where-Object { $_.Value -match '[^n ]\s?\$(INSTDIR|ShortDir|Keep|Old|Stage)\b(?!\$\\n|")' }).Count -eq 0)
+Check 'UI-2: shortened path only when LOCALAPPDATA is under the profile' ($init -match '(?s)StrCpy \$ShortDir "\$INSTDIR"\s+\$\{If\} "\$LOCALAPPDATA" == "\$PROFILE\\AppData\\Local"\s+StrCpy \$ShortDir "AppData\\Local\\Programs\\\$\{APPNAME\}"')
+$ico = [IO.File]::ReadAllBytes((Join-Path (Split-Path -Parent $PSScriptRoot) 'images/app.ico'))
+$isz = @(0..([BitConverter]::ToUInt16($ico, 4) - 1) | ForEach-Object { $w = $ico[6 + 16 * $_]; if ($w -eq 0) { 256 } else { $w } } | Sort-Object)
+Check 'UI-5: images/app.ico has 16, 20, 24, 32, 40, 48, 64, 256' (($isz -join ',') -eq '16,20,24,32,40,48,64,256')
+Check 'UI-5: README says uninstall deletes buttons and pictures, lists /DESKTOP /NOAUTOSTART and (Launcher)' ((Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'README.txt') -Raw) -match 'including your buttons and any pictures you added' -and (Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'README.txt') -Raw) -match '/DESKTOP /NOAUTOSTART' -and (Get-Content (Join-Path (Split-Path -Parent $PSScriptRoot) 'README.txt') -Raw) -match 'Settings > Apps \(Launcher\)')
+
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
