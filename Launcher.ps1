@@ -2841,7 +2841,7 @@ function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, 
     if ($g -notmatch '(?i)^\* PREAUTH\b') {
         if ($Flags) { $Flags.step = 'login' }
         $caps = Get-ImapCaps $g   # from the greeting only: no extra command is ever sent
-        if ($caps -contains 'LOGINDISABLED' -and -not ($caps -contains 'AUTH=PLAIN')) { return @{ kind = 'proto'; stop = $true; unseen = -1; detail = 'sign-in method not offered'; step = 'login' } }   # LJ M28-I2: never send LOGIN the server refuses
+        if ($caps -contains 'LOGINDISABLED' -and -not ($caps -contains 'AUTH=PLAIN')) { return @{ kind = 'method'; stop = $true; unseen = -1; detail = 'sign-in method not offered'; step = 'login' } }   # LJ M28-I2: never send LOGIN the server refuses
         $lb = $null
         try {
             if ($caps -contains 'AUTH=PLAIN') {   # SASL PLAIN: the password is base64 of UTF-8, so quotes, backslashes, spaces, braces and non-ASCII all go through unchanged
@@ -2948,12 +2948,13 @@ function global:Get-MailFreshState($old) { New-MailState ([int]$old.epoch + 1) }
 function global:Update-MailState($s, $r, [datetime]$now) {   # one check result -> state; @{ grew; ignored }. Squint: auth stops polling; offline after 2 tried polls; sleep never counts.
     $out = @{ grew = $false; ignored = $false }
     if ($null -ne $r.epoch -and [int]$r.epoch -ne [int]$s.epoch) { $out.ignored = $true; return $out }   # started before a sleep: not a tried poll
-    $k = [string]$r.kind; if ($r.stop -and $k -ne 'ok') { $k = 'auth' }   # LJ M29-I1: no sign-in method offered stops polling like a sign-in failure (Test still shows proto)
+    $k = [string]$r.kind; if ($r.stop -and $k -ne 'ok' -and $k -ne 'method') { $k = 'auth' }   # an internal error after the sign-in may have gone out stops like a sign-in failure
     switch ($k) {
         'ok' {
             $prev = [Math]::Max(0, [int]$s.count); $n = [Math]::Max(0, [int]$r.unseen)
             $out.grew = $n -gt $prev
             $s.count = $n; $s.lastOk = $now; $s.fails = 0; $s.failSince = $null; $s.failAt = $null; $s.phase = 'ok'; $s.stopped = $false }
+        'method' { $s.phase = 'methodfail'; $s.stopped = $true; $s.fails = 0; $s.failSince = $null }   # Squint/LJ M29-I1: the server offers no sign-in Launcher can use: stopped (no timer retry; Check email now tries again), not a sign-in failure
         'auth' { $s.phase = 'authfail'; $s.authUnclear = [bool]$r.unclear; $s.stopped = $true; $s.fails = 0; $s.failSince = $null }   # unclear: no definite NO/BAD from the server
         default {
             $s.fails++; $s.failAt = $now; if ($s.fails -eq 1) { $s.failSince = $now }
@@ -2976,7 +2977,7 @@ function global:Get-MailNextDelaySec($s, $minutes = 3) {   # -1 = stopped (sign-
 function global:Get-MailBadgeText([int]$n) { if ($n -le 0) { '' } elseif ($n -ge 100) { '99+' } else { [string]$n } }
 function global:Get-MailBadgeWidth([string]$t) { switch ($t.Length) { 0 { 18 } 1 { 18 } 2 { 24 } default { 30 } } }   # Kern: fixed width per bucket
 function global:Test-MailShowBadge($s) { ($s.phase -eq 'ok' -or $s.phase -eq 'retry') -and [int]$s.count -gt 0 }
-function global:Test-MailShowRing($s) { $s.phase -eq 'authfail' -or $s.phase -eq 'offline' }   # the count is hidden whenever the ring shows
+function global:Test-MailShowRing($s) { $s.phase -eq 'authfail' -or $s.phase -eq 'methodfail' -or $s.phase -eq 'offline' }   # the count is hidden whenever the ring shows
 function global:Get-MailMotion([string]$style, [bool]$animOn) { if (-not $animOn) { return 'badge' }; if ($style -in 'pulse', 'flash', 'badge') { return $style }; return 'flash' }
 function global:Format-MailTime($t, [datetime]$now) {   # Squint: '9:41 AM' today, 'Oct 28, 4:10 PM' otherwise
     if ($null -eq $t) { return '' }
@@ -2989,6 +2990,7 @@ function global:Get-MailTipLine($s, [datetime]$now) {   # Squint's tooltip table
     switch ($s.phase) {
         'authfail' { if ($s.authUnclear) { return 'Email count stopped: couldn''t confirm sign-in. Check the connection, then choose Check email now. If you changed your webmail password, update it in Setup > Unread email count...' }
                      return 'Email count stopped: can''t sign in. If you changed your webmail password, update it in Setup > Unread email count...' }
+        'methodfail' { return 'Email count stopped: the mail server won''t accept Launcher''s sign-in. Tell your IT contact.' }
         'offline'  { return ('Can''t reach email since {0}. The count is hidden until it reconnects.' -f (Format-MailTime $s.failSince $now)) }
         'retry'    { if ([int]$s.count -ge 0) { return ('{0} Couldn''t check at {1}, trying again.' -f (Get-MailCountText $s.count), (Format-MailTime $s.failAt $now)) }
                      return ('Couldn''t check email at {0}, trying again.' -f (Format-MailTime $s.failAt $now)) }
@@ -2999,6 +3001,7 @@ function global:Get-MailTipLine($s, [datetime]$now) {   # Squint's tooltip table
 function global:Get-MailMenuLine($s, [datetime]$now) {   # Squint: the first (disabled) line of the Email tile's right-click menu
     switch ($s.phase) {
         'authfail' { if ($s.authUnclear) { return 'Email count: couldn''t confirm sign-in' }; return 'Email count: can''t sign in' }
+        'methodfail' { return 'Email count: stopped' }
         'offline'  { return ('Email count: offline since {0}' -f (Format-MailTime $s.failSince $now)) }
         'retry'    { if (-not $s.lastOk) { return ('Email count: couldn''t check at {0}, trying again' -f (Format-MailTime $s.failAt $now)) }
                      return ('Email count: {0}, checked {1}' -f $(if ([int]$s.count -le 0) { 'no unread' } else { "$([int]$s.count) unread" }), (Format-MailTime $s.lastOk $now)) }
@@ -3009,24 +3012,26 @@ function global:Get-MailMenuLine($s, [datetime]$now) {   # Squint: the first (di
 function global:Get-MailAccessName([string]$base, $s) {   # Squint: 'Email, 3 unread'; error states in the name too
     switch ($s.phase) {
         'authfail' { if ($s.authUnclear) { return "$base, email count couldn't confirm sign-in" }; return "$base, email count can't sign in" }
+        'methodfail' { return "$base, email count stopped" }
         'offline'  { return "$base, email count offline" }
         default { if ([int]$s.count -gt 0) { return "$base, $([int]$s.count) unread" }; if ([int]$s.count -eq 0) { return "$base, no unread email" }; return $base }
     }
 }
-function global:Get-MailTestText($r) {   # Squint's Test results: @{ kind = ok|auth|unclear|net|cert|proto|lost|internal; text }
+function global:Get-MailTestText($r) {   # Squint's Test results: @{ kind = ok|auth|unclear|net|cert|proto|lost|internal|method; text }
     switch ([string]$r.kind) {
         'ok'   { $n = [int]$r.unseen; $t = if ($n -le 0) { 'Signed in. No unread email in Inbox.' } elseif ($n -eq 1) { 'Signed in. 1 unread email in Inbox.' } else { "Signed in. $n unread emails in Inbox." }; return @{ kind = 'ok'; text = $t } }
         'auth' { if ($r.unclear) { return @{ kind = 'unclear'; text = 'Couldn''t confirm sign-in. Check this PC is online, then press Test again.' } }
                  return @{ kind = 'auth'; text = 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.' } }
         'net'  { return @{ kind = 'net'; text = 'Can''t reach the mail server. Check this PC is online, then press Test again.' } }   # only real connect/network failures
         'cert' { return @{ kind = 'cert'; text = 'Launcher couldn''t confirm this is the real mail server, so it didn''t send your password. Check the PC''s date and time, then press Test again. If it keeps happening, tell your IT contact.' } }   # true: the worker fails the TLS check before the password is even decoded
-        'internal' { return @{ kind = 'internal'; text = 'Launcher hit an internal error while testing (not your password or the server). Tell your IT contact.' } }
-        default { if ([string]$r.step -ceq 'lost-result') { return @{ kind = 'lost'; text = 'Launcher didn''t get an answer back from its own test. Press Test again; if it keeps happening, tell your IT contact.' } }   # Launcher lost its own result (polling still retries it as proto)
+        'internal' { return @{ kind = 'internal'; text = 'Something went wrong inside Launcher during the test. It isn''t your password or the mail server. Tell your IT contact.' } }
+        'method'   { return @{ kind = 'method'; text = 'The mail server won''t accept Launcher''s way of signing in, so your password wasn''t checked. Tell your IT contact.' } }
+        default { if ([string]$r.step -ceq 'lost-result') { return @{ kind = 'lost'; text = 'The test stopped before it finished. This is a Launcher problem, not your password. Press Test again; if it keeps happening, tell your IT contact.' } }   # Launcher lost its own result (polling still retries it as proto)
                   return @{ kind = 'proto'; text = 'The mail server answered in a way Launcher didn''t expect. Press Test again; if it keeps happening, tell your IT contact.' } }
     }
 }
 function global:Format-MailLogLine($r) {   # fixed words only: never the address, the password or server text
-    $k = [string]$r.kind; if ($k -notin 'ok', 'auth', 'net', 'cert', 'proto') { $k = 'error' }
+    $k = [string]$r.kind; if ($k -notin 'ok', 'auth', 'net', 'cert', 'proto', 'method') { $k = 'error' }
     $d = [string]$r.detail; if ($d -cnotin $global:MailLogDetails) { $d = '' }
     $st = [string]$r.step; if ($st -cnotin $global:MailLogSteps) { $st = '' }
     $w = [string]$r.word; if ($w -cnotin $global:MailLogWords) { $w = '' }
@@ -3506,7 +3511,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $pErr.Visibility = if ($kind -eq 'auth') { 'Visible' } else { 'Hidden' }   # Kern: #F87171 line on the password after a failed sign-in
         switch ($kind) { 'ok' { $ri.Text = [string][char]0xE930; $ri.Foreground = Brush '#22C55E'; $rt.Foreground = Brush '#4ADE80' }
                          'auth' { $ri.Text = [string][char]0xEA39; $ri.Foreground = Brush '#F87171'; $rt.Foreground = Brush '#F87171' }
-                         { $_ -eq 'net' -or $_ -eq 'unclear' -or $_ -eq 'cert' -or $_ -eq 'proto' -or $_ -eq 'lost' -or $_ -eq 'internal' } { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
+                         { $_ -eq 'net' -or $_ -eq 'unclear' -or $_ -eq 'cert' -or $_ -eq 'proto' -or $_ -eq 'lost' -or $_ -eq 'internal' -or $_ -eq 'method' } { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
                          default { $ri.Text = ''; $rt.Foreground = Brush '#B4B4BC' } } }.GetNewClosure()
     $cb.Add_Click({ $ds.tested = $false; & $refresh }.GetNewClosure())
     $ta.Add_TextChanged({ $ds.tested = $false; & $refresh }.GetNewClosure())

@@ -232,7 +232,7 @@ foreach ($c in @(@('hang-up', @('* OK ready')), @('BYE', @('* OK ready', '* BYE 
     Check "(b) $($c[0]) after LOGIN: unclear failure stops polling, ring, no count, unclear tip/menu/name/Test line" ($r.kind -eq 'auth' -and $r.unclear -and $s.stopped -and (Test-MailShowRing $s) -and -not (Test-MailShowBadge $s) -and (Get-MailTipLine $s $now) -ceq $unc -and (Get-MailMenuLine $s $now) -ceq 'Email count: couldn''t confirm sign-in' -and (Get-MailAccessName 'Email' $s) -ceq 'Email, email count couldn''t confirm sign-in' -and (Get-MailTestText $r).kind -eq 'unclear' -and (Get-MailTestText $r).text -ceq 'Couldn''t confirm sign-in. Check this PC is online, then press Test again.') }
 $s = New-MailState; [void](Update-MailState $s @{ kind = 'auth'; unclear = $true } $now); $o = Update-MailState $s @{ kind = 'ok'; unseen = 2 } $now
 Check '(b) Check email now success clears it and polling resumes' ($s.phase -eq 'ok' -and -not $s.stopped -and (Get-MailNextDelaySec $s) -eq 180)
-Check '(b) Test line uses the amber (net) look, not the red password line' ($sv -match "\{ \`$_ -eq 'net' -or \`$_ -eq 'unclear' -or \`$_ -eq 'cert' -or \`$_ -eq 'proto' -or \`$_ -eq 'lost' -or \`$_ -eq 'internal' \}" -and $sv -match "if \(\`$kind -eq 'auth'\) \{ 'Visible' \}")
+Check '(b) Test line uses the amber (net) look, not the red password line' ($sv -match "\{ \`$_ -eq 'net' -or \`$_ -eq 'unclear' -or \`$_ -eq 'cert' -or \`$_ -eq 'proto' -or \`$_ -eq 'lost' -or \`$_ -eq 'internal' -or \`$_ -eq 'method' \}" -and $sv -match "if \(\`$kind -eq 'auth'\) \{ 'Visible' \}")
 Check 'exit frees parked checks (Clear-MailDeadRuns, best effort)' ($src -match 'try \{ Stop-Mail \} catch \{\}; try \{ Clear-MailDeadRuns \} catch \{\}')
 
 # --- source checks ---
@@ -317,7 +317,7 @@ $sd = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Functi
 Check 'not configured: the setup dialog builds both fields through New-D2Field and reads no saved secret unless enabled' ($sd.Contains('$fa = New-D2Field $ta') -and $sd.Contains('$fp = New-D2Field $pb') -and $sd.Contains('if ($was.enabled -and (Test-Path -LiteralPath (Get-MailSecretPath)))'))
 $kinds = @((Get-MailTestText @{ kind = 'ok'; unseen = 2 }).kind, (Get-MailTestText @{ kind = 'auth' }).kind, (Get-MailTestText @{ kind = 'auth'; unclear = $true }).kind, (Get-MailTestText @{ kind = 'net' }).kind, (Get-MailTestText @{ kind = 'cert' }).kind)
 Check 'Test results: ok, clear fail, unclear fail, network, certificate' (($kinds -join ',') -eq 'ok,auth,unclear,net,cert')
-Check 'Test results: the dialog has a branch for each and sets only Text/Foreground on its TextBlocks' ($sd.Contains("'ok' { `$ri.Text") -and $sd.Contains("'auth' { `$ri.Text") -and $sd.Contains("{ `$_ -eq 'net' -or `$_ -eq 'unclear' -or `$_ -eq 'cert' -or `$_ -eq 'proto' -or `$_ -eq 'lost' -or `$_ -eq 'internal' }") -and $sd -notmatch '\$r[it]\.Background')
+Check 'Test results: the dialog has a branch for each and sets only Text/Foreground on its TextBlocks' ($sd.Contains("'ok' { `$ri.Text") -and $sd.Contains("'auth' { `$ri.Text") -and $sd.Contains("{ `$_ -eq 'net' -or `$_ -eq 'unclear' -or `$_ -eq 'cert' -or `$_ -eq 'proto' -or `$_ -eq 'lost' -or `$_ -eq 'internal' -or `$_ -eq 'method' }") -and $sd -notmatch '\$r[it]\.Background')
 foreach ($st in 'flash', 'pulse', 'badge') { Check "style ${st}: motion path picked, badge only when animations are off" ((Get-MailMotion $st $true) -eq $st -and (Get-MailMotion $st $false) -eq 'badge') }
 $ov = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Add-MailOverlay' }, $true)
 Check 'flash/pulse/badge overlay: every property set exists on its element (property table)' ($ov -and @(Find-WpfPropMisuse $ov).Count -eq 0)
@@ -490,7 +490,7 @@ foreach ($sc in @(@('quoted mailbox', @('* 12 EXISTS', '* STATUS "INBOX" (MESSAG
     $r = Invoke-ImapSession $srv.read $srv.write $u $fake.ToCharArray()
     Check "tolerant parser: extra CAPABILITY/OK after login, $($sc[0]) -> 4 unread" ($r.kind -eq 'ok' -and $r.unseen -eq 4) }
 $fl = @{ loginSent = $false; loginOk = $false; step = '' }; $m = New-Mock @('* OK [CAPABILITY IMAP4rev1 LOGINDISABLED AUTH=GSSAPI] ready'); $r = Invoke-ImapSession $m.read $m.write $u $fake.ToCharArray() $fl
-Check 'LJ M28-I2: LOGINDISABLED without AUTH=PLAIN -> proto step=login, nothing sent' ($r.kind -eq 'proto' -and $r.step -eq 'login' -and $m.sent.Count -eq 0 -and -not $fl.loginSent -and (Format-MailLogLine $r) -ceq 'email count: proto (sign-in method not offered) step=login')
+Check 'LJ M28-I2: LOGINDISABLED without AUTH=PLAIN -> method step=login, nothing sent' ($r.kind -eq 'method' -and $r.step -eq 'login' -and $m.sent.Count -eq 0 -and -not $fl.loginSent -and (Format-MailLogLine $r) -ceq 'email count: method (sign-in method not offered) step=login')
 $srv = New-FakeImap 'IMAP4rev1 LOGINDISABLED AUTH=PLAIN' $u $fake; $r = Invoke-ImapSession $srv.read $srv.write $u $fake.ToCharArray()
 Check 'LJ M28-I2: LOGINDISABLED with AUTH=PLAIN -> PLAIN sign-in works' ($r.kind -eq 'ok' -and $srv.mech -eq 'plain')
 $pl2 = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-ImapPlainBytes' }, $true).Extent.Text
@@ -499,7 +499,12 @@ foreach ($bad in "a`rb", "a`nb", ("a" + [char]0 + "b")) { $t = $false; try { [vo
 # LJ M29-I1: no supported sign-in method stops polling like a sign-in failure; Test still says proto
 $m = New-Mock @('* OK [CAPABILITY IMAP4rev1 LOGINDISABLED] ready'); $r = Invoke-ImapSession $m.read $m.write $u $fake.ToCharArray()
 $s29 = New-MailState; [void](Update-MailState $s29 $r $now)
-Check 'LJ M29-I1: LOGINDISABLED without PLAIN stops background checks (stopped, no next poll); Test message stays proto' ($r.stop -and $s29.stopped -and (Get-MailNextDelaySec $s29) -eq -1 -and (Get-MailTestText $r).kind -eq 'proto')
+Check 'Squint: LOGINDISABLED without PLAIN stops background checks (stopped, no next poll) as its own kind, not a sign-in failure' ($r.stop -and $s29.stopped -and (Get-MailNextDelaySec $s29) -eq -1 -and $s29.phase -eq 'methodfail' -and (Test-MailShowRing $s29))
+$mt = Get-MailTestText $r
+Check 'Squint: method Test line (amber)' ($mt.kind -eq 'method' -and $mt.text -ceq 'The mail server won''t accept Launcher''s way of signing in, so your password wasn''t checked. Tell your IT contact.')
+Check 'Squint: method tooltip, Narrator name, menu' ((Get-MailTipLine $s29 $now) -ceq 'Email count stopped: the mail server won''t accept Launcher''s sign-in. Tell your IT contact.' -and (Get-MailAccessName 'Email' $s29) -ceq 'Email, email count stopped' -and (Get-MailMenuLine $s29 $now) -ceq 'Email count: stopped')
+Check 'Squint: method stop is skipped by polling but Check email now (byUser) tries again' ($src -match 'if \(\$m\.state\.stopped -and -not \$byUser\) \{ return \}')
+$s29c = New-MailState; [void](Update-MailState $s29c @{ kind = 'internal'; stop = $true } $now); Check 'internal error after sign-in may have gone out still stops as unclear auth' ($s29c.phase -eq 'authfail' -and $s29c.stopped)
 $s29b = New-MailState; [void](Update-MailState $s29b @{ kind = 'proto'; detail = 'no STATUS reply' } $now); Check 'LJ M29-I1: an ordinary proto failure still retries' (-not $s29b.stopped -and (Get-MailNextDelaySec $s29b) -gt 0)
 # CC L4: overall worker deadline, checked before every byte read
 Check 'CC L4: worker deadline 25 s, under the UI cap' ($global:MailWorkerDeadlineSec -eq 25 -and $src -match 'TotalSeconds -ge 45\) \{ Stop-MailRunObjects' -and $global:MailWorkerDeadlineSec -lt 45)
@@ -530,7 +535,7 @@ Check 'Test copy: cert -> certificate line' ($tc.kind -eq 'cert' -and $tc.text -
 Check 'Test copy: proto -> unexpected answer line' ($tp.kind -eq 'proto' -and $tp.text -ceq 'The mail server answered in a way Launcher didn''t expect. Press Test again; if it keeps happening, tell your IT contact.')
 Check 'Test copy: unknown kind -> unexpected answer, never can''t reach' ($tx.kind -eq 'proto' -and $tx.text -notmatch 'reach')
 $lr = Get-MailLostResult $null 'no result'; $lt = Get-MailTestText $lr
-Check 'Test copy: lost result -> its own kind and text; poll result still proto, step lost-result' ($lt.kind -eq 'lost' -and $lt.text -ceq 'Launcher didn''t get an answer back from its own test. Press Test again; if it keeps happening, tell your IT contact.' -and $lr.kind -eq 'proto' -and $lr.step -eq 'lost-result' -and (Format-MailLogLine $lr) -ceq 'email count: proto (no result) step=lost-result')
+Check 'Test copy: lost result -> its own kind and text; poll result still proto, step lost-result' ($lt.kind -eq 'lost' -and $lt.text -ceq 'The test stopped before it finished. This is a Launcher problem, not your password. Press Test again; if it keeps happening, tell your IT contact.' -and $lr.kind -eq 'proto' -and $lr.step -eq 'lost-result' -and (Format-MailLogLine $lr) -ceq 'email count: proto (no result) step=lost-result')
 $sl = New-MailState; [void](Update-MailState $sl $lr $now); Check 'lost result: background poll still retries (not stopped)' (-not $sl.stopped -and $sl.phase -eq 'retry' -and (Get-MailNextDelaySec $sl) -gt 0)
 $wk = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Invoke-MailCheckWorker' }, $true).Extent.Text
 Check 'cert copy is true: TLS check (cert return) comes before the password is decoded or anything is written' ($wk.IndexOf("kind = 'cert'") -gt $wk.IndexOf('AuthenticateAsClient') -and $wk.IndexOf("kind = 'cert'") -lt $wk.IndexOf('SecureStringToBSTR') -and $wk.IndexOf('SecureStringToBSTR') -lt $wk.IndexOf('Invoke-ImapSession'))
@@ -593,7 +598,7 @@ Check "worker-error log line: a type outside [A-Za-z0-9.] is 'unknown', a bad li
 $ll = Format-MailLogLine @{ kind = 'net'; detail = 'network error'; step = 'connect'; etype = 'System.X'; eline = 9 }
 Check 'type/line only on worker-error lines' ($ll -ceq 'email count: net (network error) step=connect')
 $ti = Get-MailTestText @{ kind = 'internal'; step = 'worker-error' }
-Check 'Test copy: worker-error -> internal error line' ($ti.kind -eq 'internal' -and $ti.text -ceq 'Launcher hit an internal error while testing (not your password or the server). Tell your IT contact.')
+Check 'Test copy: worker-error -> internal error line' ($ti.kind -eq 'internal' -and $ti.text -ceq 'Something went wrong inside Launcher during the test. It isn''t your password or the mail server. Tell your IT contact.')
 $s0 = New-MailState; [void](Update-MailState $s0 @{ kind = 'internal'; unseen = -1 } (Get-Date))
 $s1 = New-MailState; [void](Update-MailState $s1 @{ kind = 'internal'; unseen = -1; stop = $true } (Get-Date))
 Check 'worker-error: polling retries before sign-in; stops if the sign-in may have gone out' ($s0.phase -eq 'retry' -and $s1.stopped -and $src -match "if \(\[string\]\`$r\.kind -eq 'internal' -and \`$run\.sync\.loginSent -and -not \`$run\.sync\.loginOk\) \{ \`$r\.stop = \`$true \}")
