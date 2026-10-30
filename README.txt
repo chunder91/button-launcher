@@ -16,6 +16,10 @@ WHAT EACH BUTTON DOES
                        C:\Jartrek, C:\RedDog, or a "Red Dog Backoffice"
                        shortcut). If it can't, it asks you once to pick it.
   VIEW REGISTER        Opens UltraVNC Viewer (found by itself, or asks once).
+                       v1.4.1: lists only the computers an administrator
+                       allows in Setup > Allowed computers (admin)... (no
+                       network scan). View only never asks for a password;
+                       Interact uses UltraVNC's own password box.
                        To connect straight to a register, edit the button and
                        put e.g. 192.168.1.50:5900 in Arguments.
   INTERNET             Opens Google in your browser.
