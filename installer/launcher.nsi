@@ -204,8 +204,13 @@ Function .onInit
   ${EndIf}
   ${IfNot} ${Silent}
     ${If} $IsUpdate = 1
-      MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment and opens again when the update is done." IDOK +2
-      Abort
+      ${If} $Elevated = 1                       ; M24-L1: Setup never starts Launcher when elevated, so don't promise it
+        MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment. When the update is done, open it from Start by typing ${APPNAME}." IDOK +2
+        Abort
+      ${Else}
+        MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment and opens again when the update is done." IDOK +2
+        Abort
+      ${EndIf}
     ${Else}
       MessageBox MB_OKCANCEL|MB_ICONQUESTION "Install ${APPNAME} for this Windows user?$\n$\nIt will be added to the Start menu and will open each time you sign in. You can turn that off later from ${APPNAME}'s right-click menu." IDOK +2
       Abort
