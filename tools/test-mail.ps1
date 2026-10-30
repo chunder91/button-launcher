@@ -7,14 +7,14 @@ $fail = 0
 function Check($name, $cond) { if ($cond) { "PASS  $name" } else { "FAIL  $name"; $script:fail++ } }
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'Launcher.ps1'), [ref]$null, [ref]$null)
 $src = $ast.Extent.Text
-$fns = 'Get-ButtonType', 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker', 'Get-MailWorkerScript',
+$fns = 'Get-ButtonType', 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapPlainBytes', 'Get-ImapCaps', 'Read-ImapLine', 'Read-ImapStreamLine', 'Write-MailLogLine', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker', 'Get-MailWorkerScript',
        'New-MailState', 'Get-MailFreshState', 'Update-MailState', 'Step-MailResume', 'Get-MailLostResult', 'Get-MailNextDelaySec', 'Get-MailBadgeText', 'Get-MailBadgeWidth', 'Test-MailShowBadge', 'Test-MailShowRing',
        'Get-MailMotion', 'Format-MailTime', 'Get-MailCountText', 'Get-MailTipLine', 'Get-MailMenuLine', 'Get-MailAccessName', 'Get-MailTestText', 'Format-MailLogLine', 'Get-MailSecretPath', 'Get-MailSettingsPath', 'Remove-MailLogin',
        'Get-MailAddress', 'Test-MailAddress', 'Test-MailTile', 'ConvertTo-MailSettings', 'Get-MailSettingsJson', 'ConvertTo-MailFullAddress', 'Get-MailInterval', 'Get-MailAddressProblem', 'Write-LauncherError'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
-foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(MailDomain|MailLogDetails|MailWorkerScript|MailIntervals|MailDialogXaml)\s*=') { Invoke-Expression $l.Extent.Text } }
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(MailDomain|MailLogDetails|MailLogSteps|MailLogWords|MailWorkerScript|MailIntervals|MailDialogXaml)\s*=') { Invoke-Expression $l.Extent.Text } }
 $fake = 'test-not-real'   # a fake password, used only in this test
 function Ascii([byte[]]$b) { [Text.Encoding]::ASCII.GetString($b) }
 
@@ -137,7 +137,7 @@ Check 'name: sign-in failed' ((Get-MailAccessName 'Email' $s) -ceq 'Email, email
 Check 'time: another day adds the date' ((Format-MailTime ([datetime]'2026-10-28 16:10') $now) -ceq 'Oct 28, 4:10 PM')
 Check 'test result ok' ((Get-MailTestText @{ kind = 'ok'; unseen = 3 }).text -ceq 'Signed in. 3 unread emails in Inbox.')
 Check 'test result auth' ((Get-MailTestText @{ kind = 'auth' }).text -ceq 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.')
-Check 'test result net / cert' ((Get-MailTestText @{ kind = 'cert' }).text -ceq 'Can''t reach the mail server. Check this PC is online, then press Test again.')
+Check 'test result net' ((Get-MailTestText @{ kind = 'net' }).text -ceq 'Can''t reach the mail server. Check this PC is online, then press Test again.')
 Check 'UI strings use email, not mail (bar the approved heading)' (-not ([regex]::Matches($src, "'[^'\r\n]*\b[Mm]ail count[^'\r\n]*'")).Count)
 Check 'heading: When new email arrives:' ($src.Contains("'When new email arrives:'"))
 Check 'setup copy present' ($src.Contains("'Show unread email count on the Email button'") -and $src.Contains("'Uses your Jartrek email, the same login as webmail.'") -and $src.Contains("'Everyone who uses this Windows login on this PC will see how many unread emails this account has.'") -and $src.Contains("'Turn off the email count and forget this login on this PC?'"))
@@ -213,7 +213,7 @@ Check 'I5: no @jartrek.net address in tests outside the format checks' (@((Get-C
 $r = Get-MailLostResult @{ loginSent = $true } 'timed out'; Check 'M15-I1: 45 s cap after LOGIN went out -> unclear sign-in failure' ($r.kind -eq 'auth' -and $r.unclear)
 $s = New-MailState; [void](Update-MailState $s $r $now); Check 'M15-I1: ... which stops polling (no timer retry)' ($s.stopped -and (Get-MailNextDelaySec $s) -eq -1 -and $s.authUnclear)
 $r = Get-MailLostResult @{ loginSent = $false } 'timed out'; Check 'M15-I1: cap before LOGIN -> network retry' ($r.kind -eq 'net')
-$r = Get-MailLostResult $null 'no result'; Check 'M15-I1: lost result with no sync -> network' ($r.kind -eq 'net')
+$r = Get-MailLostResult $null 'no result'; Check 'M15-I1: lost result with no sync -> retried like a network failure (proto, step lost-result)' ($r.kind -eq 'proto' -and $r.step -eq 'lost-result')
 $fl = @{ loginSent = $false }; $m = New-Mock @('* OK ready'); [void](Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray() $fl); Check 'M15-I1: the session sets loginSent before LOGIN' ($fl.loginSent)
 $fl = @{ loginSent = $false }; $m = New-Mock @('* BYE bye'); [void](Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray() $fl); Check 'M15-I1: no LOGIN, no flag' (-not $fl.loginSent)
 $sr2 = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Start-MailRun' }, $true).Extent.Text
@@ -232,7 +232,7 @@ foreach ($c in @(@('hang-up', @('* OK ready')), @('BYE', @('* OK ready', '* BYE 
     Check "(b) $($c[0]) after LOGIN: unclear failure stops polling, ring, no count, unclear tip/menu/name/Test line" ($r.kind -eq 'auth' -and $r.unclear -and $s.stopped -and (Test-MailShowRing $s) -and -not (Test-MailShowBadge $s) -and (Get-MailTipLine $s $now) -ceq $unc -and (Get-MailMenuLine $s $now) -ceq 'Email count: couldn''t confirm sign-in' -and (Get-MailAccessName 'Email' $s) -ceq 'Email, email count couldn''t confirm sign-in' -and (Get-MailTestText $r).kind -eq 'unclear' -and (Get-MailTestText $r).text -ceq 'Couldn''t confirm sign-in. Check this PC is online, then press Test again.') }
 $s = New-MailState; [void](Update-MailState $s @{ kind = 'auth'; unclear = $true } $now); $o = Update-MailState $s @{ kind = 'ok'; unseen = 2 } $now
 Check '(b) Check email now success clears it and polling resumes' ($s.phase -eq 'ok' -and -not $s.stopped -and (Get-MailNextDelaySec $s) -eq 180)
-Check '(b) Test line uses the amber (net) look, not the red password line' ($sv -match "\{ \`$_ -eq 'net' -or \`$_ -eq 'unclear' \}" -and $sv -match "if \(\`$kind -eq 'auth'\) \{ 'Visible' \}")
+Check '(b) Test line uses the amber (net) look, not the red password line' ($sv -match "\{ \`$_ -eq 'net' -or \`$_ -eq 'unclear' -or \`$_ -eq 'cert' -or \`$_ -eq 'proto' \}" -and $sv -match "if \(\`$kind -eq 'auth'\) \{ 'Visible' \}")
 Check 'exit frees parked checks (Clear-MailDeadRuns, best effort)' ($src -match 'try \{ Stop-Mail \} catch \{\}; try \{ Clear-MailDeadRuns \} catch \{\}')
 
 # --- source checks ---
@@ -248,7 +248,7 @@ Check 'TLS: port 993, 10 s timeouts' ($w -match "BeginConnect\('mail\.jartrek\.n
 Check 'worker zeroes the BSTR and the char copy' ($w -match 'ZeroFreeBSTR' -and $w -match '\[Array\]::Clear\(\$chars')
 Check 'TLS failure is an error (cert), never ignored' ($w -match "kind = 'cert'")
 $imapCmds = [regex]::Matches($codeText, "a\d (LOGIN|STATUS|LOGOUT|[A-Z]+)") | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique
-Check "IMAP commands in code: only LOGIN, STATUS, LOGOUT ($($imapCmds -join ','))" ((@($imapCmds) -join ',') -ceq 'LOGIN,LOGOUT,STATUS')
+Check "IMAP commands in code: only AUTHENTICATE (PLAIN), LOGIN, STATUS, LOGOUT ($($imapCmds -join ','))" ((@($imapCmds) -join ',') -ceq 'AUTHENTICATE,LOGIN,LOGOUT,STATUS' -and -not ($codeText -match '(?i)AUTHENTICATE (?!PLAIN)'))
 Check 'one host only: mail.jartrek.net' (@([regex]::Matches($codeText, '(?i)[a-z0-9-]+\.jartrek\.net') | ForEach-Object { $_.Value.ToLower() } | Sort-Object -Unique) -join ',' -ceq 'mail.jartrek.net')
 $ws = Get-MailWorkerScript
 Check 'worker script has every protocol function and no callback' ($ws -match 'function global:Invoke-ImapSession' -and $ws -match 'function global:Invoke-MailCheckWorker' -and -not ($ws -match '(?i)ValidationCallback'))
@@ -272,7 +272,7 @@ $thrown = $false; try { [void](Invoke-ImapSession $m.read $m.write 'test.user@ex
 Check 'CC L1 dripstatus: tagged OK to LOGIN sets loginOk' ($fl.loginSent -and $fl.loginOk -and $thrown)
 $r = Get-MailLostResult $fl 'timed out'; Check 'CC L1 dripstatus: cap after a good sign-in -> network retry, not a sign-in stop' ($r.kind -eq 'net' -and -not $r.unclear)
 $s = New-MailState; [void](Update-MailState $s $r $now); Check 'CC L1 dripstatus: ... polling continues with backoff' (-not $s.stopped -and -not $s.authUnclear -and (Get-MailNextDelaySec $s) -gt 0)
-$r = Get-MailLostResult $fl 'no result'; Check 'CC L1 dripstatus: lost result after a good sign-in -> network' ($r.kind -eq 'net')
+$r = Get-MailLostResult $fl 'no result'; Check 'CC L1 dripstatus: lost result after a good sign-in -> retry (proto), not a sign-in stop' ($r.kind -eq 'proto' -and -not $r.unclear)
 $fl = @{ loginSent = $false; loginOk = $false }; $m = New-Mock @('* OK ready', '* CAPABILITY IMAP4rev1')
 $thrown = $false; try { $x = Invoke-ImapSession $m.read $m.write 'test.user@example.invalid' $fake.ToCharArray() $fl } catch { $thrown = $true }
 Check 'CC L1: LOGIN sent, no tagged OK -> loginOk stays false' ($fl.loginSent -and -not $fl.loginOk)
@@ -316,8 +316,8 @@ Check 'stand-in run reproduces the laptop error on the old code' ($e -match "The
 $sd = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-MailSetupDialog' }, $true).Extent.Text
 Check 'not configured: the setup dialog builds both fields through New-D2Field and reads no saved secret unless enabled' ($sd.Contains('$fa = New-D2Field $ta') -and $sd.Contains('$fp = New-D2Field $pb') -and $sd.Contains('if ($was.enabled -and (Test-Path -LiteralPath (Get-MailSecretPath)))'))
 $kinds = @((Get-MailTestText @{ kind = 'ok'; unseen = 2 }).kind, (Get-MailTestText @{ kind = 'auth' }).kind, (Get-MailTestText @{ kind = 'auth'; unclear = $true }).kind, (Get-MailTestText @{ kind = 'net' }).kind, (Get-MailTestText @{ kind = 'cert' }).kind)
-Check 'Test results: ok, clear fail, unclear fail, network' (($kinds -join ',') -eq 'ok,auth,unclear,net,net')
-Check 'Test results: the dialog has a branch for each and sets only Text/Foreground on its TextBlocks' ($sd.Contains("'ok' { `$ri.Text") -and $sd.Contains("'auth' { `$ri.Text") -and $sd.Contains("{ `$_ -eq 'net' -or `$_ -eq 'unclear' }") -and $sd -notmatch '\$r[it]\.Background')
+Check 'Test results: ok, clear fail, unclear fail, network, certificate' (($kinds -join ',') -eq 'ok,auth,unclear,net,cert')
+Check 'Test results: the dialog has a branch for each and sets only Text/Foreground on its TextBlocks' ($sd.Contains("'ok' { `$ri.Text") -and $sd.Contains("'auth' { `$ri.Text") -and $sd.Contains("{ `$_ -eq 'net' -or `$_ -eq 'unclear' -or `$_ -eq 'cert' -or `$_ -eq 'proto' }") -and $sd -notmatch '\$r[it]\.Background')
 foreach ($st in 'flash', 'pulse', 'badge') { Check "style ${st}: motion path picked, badge only when animations are off" ((Get-MailMotion $st $true) -eq $st -and (Get-MailMotion $st $false) -eq 'badge') }
 $ov = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Add-MailOverlay' }, $true)
 Check 'flash/pulse/badge overlay: every property set exists on its element (property table)' ($ov -and @(Find-WpfPropMisuse $ov).Count -eq 0)
@@ -436,5 +436,95 @@ foreach ($bad in @('', 'x y@example.invalid', "a@example.invalid`r`na2 LOGOUT", 
     $disposed = $false; try { $ss.AppendChar([char]120) } catch { $disposed = $true }
     Check ("LJ M21-I2: Start-MailRun fails closed on '" + ($bad -replace "`r", '\r' -replace "`n", '\n') + "' (no check started, sign-in failure reported, password disposed)") (-not $err -and $ret -eq $true -and $got.r.kind -eq 'auth' -and $got.r.detail -cin $global:MailLogDetails -and $disposed) }
 Check 'LJ M21-I2: the address check is the first thing after the busy check' ($smr.IndexOf('Test-MailAddress $user') -gt 0 -and $smr.IndexOf('Test-MailAddress $user') -lt $smr.IndexOf('Clear-MailDeadRuns') -and $smr.IndexOf('Test-MailAddress $user') -lt $smr.IndexOf('CreateRunspace'))
+# --- v1.4.0 laptop 'Can't reach' round: AUTHENTICATE PLAIN, tolerant parsing, per-kind Test copy, Test log line ---
+# A fake IMAP server: it decodes what the client sends (quoted LOGIN, LOGIN literal, AUTHENTICATE PLAIN with or without SASL-IR)
+# and answers OK only when the decoded login is exactly the expected one.
+function New-FakeImap([string]$caps, [string]$user, [string]$pass, [string[]]$afterLogin = @(), [string[]]$statusLines = @('* STATUS INBOX (UNSEEN 4)')) {
+    $st = @{ q = New-Object System.Collections.Queue; sent = New-Object System.Collections.ArrayList; mech = ''; wait = ''; lit = 0; litUser = ''; got = $null; caps = $caps; ok = $false }
+    $st.q.Enqueue($(if ($caps) { "* OK [CAPABILITY $caps] Dovecot ready." } else { '* OK Dovecot ready.' }))
+    $st.read = { if ($st.q.Count -eq 0) { throw 'closed' }; [string]$st.q.Dequeue() }.GetNewClosure()
+    $st.decide = { param($u, $p)
+        $st.got = $p; $st.ok = ($u -ceq $user -and $p -ceq $pass)
+        if ($st.ok) { foreach ($l in $afterLogin) { $st.q.Enqueue($l) }; $st.q.Enqueue('a1 OK [CAPABILITY IMAP4rev1] Logged in') } else { $st.q.Enqueue('a1 NO [AUTHENTICATIONFAILED] Authentication failed.') } }.GetNewClosure()
+    $st.plain = { param([string]$b64)
+        $raw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64.Trim())); $p = $raw.Split([char]0)
+        if ($p.Count -ne 3 -or $p[0] -ne '') { $st.q.Enqueue('a1 BAD bad PLAIN'); return }; & $st.decide $p[1] $p[2] }.GetNewClosure()
+    $st.write = { param([byte[]]$b)
+        [void]$st.sent.Add($b.Clone())
+        if ($st.wait -eq 'plain') { $st.wait = ''; & $st.plain ([Text.Encoding]::ASCII.GetString($b)); return }
+        if ($st.wait -eq 'lit') { $st.wait = ''; & $st.decide $st.litUser ([Text.Encoding]::UTF8.GetString($b, 0, $st.lit)); return }
+        $line = [Text.Encoding]::ASCII.GetString($b).TrimEnd("`r", "`n")
+        if ($line -match '^a1 AUTHENTICATE PLAIN(?: (\S+))?$') { $ir = $Matches[1]
+            if ($st.caps -notmatch '(?i)\bAUTH=PLAIN\b') { $st.q.Enqueue('a1 BAD not supported'); return }
+            if ($ir) { if ($st.caps -notmatch '(?i)\bSASL-IR\b') { $st.q.Enqueue('a1 BAD no SASL-IR'); return }; $st.mech = 'plain-ir'; & $st.plain $ir }
+            else { $st.mech = 'plain'; $st.wait = 'plain'; $st.q.Enqueue('+ ') }; return }
+        if ($line -match '^a1 LOGIN "((?:[^"\\]|\\.)*)" \{(\d+)\}$') { $st.mech = 'login-literal'; $st.litUser = $Matches[1]; $st.lit = [int]$Matches[2]; $st.wait = 'lit'; $st.q.Enqueue('+ Ready'); return }
+        if ($line -match '^a1 LOGIN "((?:[^"\\]|\\.)*)" "((?:[^"\\]|\\.)*)"$') { $st.mech = 'login'; & $st.decide ($Matches[1] -replace '\\(.)', '$1') ($Matches[2] -replace '\\(.)', '$1'); return }
+        if ($line -match '^a1 ') { $st.q.Enqueue('a1 BAD parse error'); return }
+        if ($line -ceq 'a2 STATUS INBOX (UNSEEN)') { foreach ($l in $statusLines) { $st.q.Enqueue($l) }; $st.q.Enqueue('a2 OK Status completed.'); return }
+        if ($line -ceq 'a3 LOGOUT') { $st.q.Enqueue('* BYE Logging out'); $st.q.Enqueue('a3 OK Logout completed.'); return }
+        $st.q.Enqueue('* BAD unknown') }.GetNewClosure()
+    return $st }
+$u = 'test.user@example.invalid'
+$pwCases = [ordered]@{ 'dquote' = 'pa"ss'; 'backslash' = 'pa\ss'; 'space' = 'pa ss'; 'percent' = 'pa%ss'; 'brace' = 'pa{ss}'; 'e-acute' = ('caf' + [char]0xE9 + '-pw'); 'long 120' = ('Ab1"\ %{' * 15); 'all' = ('a"b\c d%e{f}' + [char]0xE9) }
+$capSets = [ordered]@{ 'AUTH=PLAIN + SASL-IR' = @('IMAP4rev1 SASL-IR LITERAL+ AUTH=PLAIN AUTH=LOGIN', 'plain-ir'); 'AUTH=PLAIN, no SASL-IR' = @('IMAP4rev1 AUTH=PLAIN', 'plain'); 'no AUTH=PLAIN (LOGIN)' = @('IMAP4rev1', 'login') }
+foreach ($pc in $pwCases.Keys) { foreach ($cs in $capSets.Keys) {
+    $pw = $pwCases[$pc]; $want = $capSets[$cs][1]
+    if ($want -eq 'login' -and $pw -match '[^\x20-\x7E]') { $want = 'login-literal' }
+    $srv = New-FakeImap $capSets[$cs][0] $u $pw
+    $r = Invoke-ImapSession $srv.read $srv.write $u $pw.ToCharArray()
+    Check "fake server, password '$pc', ${cs}: signed in with $want, 4 unread" ($r.kind -eq 'ok' -and $r.unseen -eq 4 -and $srv.ok -and $srv.got -ceq $pw -and $srv.mech -eq $want) } }
+$srv = New-FakeImap 'IMAP4rev1 AUTH=PLAIN SASL-IR' $u 'right-pw'; $r = Invoke-ImapSession $srv.read $srv.write $u 'wrong-pw'.ToCharArray()
+Check 'fake server: wrong password over PLAIN -> auth (Couldn''t sign in), reply NO at login' ($r.kind -eq 'auth' -and -not $r.unclear -and $r.step -eq 'login' -and $r.word -eq 'NO' -and (Get-MailTestText $r).kind -eq 'auth')
+$srv = New-FakeImap 'IMAP4rev1 AUTH=PLAIN SASL-IR' $u $fake; $r = Invoke-ImapSession $srv.read $srv.write $u ("a" + [char]0 + "b").ToCharArray()
+Check 'PLAIN: NUL in password -> nothing sent, auth' ($r.kind -eq 'auth' -and $srv.sent.Count -eq 0)
+$pb = Get-ImapPlainBytes $u $fake.ToCharArray() 'a1 AUTHENTICATE PLAIN '
+$expB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("`0$u`0$fake"))
+Check 'PLAIN bytes: prefix + base64(\0user\0pass) + CRLF' ([Text.Encoding]::ASCII.GetString($pb) -ceq "a1 AUTHENTICATE PLAIN $expB64`r`n")
+# tolerant parsing: untagged lines in any order, extra CAPABILITY / OK after login, quoted and literal mailbox
+$after = @('* CAPABILITY IMAP4rev1 IDLE', '* OK [ALERT] hello')
+foreach ($sc in @(@('quoted mailbox', @('* 12 EXISTS', '* STATUS "INBOX" (MESSAGES 9 UNSEEN 4)', '* OK still here')),
+                   @('literal mailbox', @('* STATUS {5}', 'INBOX (UNSEEN 4)')),
+                   @('reordered untagged', @('* OK [HIGHESTMODSEQ 3]', '* CAPABILITY IMAP4rev1', '* STATUS INBOX (UNSEEN 4 MESSAGES 9)', '* 3 RECENT')))) {
+    $srv = New-FakeImap 'IMAP4rev1 AUTH=PLAIN SASL-IR' $u $fake $after $sc[1]
+    $r = Invoke-ImapSession $srv.read $srv.write $u $fake.ToCharArray()
+    Check "tolerant parser: extra CAPABILITY/OK after login, $($sc[0]) -> 4 unread" ($r.kind -eq 'ok' -and $r.unseen -eq 4) }
+# CRLF split across reads: the worker's line reader takes bytes, however the server chunks them
+$bytes = [Text.Encoding]::ASCII.GetBytes("* OK hi`r`na1 OK done`r`n"); $ms = New-Object IO.MemoryStream (,$bytes); $buf = New-Object IO.MemoryStream
+$l1 = Read-ImapStreamLine $ms $buf; $l2 = Read-ImapStreamLine $ms $buf
+Check 'stream line reader: CR and LF in separate reads, CR trimmed' ($l1 -ceq '* OK hi' -and $l2 -ceq 'a1 OK done')
+$w2 = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Invoke-MailCheckWorker' }, $true).Extent.Text
+Check 'worker reads lines through Read-ImapStreamLine (byte by byte)' ($w2.Contains('$readLine = { Read-ImapStreamLine $ssl $buf }.GetNewClosure()') -and $ast.Extent.Text.Contains('$b = $stream.ReadByte()'))
+$ws2 = Get-MailWorkerScript
+Check 'worker script carries the new helpers and the step list' ($ws2 -match 'function global:Get-ImapPlainBytes' -and $ws2 -match 'function global:Get-ImapCaps' -and $ws2 -match 'function global:Read-ImapLine' -and $ws2 -match 'function global:Read-ImapStreamLine' -and $ws2 -match '\$global:MailLogSteps = @\(')
+# distinct Test copy per failure kind
+$tn = Get-MailTestText @{ kind = 'net' }; $tc = Get-MailTestText @{ kind = 'cert' }; $tp = Get-MailTestText @{ kind = 'proto' }; $tx = Get-MailTestText @{ kind = 'weird' }
+Check 'Test copy: net -> can''t reach' ($tn.kind -eq 'net' -and $tn.text -ceq 'Can''t reach the mail server. Check this PC is online, then press Test again.')
+Check 'Test copy: cert -> certificate line' ($tc.kind -eq 'cert' -and $tc.text -ceq 'The mail server''s security certificate didn''t check out.')
+Check 'Test copy: proto -> unexpected answer line' ($tp.kind -eq 'proto' -and $tp.text -ceq 'The mail server answered in a way Launcher didn''t expect. Press Test again; if it keeps happening, send the launcher log to IT.')
+Check 'Test copy: unknown kind -> unexpected answer, never can''t reach' ($tx.kind -eq 'proto' -and $tx.text -notmatch 'reach')
+Check 'Test copy: lost result -> unexpected answer; 45 s cap before sign-in -> can''t reach' ((Get-MailTestText (Get-MailLostResult $null 'no result')).kind -eq 'proto' -and (Get-MailTestText (Get-MailLostResult $null 'timed out')).kind -eq 'net')
+$m = New-Mock @('* OK [CAPABILITY IMAP4rev1 AUTH=PLAIN SASL-IR] ready', 'a1 OK in', '* STATUS INBOX (UNSEEN 1)', 'a2 NO [SERVERBUG] oops'); $r = Invoke-ImapSession $m.read $m.write $u $fake.ToCharArray()
+Check 'STATUS NO -> proto, step status, reply NO' ($r.kind -eq 'proto' -and $r.step -eq 'status' -and $r.word -eq 'NO')
+# Test writes the fixed-word log line; no secret anywhere
+$global:logPath = Join-Path ([IO.Path]::GetTempPath()) ('bl-maillog-' + [guid]::NewGuid() + '.log')
+$secretPw = 'Dummy"Pw\ %{' + [char]0xE9 + '-' + [guid]::NewGuid().ToString('N')
+$secretB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("`0$u`0$secretPw"))
+$cap = New-Object System.Collections.ArrayList
+foreach ($c in @(@('IMAP4rev1 AUTH=PLAIN SASL-IR', 'x'), @('IMAP4rev1 AUTH=PLAIN', 'x'), @('IMAP4rev1', 'x'))) {
+    $srv = New-FakeImap $c[0] $u 'not-this'; $r = Invoke-ImapSession $srv.read $srv.write $u $secretPw.ToCharArray()
+    Write-MailLogLine $r 'test'; [void]$cap.Add((Format-MailLogLine $r)); [void]$cap.Add(($r.Keys | ForEach-Object { "$_=$($r[$_])" }) -join ';') }
+foreach ($r in @(@{ kind = 'proto'; detail = 'no STATUS reply'; step = 'status'; word = 'BAD' }, @{ kind = 'cert'; detail = 'certificate or TLS check failed'; step = 'tls' }, @{ kind = 'net'; detail = $secretPw; step = $secretPw; word = $secretB64 })) { Write-MailLogLine $r 'test' }
+Write-MailLogLine @{ kind = 'ok'; unseen = 1 } 'test'
+$logText = [IO.File]::ReadAllText($global:logPath); Remove-Item -LiteralPath $global:logPath -Force
+$all = $logText + ($cap -join "`n")
+Check 'Test log: one fixed-word line per failure, with step and reply word' ((@($logText -split "`n" | Where-Object { $_ -match '\[test\]' })).Count -eq 6 -and $logText -match 'email count: auth \(sign-in refused\) step=login reply=NO \[test\]' -and $logText -match 'email count: proto \(no STATUS reply\) step=status reply=BAD \[test\]' -and $logText -match 'email count: net \[test\]')
+Check 'Test log and captured results: no dummy password, no base64 of it, no address' ($all -notmatch [regex]::Escape($secretPw) -and $all -notmatch [regex]::Escape($secretB64) -and $all -notmatch [regex]::Escape($secretB64.Substring(4, 20)) -and $logText -notmatch [regex]::Escape($u))
+$sdT = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Show-MailSetupDialog' }, $true).Extent.Text
+Check 'Test button logs through Write-MailLogLine before showing the result' ($sdT.IndexOf("Write-MailLogLine `$r 'test'") -gt 0 -and $sdT.IndexOf("Write-MailLogLine `$r 'test'") -lt $sdT.IndexOf('$tr = Get-MailTestText $r'))
+Check 'background check logs through the same Write-MailLogLine' ($ast.Extent.Text.Contains("Write-MailLogLine `$r 'check'"))
+$pl = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-ImapPlainBytes' }, $true).Extent.Text
+Check 'PLAIN bytes: raw, password bytes and base64 chars are zeroed (finally)' ($pl -match 'finally \{ foreach \(\$a in \$pb, \$raw\)' -and $pl -match '\[Array\]::Clear\(\$b64' -and $pl -notmatch 'ToBase64String')
+
 ""
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

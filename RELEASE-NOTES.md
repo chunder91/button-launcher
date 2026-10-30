@@ -20,6 +20,8 @@ Pending review (build of 2026-10-29). Includes everything in v1.3.0. Waiting on 
 - **For IT: install as the user.** Setup installs per user. A silent `/S` install run as SYSTEM or as another admin account installs Launcher into that account, not the user's. Run Setup as the person who will use it, without elevation (no "Run as administrator").
 - **Fixed:** pressing Test in Setup > Unread email count... showed "The property 'busy' cannot be found on this object". The same kind of mistake also put the View Register "More" menu in the wrong place; both are fixed, and the tests now check for it.
 - **Fixed:** opening Setup > Unread email count... showed "The property 'Background' cannot be found on this object". The same fix covers Setup > View-only password and Add a computer.
+- **Email Test messages say what went wrong.** "Can't reach the mail server" now means only that Launcher couldn't connect. A certificate problem says "The mail server's security certificate didn't check out.", and an answer Launcher didn't expect says to press Test again and send the launcher log to IT if it keeps happening. Each failed Test also writes one line to launcher-error.log with the failing step (for example `step=login reply=NO`), never your address, password or the server's text.
+- **Sign-in uses AUTHENTICATE PLAIN** when the mail server offers it (jartrek.net does), so any password characters go through unchanged; other servers still get LOGIN.
 
 ### Known issues
 - CSV files on a custom button open in Excel (or whatever opens .csv on that PC). Excel warns before running anything in a file that looks like a formula; say no if you didn't expect it.

@@ -2740,7 +2740,7 @@ function global:Show-VncPicker($btn) {
 
 # ================= v1.4.0 unread email count on the Email tile (opt-in, per Windows user) =================
 # Charles: off by default; Flash by default once on; each Windows user signs in with their own @jartrek.net login; INBOX only.
-# IMAP over implicit TLS to mail.jartrek.net:993. The only commands ever sent: LOGIN, STATUS INBOX (UNSEEN), LOGOUT.
+# IMAP over implicit TLS to mail.jartrek.net:993. The only commands ever sent: AUTHENTICATE PLAIN (when the greeting lists AUTH=PLAIN) or LOGIN, STATUS INBOX (UNSEEN), LOGOUT.
 # The certificate is checked by Windows itself (no custom validation callback; global .NET network settings untouched); a failure is an error.
 # The password: a DPAPI CurrentUser blob (ConvertFrom-SecureString, no key) in %LOCALAPPDATA%\ButtonLauncher\email-count.dat,
 # read back only as a SecureString; plaintext exists only as a char[]/byte[] inside the worker and is zeroed after the write.
@@ -2754,7 +2754,9 @@ $global:MailWorkerScript = $null
 $global:MailDialogRes = $null
 $global:MailDeadRuns  = New-Object System.Collections.ArrayList   # stopped checks waiting to end (BeginStop)
 $global:MailLogDetails = @('address not allowed', 'server closed', 'no greeting', 'login has characters IMAP cannot send', 'sign-in refused', 'no continuation', 'server closed at sign-in', 'no sign-in reply',
-                           'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result')   # the only words the log may carry
+                           'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result', 'connection dropped')   # the only words the log may carry
+$global:MailLogSteps = @('connect', 'tls', 'greeting', 'login', 'status', 'logout', 'timeout', 'lost-result')   # the failing step; fixed words only
+$global:MailLogWords = @('OK', 'NO', 'BAD', 'BYE')   # the server reply's status word only, never the text after it
 
 # ---- IMAP protocol (pure; the worker runs these in a background runspace; tools/test-mail.ps1 drives them with a mock) ----
 function global:ConvertTo-ImapQuotedBytes([char[]]$chars) {   # RFC 3501 quoted string as ASCII bytes ('\' and '"' escaped); $null = needs a literal; CR, LF, NUL throw
@@ -2785,6 +2787,37 @@ function global:Get-ImapLoginBytes([string]$user, [char[]]$pass) {   # @{ cmd; l
         return @{ cmd = $ms.ToArray(); literal = $lit }
     } finally { $buf = $ms.GetBuffer(); [Array]::Clear($buf, 0, $buf.Length); $ms.Dispose() }
 }
+function global:Get-ImapPlainBytes([string]$user, [char[]]$pass, [string]$prefix) {   # SASL PLAIN (RFC 4616): ASCII prefix + base64(UTF-8 "\0user\0pass") + CRLF; NUL, CR, LF throw. Every buffer but the result is zeroed.
+    foreach ($ch in @($user.ToCharArray()) + @($pass)) { $c = [int]$ch; if ($c -eq 0 -or $c -eq 10 -or $c -eq 13) { throw 'CR, LF and NUL are not allowed.' } }
+    $ub = [Text.Encoding]::UTF8.GetBytes($user); $pb = $null; $raw = $null; $b64 = $null
+    try {
+        $pb = [Text.Encoding]::UTF8.GetBytes([char[]]$pass)
+        $raw = New-Object byte[] (2 + $ub.Length + $pb.Length)
+        [Array]::Copy($ub, 0, $raw, 1, $ub.Length); [Array]::Copy($pb, 0, $raw, 2 + $ub.Length, $pb.Length)
+        $b64 = New-Object char[] (4 * [Math]::Ceiling($raw.Length / 3))
+        [void][Convert]::ToBase64CharArray($raw, 0, $raw.Length, $b64, 0)
+        $h = [Text.Encoding]::ASCII.GetBytes($prefix)
+        $cmd = New-Object byte[] ($h.Length + $b64.Length + 2)
+        [Array]::Copy($h, $cmd, $h.Length)
+        for ($i = 0; $i -lt $b64.Length; $i++) { $cmd[$h.Length + $i] = [byte]$b64[$i] }
+        $cmd[$cmd.Length - 2] = 13; $cmd[$cmd.Length - 1] = 10
+        return ,$cmd
+    } finally { foreach ($a in $pb, $raw) { if ($a) { [Array]::Clear($a, 0, $a.Length) } }; if ($b64) { [Array]::Clear($b64, 0, $b64.Length) } }
+}
+function global:Get-ImapCaps([string]$line) {   # '* OK [CAPABILITY ...] ...' or '* CAPABILITY ...' -> upper-case capability words; anything else -> empty
+    if ($line -match '(?i)^\*\s+CAPABILITY\s+(.*)$') { $w = $Matches[1] } elseif ($line -match '(?i)^\*\s+(OK|PREAUTH)\s+\[CAPABILITY\s+([^\]]*)\]') { $w = $Matches[2] } else { return ,@() }
+    return ,@(($w.Trim() -split '\s+') | Where-Object { $_ } | ForEach-Object { $_.ToUpperInvariant() })
+}
+function global:Read-ImapLine([scriptblock]$ReadLine) {   # one logical server line: a line ending in a {n} literal is joined with the next (a quoted or literal mailbox name in STATUS)
+    $l = [string](& $ReadLine)
+    for ($k = 0; $k -lt 4 -and $l -match '\{\d{1,6}\}$'; $k++) { $l = $l + ' ' + [string](& $ReadLine) }
+    return $l
+}
+function global:Read-ImapStreamLine($stream, [IO.MemoryStream]$buf) {   # bytes up to LF (CR trimmed), however the server split them across reads
+    $buf.SetLength(0)
+    while ($true) { $b = $stream.ReadByte(); if ($b -lt 0) { throw 'closed' }; if ($b -eq 10) { break }; if ($buf.Length -ge 16384) { throw 'line too long' }; $buf.WriteByte([byte]$b) }
+    return ([Text.Encoding]::UTF8.GetString($buf.ToArray())).TrimEnd("`r")
+}
 function global:Get-ImapTagged([string]$line, [string]$tag) {   # 'OK' / 'NO' / 'BAD' for this tag's completion line, else $null
     if ($line -match ('(?i)^' + [regex]::Escape($tag) + ' (OK|NO|BAD)\b')) { return $Matches[1].ToUpperInvariant() }
     return $null
@@ -2794,44 +2827,54 @@ function global:Get-ImapStatusUnseen([string]$line) {   # '* STATUS INBOX (MESSA
     if ($Matches[1] -notmatch '(?i)(?:^|\s)UNSEEN\s+(\d{1,9})(?:\s|$)') { return -1 }
     return [int]$Matches[1]
 }
-function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, [string]$user, [char[]]$pass, $Flags = $null) {   # Flags.loginSent: M15-I1
-      # @{ kind = ok|auth|net|proto; unseen; detail }
+function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, [string]$user, [char[]]$pass, $Flags = $null) {   # Flags.loginSent: M15-I1; Flags.step: the step a drop happened in
+      # @{ kind = ok|auth|net|proto; unseen; detail; step; word }  (word = the server's status word only: OK/NO/BAD/BYE)
     $max = 200
-    $g = [string](& $ReadLine)
-    if ($g -match '(?i)^\* BYE') { return @{ kind = 'net'; unseen = -1; detail = 'server closed' } }
-    if ($g -notmatch '(?i)^\* (OK|PREAUTH)\b') { return @{ kind = 'proto'; unseen = -1; detail = 'no greeting' } }
+    if ($Flags) { $Flags.step = 'greeting' }
+    $g = Read-ImapLine $ReadLine
+    if ($g -match '(?i)^\* BYE') { return @{ kind = 'net'; unseen = -1; detail = 'server closed'; step = 'greeting'; word = 'BYE' } }
+    if ($g -notmatch '(?i)^\* (OK|PREAUTH)\b') { return @{ kind = 'proto'; unseen = -1; detail = 'no greeting'; step = 'greeting' } }
     if ($g -notmatch '(?i)^\* PREAUTH\b') {
+        if ($Flags) { $Flags.step = 'login' }
+        $caps = Get-ImapCaps $g   # from the greeting only: no extra command is ever sent
         $lb = $null
-        try { $lb = Get-ImapLoginBytes $user $pass } catch { return @{ kind = 'auth'; unseen = -1; detail = 'login has characters IMAP cannot send' } }
-        # M14-I4: once LOGIN is on the wire, anything but a definite 'a1 OK' (NO/BAD/BYE, no reply, a drop, a timeout) is a sign-in failure: polling stops, never a timer retry
+        try {
+            if ($caps -contains 'AUTH=PLAIN') {   # SASL PLAIN: the password is base64 of UTF-8, so quotes, backslashes, spaces, braces and non-ASCII all go through unchanged
+                if ($caps -contains 'SASL-IR') { $lb = @{ cmd = (Get-ImapPlainBytes $user $pass 'a1 AUTHENTICATE PLAIN '); literal = $null } }
+                else { $lb = @{ cmd = [Text.Encoding]::ASCII.GetBytes("a1 AUTHENTICATE PLAIN`r`n"); literal = (Get-ImapPlainBytes $user $pass '') } } }   # sent after the server's '+'
+            else { $lb = Get-ImapLoginBytes $user $pass }
+        } catch { return @{ kind = 'auth'; unseen = -1; detail = 'login has characters IMAP cannot send'; step = 'login' } }
+        # M14-I4: once the sign-in is on the wire, anything but a definite 'a1 OK' (NO/BAD/BYE, no reply, a drop, a timeout) is a sign-in failure: polling stops, never a timer retry
         $t = $null
         try {
             try {
-                if ($Flags) { $Flags.loginSent = $true }   # M15-I1: set before LOGIN goes out
+                if ($Flags) { $Flags.loginSent = $true }   # M15-I1: set before the sign-in goes out
                 & $Write $lb.cmd
                 if ($lb.literal) {   # CC N1: untagged lines may come first; wait for '+' or a tagged reply
                     $go = $false
-                    for ($k = 0; $k -lt $max -and -not $go -and -not $t; $k++) { $cont = [string](& $ReadLine)
+                    for ($k = 0; $k -lt $max -and -not $go -and -not $t; $k++) { $cont = Read-ImapLine $ReadLine
                         if ($cont -match '^\+') { $go = $true } else { $t = Get-ImapTagged $cont 'a1'
-                            if (-not $t -and $cont -match '(?i)^\* BYE') { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'server closed at sign-in' } } } }
-                    if ($t) { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused' } }
-                    if (-not $go) { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no continuation' } }
+                            if (-not $t -and $cont -match '(?i)^\* BYE') { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'server closed at sign-in'; step = 'login'; word = 'BYE' } } } }
+                    if ($t) { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused'; step = 'login'; word = $t } }
+                    if (-not $go) { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no continuation'; step = 'login' } }
                     & $Write $lb.literal }
-            } finally { if ($lb) { [Array]::Clear($lb.cmd, 0, $lb.cmd.Length); if ($lb.literal) { [Array]::Clear($lb.literal, 0, $lb.literal.Length) } } }
-            for ($k = 0; $k -lt $max -and -not $t; $k++) { $l = [string](& $ReadLine)
+            } finally { if ($lb) { [Array]::Clear($lb.cmd, 0, $lb.cmd.Length); if ($lb.literal) { [Array]::Clear($lb.literal, 0, $lb.literal.Length) }; $lb = $null } }
+            for ($k = 0; $k -lt $max -and -not $t; $k++) { $l = Read-ImapLine $ReadLine
                 $t = Get-ImapTagged $l 'a1'
-                if (-not $t -and $l -match '(?i)^\* BYE') { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'server closed at sign-in' } } }
-        } catch { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no sign-in reply' } }
-        if ($t -ne 'OK') { if ($t) { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused' } }; return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no sign-in reply' } }
+                if (-not $t -and $l -match '(?i)^\* BYE') { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'server closed at sign-in'; step = 'login'; word = 'BYE' } } }
+        } catch { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no sign-in reply'; step = 'login' } }
+        if ($t -ne 'OK') { if ($t) { return @{ kind = 'auth'; unseen = -1; detail = 'sign-in refused'; step = 'login'; word = $t } }; return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'no sign-in reply'; step = 'login' } }
         if ($Flags) { $Flags.loginOk = $true }   # CC L1: sign-in confirmed; a later cap/loss is a network retry
     }
+    if ($Flags) { $Flags.step = 'status' }
     & $Write ([Text.Encoding]::ASCII.GetBytes("a2 STATUS INBOX (UNSEEN)`r`n"))
     $n = -1; $t = $null
-    for ($k = 0; $k -lt $max -and -not $t; $k++) { $l = [string](& $ReadLine)
+    for ($k = 0; $k -lt $max -and -not $t; $k++) { $l = Read-ImapLine $ReadLine   # untagged lines (CAPABILITY, OK, EXISTS, ...) in any order are skipped
         $t = Get-ImapTagged $l 'a2'
-        if (-not $t) { $u = Get-ImapStatusUnseen $l; if ($u -ge 0) { $n = $u } elseif ($l -match '(?i)^\* BYE') { return @{ kind = 'net'; unseen = -1; detail = 'server closed' } } } }
-    $res = if ($t -eq 'OK' -and $n -ge 0) { @{ kind = 'ok'; unseen = $n; detail = '' } } else { @{ kind = 'proto'; unseen = -1; detail = 'no STATUS reply' } }
-    try { & $Write ([Text.Encoding]::ASCII.GetBytes("a3 LOGOUT`r`n")); for ($k = 0; $k -lt 20; $k++) { if (Get-ImapTagged ([string](& $ReadLine)) 'a3') { break } } } catch {}
+        if (-not $t) { $u = Get-ImapStatusUnseen $l; if ($u -ge 0) { $n = $u } elseif ($l -match '(?i)^\* BYE') { return @{ kind = 'net'; unseen = -1; detail = 'server closed'; step = 'status'; word = 'BYE' } } } }
+    $res = if ($t -eq 'OK' -and $n -ge 0) { @{ kind = 'ok'; unseen = $n; detail = '' } } else { @{ kind = 'proto'; unseen = -1; detail = 'no STATUS reply'; step = 'status'; word = $t } }
+    if ($Flags) { $Flags.step = 'logout' }
+    try { & $Write ([Text.Encoding]::ASCII.GetBytes("a3 LOGOUT`r`n")); for ($k = 0; $k -lt 20; $k++) { if (Get-ImapTagged (Read-ImapLine $ReadLine) 'a3') { break } } } catch {}
     return $res
 }
 function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureString]$secure, $sync) {   # runs in the background runspace; one TLS connection, then closed
@@ -2839,9 +2882,11 @@ function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureStr
     try {
         $tcp = New-Object System.Net.Sockets.TcpClient
         $sync.tcp = $tcp                                                            # lets the UI close it on exit or timeout
+        $sync.step = 'connect'
         $ar = $tcp.BeginConnect('mail.jartrek.net', 993, $null, $null)
-        if (-not $ar.AsyncWaitHandle.WaitOne(10000)) { return @{ kind = 'net'; unseen = -1; detail = 'connect timed out' } }
+        if (-not $ar.AsyncWaitHandle.WaitOne(10000)) { return @{ kind = 'net'; unseen = -1; detail = 'connect timed out'; step = 'connect' } }
         $tcp.EndConnect($ar)
+        $sync.step = 'tls'
         $tcp.ReceiveTimeout = 10000; $tcp.SendTimeout = 10000
         $ns = $tcp.GetStream(); $ns.ReadTimeout = 10000; $ns.WriteTimeout = 10000
         $ssl = New-Object System.Net.Security.SslStream($ns, $false)                 # no validation callback: Windows checks the chain and the name
@@ -2850,18 +2895,19 @@ function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureStr
         try { if ([Environment]::OSVersion.Version.Build -ge 22000) { $proto = $proto -bor [System.Security.Authentication.SslProtocols]::Tls13 } } catch {}   # TLS 1.3 where Windows' client supports it
         try { $ssl.AuthenticateAsClient('mail.jartrek.net', $null, $proto, $true) }   # checkCertificateRevocation = true
         catch { $e = $_.Exception; while ($e -and -not ($e -is [System.Security.Authentication.AuthenticationException])) { $e = $e.InnerException }
-                if ($e) { return @{ kind = 'cert'; unseen = -1; detail = 'certificate or TLS check failed' } }; return @{ kind = 'net'; unseen = -1; detail = 'TLS handshake failed' } }
+                if ($e) { return @{ kind = 'cert'; unseen = -1; detail = 'certificate or TLS check failed'; step = 'tls' } }; return @{ kind = 'net'; unseen = -1; detail = 'TLS handshake failed'; step = 'tls' } }
         $buf = New-Object IO.MemoryStream
-        $readLine = { $buf.SetLength(0)
-            while ($true) { $b = $ssl.ReadByte(); if ($b -lt 0) { throw 'closed' }; if ($b -eq 10) { break }; if ($buf.Length -ge 16384) { throw 'line too long' }; $buf.WriteByte([byte]$b) }
-            ([Text.Encoding]::UTF8.GetString($buf.ToArray())).TrimEnd("`r") }.GetNewClosure()
+        $readLine = { Read-ImapStreamLine $ssl $buf }.GetNewClosure()
         $write = { param([byte[]]$bytes) $ssl.Write($bytes, 0, $bytes.Length); $ssl.Flush() }.GetNewClosure()
         $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
         $chars = New-Object char[] $secure.Length
         [Runtime.InteropServices.Marshal]::Copy($bstr, $chars, 0, $chars.Length)
         [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr); $bstr = [IntPtr]::Zero
         return (Invoke-ImapSession $readLine $write $user $chars $sync)
-    } catch { return @{ kind = 'net'; unseen = -1; detail = 'network error' } }
+    } catch {   # a drop or timeout: before the greeting it is the network; after a good sign-in the server stopped answering
+        $st = [string]$sync.step; if ($st -cnotin $global:MailLogSteps) { $st = '' }
+        if ($st -eq 'status') { return @{ kind = 'proto'; unseen = -1; detail = 'connection dropped'; step = $st } }
+        return @{ kind = 'net'; unseen = -1; detail = 'network error'; step = $st } }
     finally {
         if ($bstr -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
         if ($chars) { [Array]::Clear($chars, 0, $chars.Length) }
@@ -2871,8 +2917,9 @@ function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureStr
 }
 function global:Get-MailWorkerScript {   # the worker's functions, copied by name into the runspace (no file, no command line)
     if (-not $global:MailWorkerScript) {
-        $parts = foreach ($n in 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker') {
+        $parts = foreach ($n in 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapPlainBytes', 'Get-ImapCaps', 'Read-ImapLine', 'Read-ImapStreamLine', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker') {
             'function global:{0} {{ {1} }}' -f $n, (Get-Item -LiteralPath ('function:' + $n)).ScriptBlock.ToString() }
+        $parts = @("`$global:MailLogSteps = @('" + ($global:MailLogSteps -join "', '") + "')") + @($parts)
         $global:MailWorkerScript = ($parts -join "`n") + "`nInvoke-MailCheckWorker `$args[0] `$args[1] `$args[2]" }
     return $global:MailWorkerScript
 }
@@ -2897,8 +2944,9 @@ function global:Update-MailState($s, $r, [datetime]$now) {   # one check result 
 }
 function global:Get-MailLostResult($sync, [string]$why) {   # M15-I1: a check cut off by the 45 s cap (or lost) after LOGIN went out is an unclear sign-in failure: stop, never a timer retry
     if ($sync -and $sync.loginSent -and -not $sync.loginOk) {   # CC L1: not after a tagged OK
-    return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = $why } }
-    return @{ kind = 'net'; unseen = -1; detail = $why }
+    return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = $why; step = $(if ($why -eq 'no result') { 'lost-result' } else { 'timeout' }) } }
+    if ($why -eq 'no result') { return @{ kind = 'proto'; unseen = -1; detail = $why; step = 'lost-result' } }   # Launcher lost its own result: not the network
+    return @{ kind = 'net'; unseen = -1; detail = $why; step = 'timeout' }
 }
 function global:Step-MailResume($s) { $s.epoch = [int]$s.epoch + 1 }   # a check that started before sleep is ignored when it ends
 function global:Get-MailNextDelaySec($s, $minutes = 3) {   # -1 = stopped (sign-in failed: never retried on a timer); the saved interval, network errors back off to 6 -> 12 -> 15 min (never sooner than the interval)
@@ -2951,13 +2999,22 @@ function global:Get-MailTestText($r) {   # Squint's 3 Test results: @{ kind = ok
         'ok'   { $n = [int]$r.unseen; $t = if ($n -le 0) { 'Signed in. No unread email in Inbox.' } elseif ($n -eq 1) { 'Signed in. 1 unread email in Inbox.' } else { "Signed in. $n unread emails in Inbox." }; return @{ kind = 'ok'; text = $t } }
         'auth' { if ($r.unclear) { return @{ kind = 'unclear'; text = 'Couldn''t confirm sign-in. Check this PC is online, then press Test again.' } }
                  return @{ kind = 'auth'; text = 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.' } }
-        default { return @{ kind = 'net'; text = 'Can''t reach the mail server. Check this PC is online, then press Test again.' } }
+        'net'  { return @{ kind = 'net'; text = 'Can''t reach the mail server. Check this PC is online, then press Test again.' } }   # only real connect/network failures
+        'cert' { return @{ kind = 'cert'; text = 'The mail server''s security certificate didn''t check out.' } }
+        default { return @{ kind = 'proto'; text = 'The mail server answered in a way Launcher didn''t expect. Press Test again; if it keeps happening, send the launcher log to IT.' } }
     }
 }
 function global:Format-MailLogLine($r) {   # fixed words only: never the address, the password or server text
     $k = [string]$r.kind; if ($k -notin 'ok', 'auth', 'net', 'cert', 'proto') { $k = 'error' }
     $d = [string]$r.detail; if ($d -cnotin $global:MailLogDetails) { $d = '' }
-    return ('email count: {0}{1}' -f $k, $(if ($d) { " ($d)" } else { '' }))
+    $st = [string]$r.step; if ($st -cnotin $global:MailLogSteps) { $st = '' }
+    $w = [string]$r.word; if ($w -cnotin $global:MailLogWords) { $w = '' }
+    return ('email count: {0}{1}{2}{3}' -f $k, $(if ($d) { " ($d)" } else { '' }), $(if ($st) { " step=$st" } else { '' }), $(if ($w) { " reply=$w" } else { '' }))
+}
+function global:Write-MailLogLine($r, [string]$from = 'check') {   # background check and Test: the same fixed-word line, never the address, the password or server text
+    if ([string]$r.kind -eq 'ok') { return }
+    $f = if ($from -ceq 'test') { 'test' } else { 'check' }
+    try { Add-Content -LiteralPath $global:logPath -Value ('{0}  {1} [{2}]' -f (Get-Date -Format s), (Format-MailLogLine $r), $f) -Encoding UTF8 } catch {}
 }
 function global:Get-MailAddress([string]$text) {   # v1.4.0 laptop test: Charles types the full address; only trimmed, never completed for him
     return ([string]$text).Trim()
@@ -3022,7 +3079,7 @@ function global:Start-MailRun([string]$user, [System.Security.SecureString]$secu
         if ($OnDone) { & $OnDone @{ kind = 'auth'; unseen = -1; detail = 'address not allowed'; epoch = $(if ($global:mail) { $global:mail.state.epoch } else { 0 }) } }
         return $true }
     Clear-MailDeadRuns
-    $sync = [hashtable]::Synchronized(@{ tcp = $null; loginSent = $false; loginOk = $false })
+    $sync = [hashtable]::Synchronized(@{ tcp = $null; loginSent = $false; loginOk = $false; step = 'connect' })
     $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open()
     $ps = [powershell]::Create(); $ps.Runspace = $rs
     [void]$ps.AddScript((Get-MailWorkerScript)).AddArgument($user).AddArgument($secure).AddArgument($sync)
@@ -3083,7 +3140,7 @@ function global:Complete-MailPoll($r) {
     $m = $global:mail; if (-not $m -or -not $m.set.enabled) { return }
     $out = Update-MailState $m.state $r (Get-Date)
     if ($out.ignored) { if (-not $m.state.stopped) { Set-MailTimer 10 }; return }
-    if ($r.kind -ne 'ok') { try { Add-Content -LiteralPath $global:logPath -Value ('{0}  {1}' -f (Get-Date -Format s), (Format-MailLogLine $r)) -Encoding UTF8 } catch {} }
+    Write-MailLogLine $r 'check'
     Update-MailUi $out.grew
     Set-MailTimer (Get-MailNextDelaySec $m.state $m.set.interval)
 }
@@ -3404,7 +3461,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $pErr.Visibility = if ($kind -eq 'auth') { 'Visible' } else { 'Hidden' }   # Kern: #F87171 line on the password after a failed sign-in
         switch ($kind) { 'ok' { $ri.Text = [string][char]0xE930; $ri.Foreground = Brush '#22C55E'; $rt.Foreground = Brush '#4ADE80' }
                          'auth' { $ri.Text = [string][char]0xEA39; $ri.Foreground = Brush '#F87171'; $rt.Foreground = Brush '#F87171' }
-                         { $_ -eq 'net' -or $_ -eq 'unclear' } { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
+                         { $_ -eq 'net' -or $_ -eq 'unclear' -or $_ -eq 'cert' -or $_ -eq 'proto' } { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
                          default { $ri.Text = ''; $rt.Foreground = Brush '#B4B4BC' } } }.GetNewClosure()
     $cb.Add_Click({ $ds.tested = $false; & $refresh }.GetNewClosure())
     $ta.Add_TextChanged({ $ds.tested = $false; & $refresh }.GetNewClosure())
@@ -3423,6 +3480,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $onDone = { param($r)
             $ds.busy = $false
             if ($ds.closed) { return }
+            Write-MailLogLine $r 'test'   # the same fixed-word line as the background check, with the failing step
             $tr = Get-MailTestText $r; & $showResult $tr.kind $tr.text
             if ($tr.kind -eq 'ok') { $ds.tested = $true; $ds.addr = $addr; $ds.result = $r }
             & $refresh }.GetNewClosure()
