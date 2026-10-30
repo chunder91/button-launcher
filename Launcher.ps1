@@ -2754,7 +2754,7 @@ $global:MailWorkerScript = $null
 $global:MailDialogRes = $null
 $global:MailDeadRuns  = New-Object System.Collections.ArrayList   # stopped checks waiting to end (BeginStop)
 $global:MailLogDetails = @('address not allowed', 'server closed', 'no greeting', 'login has characters IMAP cannot send', 'sign-in refused', 'no continuation', 'server closed at sign-in', 'no sign-in reply',
-                           'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result', 'connection dropped')   # the only words the log may carry
+                           'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result', 'connection dropped', 'sign-in method not offered')   # the only words the log may carry
 $global:MailLogSteps = @('connect', 'tls', 'greeting', 'login', 'status', 'logout', 'timeout', 'lost-result')   # the failing step; fixed words only
 $global:MailLogWords = @('OK', 'NO', 'BAD', 'BYE')   # the server reply's status word only, never the text after it
 
@@ -2788,7 +2788,8 @@ function global:Get-ImapLoginBytes([string]$user, [char[]]$pass) {   # @{ cmd; l
     } finally { $buf = $ms.GetBuffer(); [Array]::Clear($buf, 0, $buf.Length); $ms.Dispose() }
 }
 function global:Get-ImapPlainBytes([string]$user, [char[]]$pass, [string]$prefix) {   # SASL PLAIN (RFC 4616): ASCII prefix + base64(UTF-8 "\0user\0pass") + CRLF; NUL, CR, LF throw. Every buffer but the result is zeroed.
-    foreach ($ch in @($user.ToCharArray()) + @($pass)) { $c = [int]$ch; if ($c -eq 0 -or $c -eq 10 -or $c -eq 13) { throw 'CR, LF and NUL are not allowed.' } }
+    for ($i = 0; $i -lt $user.Length; $i++) { $c = [int]$user[$i]; if ($c -eq 0 -or $c -eq 10 -or $c -eq 13) { throw 'CR, LF and NUL are not allowed.' } }   # LJ M28-I1: index loops, no extra copy of the password
+    for ($i = 0; $i -lt $pass.Length; $i++) { $c = [int]$pass[$i]; if ($c -eq 0 -or $c -eq 10 -or $c -eq 13) { throw 'CR, LF and NUL are not allowed.' } }
     $ub = [Text.Encoding]::UTF8.GetBytes($user); $pb = $null; $raw = $null; $b64 = $null
     try {
         $pb = [Text.Encoding]::UTF8.GetBytes([char[]]$pass)
@@ -2837,6 +2838,7 @@ function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, 
     if ($g -notmatch '(?i)^\* PREAUTH\b') {
         if ($Flags) { $Flags.step = 'login' }
         $caps = Get-ImapCaps $g   # from the greeting only: no extra command is ever sent
+        if ($caps -contains 'LOGINDISABLED' -and -not ($caps -contains 'AUTH=PLAIN')) { return @{ kind = 'proto'; unseen = -1; detail = 'sign-in method not offered'; step = 'login' } }   # LJ M28-I2: never send LOGIN the server refuses
         $lb = $null
         try {
             if ($caps -contains 'AUTH=PLAIN') {   # SASL PLAIN: the password is base64 of UTF-8, so quotes, backslashes, spaces, braces and non-ASCII all go through unchanged
@@ -2994,14 +2996,15 @@ function global:Get-MailAccessName([string]$base, $s) {   # Squint: 'Email, 3 un
         default { if ([int]$s.count -gt 0) { return "$base, $([int]$s.count) unread" }; if ([int]$s.count -eq 0) { return "$base, no unread email" }; return $base }
     }
 }
-function global:Get-MailTestText($r) {   # Squint's 3 Test results: @{ kind = ok|auth|net; text }
+function global:Get-MailTestText($r) {   # Squint's Test results: @{ kind = ok|auth|unclear|net|cert|proto|lost; text }
     switch ([string]$r.kind) {
         'ok'   { $n = [int]$r.unseen; $t = if ($n -le 0) { 'Signed in. No unread email in Inbox.' } elseif ($n -eq 1) { 'Signed in. 1 unread email in Inbox.' } else { "Signed in. $n unread emails in Inbox." }; return @{ kind = 'ok'; text = $t } }
         'auth' { if ($r.unclear) { return @{ kind = 'unclear'; text = 'Couldn''t confirm sign-in. Check this PC is online, then press Test again.' } }
                  return @{ kind = 'auth'; text = 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.' } }
         'net'  { return @{ kind = 'net'; text = 'Can''t reach the mail server. Check this PC is online, then press Test again.' } }   # only real connect/network failures
-        'cert' { return @{ kind = 'cert'; text = 'The mail server''s security certificate didn''t check out.' } }
-        default { return @{ kind = 'proto'; text = 'The mail server answered in a way Launcher didn''t expect. Press Test again; if it keeps happening, send the launcher log to IT.' } }
+        'cert' { return @{ kind = 'cert'; text = 'Launcher couldn''t confirm this is the real mail server, so it didn''t send your password. Check the PC''s date and time, then press Test again. If it keeps happening, tell your IT contact.' } }   # true: the worker fails the TLS check before the password is even decoded
+        default { if ([string]$r.step -ceq 'lost-result') { return @{ kind = 'lost'; text = 'The test didn''t finish. Press Test again.' } }   # Launcher lost its own result (polling still retries it as proto)
+                  return @{ kind = 'proto'; text = 'The mail server answered in a way Launcher didn''t expect. Press Test again; if it keeps happening, tell your IT contact.' } }
     }
 }
 function global:Format-MailLogLine($r) {   # fixed words only: never the address, the password or server text
@@ -3461,7 +3464,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $pErr.Visibility = if ($kind -eq 'auth') { 'Visible' } else { 'Hidden' }   # Kern: #F87171 line on the password after a failed sign-in
         switch ($kind) { 'ok' { $ri.Text = [string][char]0xE930; $ri.Foreground = Brush '#22C55E'; $rt.Foreground = Brush '#4ADE80' }
                          'auth' { $ri.Text = [string][char]0xEA39; $ri.Foreground = Brush '#F87171'; $rt.Foreground = Brush '#F87171' }
-                         { $_ -eq 'net' -or $_ -eq 'unclear' -or $_ -eq 'cert' -or $_ -eq 'proto' } { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
+                         { $_ -eq 'net' -or $_ -eq 'unclear' -or $_ -eq 'cert' -or $_ -eq 'proto' -or $_ -eq 'lost' } { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
                          default { $ri.Text = ''; $rt.Foreground = Brush '#B4B4BC' } } }.GetNewClosure()
     $cb.Add_Click({ $ds.tested = $false; & $refresh }.GetNewClosure())
     $ta.Add_TextChanged({ $ds.tested = $false; & $refresh }.GetNewClosure())
