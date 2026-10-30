@@ -210,7 +210,7 @@ Function .onInit
       ${Else}
         StrCpy $R1 "Install ${APPNAME}?$\n$\nIt will be added to the Start menu and will open each time you sign in. You can turn that off later from ${APPNAME}'s right-click menu."
       ${EndIf}
-      MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$R1$\n$\nSetup is running as an administrator. ${APPNAME} will be set up for the account that approved this, which may not be yours. To set it up for yourself, choose No and run Setup again without $\"Run as administrator$\".$\n$\nContinue anyway?" IDYES +2
+      MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "$R1$\n$\nSetup is running as an administrator. ${APPNAME} will be set up for the account that approved this, which may not be yours. To set it up for yourself, choose No and run Setup again without $\"Run as administrator$\".$\n$\nIf you didn't choose Run as administrator, choose Yes. Continue anyway?" IDYES +2
       Abort
     ${ElseIf} $IsUpdate = 1
       MessageBox MB_OKCANCEL|MB_ICONQUESTION "Update ${APPNAME} to ${VERSION}?$\n$\nYour buttons and pictures are kept. ${APPNAME} closes for a moment and opens again when the update is done." IDOK +2
