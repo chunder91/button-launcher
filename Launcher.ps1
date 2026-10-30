@@ -2016,7 +2016,7 @@ function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$c
     }
     $a += '-autoscaling'
     if ($viewOnly) { $a += '-viewonly' }
-    if ($dsm) { if ($dsm -cnotmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\.dsm$') { throw 'bad plugin name' }; $a += @('-dsmplugin', ('"' + $dsm + '"')) }   # v1.4.1: the encryption plugin UltraVNC's own dialog would use
+    if ($dsm) { if ($dsm -cnotmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\.[Dd][Ss][Mm]$') { throw 'bad plugin name' }; $a += @('-dsmplugin', ('"' + $dsm + '"')) }   # v1.4.1: the encryption plugin UltraVNC's own dialog would use
     return $a
 }
 function global:ConvertTo-VncObfuscated([byte[]]$pw) {   # VNC password file form: first 8 bytes, zero padded, DES with the fixed key, as 16 hex digits
@@ -2372,10 +2372,12 @@ function global:Test-VncAllowedAclSafe($acl) {   # owner is Administrators or SY
     $okSids = @('S-1-5-32-544', 'S-1-5-18', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
     try { $own = $acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value } catch { return $false }
     if ($okSids -notcontains $own) { return $false }
-    $write = [int]([System.Security.AccessControl.FileSystemRights]'Write, Delete, ChangePermissions, TakeOwnership, AppendData, CreateFiles, CreateDirectories, WriteData')
+    # LJ M37-I1: delete-child, Delete, WRITE_DAC, WRITE_OWNER and GENERIC_WRITE / GENERIC_ALL (0x50000000) count as write; inherit-only ACEs don't apply here
+    $write = [int64]([System.Security.AccessControl.FileSystemRights]'Write, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership, AppendData, CreateFiles, CreateDirectories, WriteData') -bor 0x50000000
     foreach ($r in $acl.GetAccessRules($true, $true, [System.Security.Principal.SecurityIdentifier])) {
-        if ($r.AccessControlType -ne 'Allow') { continue }
-        if (([int]$r.FileSystemRights -band $write) -and ($okSids -notcontains $r.IdentityReference.Value)) { return $false } }
+        if ([string]$r.AccessControlType -ne 'Allow') { continue }
+        if (([int64]$r.PropagationFlags -band 2) -ne 0) { continue }   # InheritOnly
+        if ((([int64]$r.FileSystemRights -band 0xFFFFFFFFL) -band $write) -and ($okSids -notcontains $r.IdentityReference.Value)) { return $false } }
     return $true
 }
 function global:Read-VncAllowed {   # @{ list; state = 'ok' | 'missing' | 'unsafe' | 'bad' ; bad }
@@ -2407,41 +2409,63 @@ try {
         $out += [ordered]@{ name = $n; host = $h; port = $p } }
     if ($out.Count -gt 50) { exit 3 }
     $text = ConvertTo-Json -InputObject ([ordered]@{ version = 1; computers = $out }) -Depth 4 -Compress
+    # LJ M37-M1: never reuse a folder or file a non-admin could have made or still holds open
+__ACLCHECK__
     $dir = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ButtonLauncher'
-    if (Test-Path -LiteralPath $dir) { if ((Get-Item -LiteralPath $dir -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 4 } }
-    else { [void][IO.Directory]::CreateDirectory($dir) }
     $adm = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'; $sys = New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'; $usr = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
     $ds = New-Object Security.AccessControl.DirectorySecurity
     $ds.SetOwner($adm); $ds.SetAccessRuleProtection($true, $false)
     foreach ($x in @(@($adm, 'FullControl'), @($sys, 'FullControl'), @($usr, 'ReadAndExecute'))) {
         $ds.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($x[0], $x[1], 'ContainerInherit, ObjectInherit', 'None', 'Allow'))) }
-    [IO.Directory]::SetAccessControl($dir, $ds)
-    foreach ($c in Get-ChildItem -LiteralPath $dir -Force) { if ($c.Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 4 } }
+    if (Test-Path -LiteralPath $dir) {   # untrusted (link, wrong owner, or anyone else may write): moved aside, never deleted
+        $di = Get-Item -LiteralPath $dir -Force
+        if (($di.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-VncAllowedAclSafe ([IO.Directory]::GetAccessControl($dir)))) {
+            [IO.Directory]::Move($dir, ($dir + '.untrusted-' + [guid]::NewGuid().ToString('N'))) } }
+    if (-not (Test-Path -LiteralPath $dir)) { [void][IO.Directory]::CreateDirectory($dir, $ds) }   # ACL set at creation
+    $di = Get-Item -LiteralPath $dir -Force
+    if (($di.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-VncAllowedAclSafe ([IO.Directory]::GetAccessControl($dir)))) { exit 4 }   # re-check (a re-create race)
     $file = Join-Path $dir 'vnc-allowed.json'; $tmp = Join-Path $dir 'vnc-allowed.json.tmp'
-    [IO.File]::WriteAllText($tmp, $text, (New-Object Text.UTF8Encoding $false))
+    if ((Test-Path -LiteralPath $file -PathType Container) -or (Test-Path -LiteralPath $tmp -PathType Container)) { exit 6 }   # CC LOW-L: a folder where a file belongs
+    foreach ($c in Get-ChildItem -LiteralPath $dir -Force) { if ($c.Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 4 } }
+    if (Test-Path -LiteralPath $file) { if (-not (Test-VncAllowedAclSafe ([IO.File]::GetAccessControl($file)))) { exit 4 } }
+    if (Test-Path -LiteralPath $tmp) { [IO.File]::Delete($tmp) }   # only an admin could have made it in this folder
     $fs = New-Object Security.AccessControl.FileSecurity
     $fs.SetOwner($adm); $fs.SetAccessRuleProtection($true, $false)
     foreach ($x in @(@($adm, 'FullControl'), @($sys, 'FullControl'), @($usr, 'ReadAndExecute'))) { $fs.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($x[0], $x[1], 'Allow'))) }
-    [IO.File]::SetAccessControl($tmp, $fs)
+    $bytes = (New-Object Text.UTF8Encoding $false).GetBytes($text)
+    $st = New-Object IO.FileStream($tmp, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::None, $fs)   # brand-new file, admin ACL from creation
+    try { $st.Write($bytes, 0, $bytes.Length); $st.Flush() } finally { $st.Dispose() }
     if (Test-Path -LiteralPath $file) { [IO.File]::Replace($tmp, $file, $null) } else { [IO.File]::Move($tmp, $file) }
-    [IO.File]::SetAccessControl($file, $fs)
+    $fi = Get-Item -LiteralPath $file -Force
+    if (($fi.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-VncAllowedAclSafe ([IO.File]::GetAccessControl($file)))) { exit 5 }
     exit 0
 } catch { exit 2 }
 '@
+function global:Get-VncAllowedWriterText([string]$b64) {   # constant script + the reader's own ACL check (launcher code, not user data) + base64 data
+    $chk = 'function Test-VncAllowedAclSafe {' + ${function:Test-VncAllowedAclSafe}.ToString() + '}'
+    return $global:VncAllowedWriterScript.Replace('__ACLCHECK__', $chk).Replace('__DATA__', $b64)
+}
 function global:Get-VncAllowedWriterCommand($list) {   # the -EncodedCommand text for a validated list, or $null when too long for one command line
     $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-VncAllowedJson $list)))
     if ($b64 -cnotmatch '^[A-Za-z0-9+/=]*$') { return $null }
-    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($global:VncAllowedWriterScript.Replace('__DATA__', $b64)))
-    if ($enc.Length -gt 30000) { return $null }
+    $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes((Get-VncAllowedWriterText $b64)))
+    if ($enc.Length -gt 32000) { return $null }   # CreateProcess limit is 32767 characters for the whole command line
     return $enc
+}
+function global:Get-VncAllowedSaveError([int]$code) {   # CC LOW-L: plain words for the elevated writer's exit codes
+    $d = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ButtonLauncher'
+    switch ($code) {
+        3 { return 'Not saved: the list was not valid.' }
+        { $_ -in 4, 5, 6 } { return "Not saved: $d holds something unexpected (a link, a folder named like the list file, or a file someone else can change). Ask an administrator to check that folder, then save again." }
+        default { return "Not saved (code $code). Nothing was changed." } }
 }
 function global:Save-VncAllowedElevated($list) {   # $true when saved; Windows asks for an administrator (UAC)
     $enc = Get-VncAllowedWriterCommand $list
     if (-not $enc) { [System.Windows.MessageBox]::Show('That list is too long to save. Use fewer or shorter names.', 'Allowed computers') | Out-Null; return $false }
-    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $ps = Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\powershell.exe'   # LJ M37-I3: the real System32, not an environment variable
     try { $p = Start-Process -FilePath $ps -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $enc) }
     catch { return $false }   # UAC cancelled
-    if ($p.ExitCode -ne 0) { Write-LauncherLog ('allowed computers save failed, code ' + $p.ExitCode); [System.Windows.MessageBox]::Show("Couldn't save the list (code $($p.ExitCode)).", 'Allowed computers') | Out-Null; return $false }
+    if ($p.ExitCode -ne 0) { Write-LauncherLog ('allowed computers save failed, code ' + $p.ExitCode); [System.Windows.MessageBox]::Show((Get-VncAllowedSaveError ([int]$p.ExitCode)), 'Allowed computers') | Out-Null; return $false }
     return $true
 }
 function global:Show-VncAllowedDialog($owner) {   # Setup > Allowed computers (admin)...
@@ -2481,15 +2505,17 @@ $global:VncAllowedCheckScript = {
             $buf = New-Object byte[] 12; $got = 0
             try { $s = $b.c.GetStream(); $s.ReadTimeout = $timeoutMs
                   while ($got -lt 12) { $n = $s.Read($buf, $got, 12 - $got); if ($n -le 0) { break }; $got += $n } } catch {}
-            if ($got -eq 12 -and ([Text.Encoding]::ASCII.GetString($buf, 0, 12) -cmatch '^RFB \d{3}\.\d{3}\n$')) { $sync.found.Enqueue($b.key) } }
+            $g = [Text.Encoding]::ASCII.GetString($buf, 0, $got)
+            if ($got -eq 12 -and $g -cmatch '^RFB \d{3}\.\d{3}\n$') { $sync.found.Enqueue(@{ key = $b.key; banner = $g.TrimEnd([char]10) }) } }   # CC MED-1: the banner too
     } finally { foreach ($b in $batch) { try { $b.c.Close() } catch {} }; $sync.done = $true }
 }
 function global:Get-VncAllowedRows($list, $online, [bool]$checking) {   # picker rows for the allowed list, sorted by name
     $rows = foreach ($e in @($list)) { $k = '{0}:{1}' -f $e.host, $e.port
-        $r = [pscustomobject]@{ host = $e.host; port = $e.port; name = $e.name; dnsName = $false; banner = ''; pinned = $false; fav = $false; seen = [bool]$online[$k]; session = [bool]$online[$k] }
+        $bn = [string]$online[$k]; if (-not (Test-VncBannerText $bn)) { $bn = '' }   # CC MED-1: the RFB greeting from this window's online check
+        $r = [pscustomobject]@{ host = $e.host; port = $e.port; name = $e.name; dnsName = $false; banner = $bn; pinned = $false; fav = $false; seen = [bool]$bn; session = [bool]$bn }
         $v = Get-VncRowView $r $true $false
-        $v.star = ''; $v.starTip = $null; $v.seen = $(if ($online[$k]) { 'Online' } elseif ($checking) { 'Checking...' } else { 'Offline' })
-        $v.nameFg = '#FFFFFF'; $v.addrFg = $(if ($online[$k] -or $checking) { '#FFFFFF' } else { '#A0A0A0' })
+        $v.star = ''; $v.starTip = $null; $v.seen = $(if ($r.seen) { 'Online' } elseif ($checking) { 'Checking...' } else { 'Offline' })
+        $v.nameFg = '#FFFFFF'; $v.addrFg = $(if ($r.seen -or $checking) { '#FFFFFF' } else { '#A0A0A0' })
         $v }
     return @($rows | Sort-Object { $_.row.name })
 }
@@ -2508,7 +2534,7 @@ function global:Get-VncDsmFromLines($lines) {   # plugin file name or ''; only U
         if ($sec -ne 'options') { continue }
         if ($t -match '^(?i)UseDSMPlugin\s*=\s*(\d+)$') { $use = [int]$matches[1] -ne 0 }
         elseif ($t -match '^(?i)DSMPlugin\s*=\s*(.*)$') { $name = $matches[1].Trim() } }
-    if ($use -and $name -cmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\.dsm$') { return $name }
+    if ($use -and $name -cmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\.[Dd][Ss][Mm]$') { return $name }
     return ''
 }
 function global:Get-VncHostDsm([string]$h, [int]$port) {
@@ -2527,6 +2553,7 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
     $file = $null; $hex = $null
     try {
         if ($viewOnly) {   # Interact never uses the saved password. v1.4.1: no launcher ask-once box (the registers have no VNC password)
+            # LJ M37-I2 / CC MED-1: allowed rows get session + banner from this window's online check, so the existing rule applies again
             if (Test-VncUsePassword $row (Test-VncSecret)) {
                 $hex = Get-VncSecretHex
                 if ($hex) { $file = New-VncTempConfig $h $p $hex; $hex = $null } } }
@@ -2875,7 +2902,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         if ($ui.check) { $ui.check.sync.cancel = $true; try { [void]$ui.check.ps.BeginStop($null, $null) } catch {}; [void]$global:VncDeadWorkers.Add(@{ ps = $ui.check.ps; rs = $ui.check.rs }); $ui.check = $null } }.GetNewClosure()
     $ui.timer = New-Object System.Windows.Threading.DispatcherTimer; $ui.timer.Interval = [TimeSpan]::FromMilliseconds(200)
     $ui.timer.Add_Tick({ $c = $ui.check; if (-not $c) { $ui.timer.Stop(); return }
-        $k = $null; while ($c.sync.found.TryDequeue([ref]$k)) { $ui.online[[string]$k] = $true }
+        $k = $null; while ($c.sync.found.TryDequeue([ref]$k)) { if (Test-VncBannerText ([string]$k.banner)) { $ui.online[[string]$k.key] = [string]$k.banner } }
         if ($c.sync.done -or (Get-VncWorkerFault $c.ps ([bool]$c.sync.done))) { $ui.stopCheck.Invoke(); Clear-VncDeadWorkers
             $n = @($ui.online.Keys).Count; $ui.refresh.Invoke(); $ui.setStatus.Invoke(('{0} of {1} online at {2}. Press F5 to check again.' -f $n, @($ui.allowed).Count, (Get-Date -Format 't'))) } }.GetNewClosure())
     $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only password (for viewing computers)...") }.GetNewClosure()

@@ -359,7 +359,7 @@ Check 'LJ M18-I4: an adapter named Bluetooth Network Connection never scanned' (
 
 # ================= v1.4.1 (Charles 4:09 PM / 4:11 PM): allowed computers, View only never asks, Interact keeps UltraVNC's own box =================
 foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'ConvertTo-VncAllowedJson', 'ConvertFrom-VncAllowedText',
-               'ConvertTo-VncAllowedText', 'Get-VncAllowedRows', 'Get-VncAllowedWriterCommand', 'Get-VncDsmFromLines', 'Get-VncHostSettingsPath', 'Test-VncAllowedAclSafe') {
+               'ConvertTo-VncAllowedText', 'Get-VncAllowedRows', 'Get-VncAllowedSaveError', 'Get-VncAllowedWriterText', 'Get-VncAllowedWriterCommand', 'Get-VncDsmFromLines', 'Get-VncHostSettingsPath', 'Test-VncAllowedAclSafe') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "v1.4.1 defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(VncAllowedMax|VncAllowedWriterScript)\s*=') { Invoke-Expression $l.Extent.Text } }
@@ -385,7 +385,7 @@ Check 'editor: text round trip' ((ConvertTo-VncAllowedText $t.list) -eq "Registe
 foreach ($bad in 'no comma here', 'A, B, C', 'x;y, 1.2.3.4', 'Good, 999.1.1.1', 'Good, reg1:0', "A, 1.2.3.4`r`nB, 1.2.3.4") { Check "editor rejects: $($bad -replace "`r`n", ' / ')" ([bool](ConvertFrom-VncAllowedText $bad).error) }
 Check 'editor: at most 50' ([bool](ConvertFrom-VncAllowedText ((1..51 | ForEach-Object { "R$_, 10.0.0.$_" }) -join "`n")).error)
 # rows
-$rows = Get-VncAllowedRows $t.list @{ '192.168.1.21:5900' = $true } $false
+$rows = Get-VncAllowedRows $t.list @{ '192.168.1.21:5900' = 'RFB 003.008' } $false
 Check 'picker rows: Online / Offline, no star, names from the admin' ($rows.Count -eq 2 -and $rows[0].seen -eq 'Online' -and $rows[1].seen -eq 'Offline' -and $rows[0].star -eq '' -and $rows[0].nameText -eq 'Register 1')
 Check "picker rows: 'Checking...' while the check runs" ((Get-VncAllowedRows $t.list @{} $true)[0].seen -eq 'Checking...')
 Check 'empty list: rows empty' (@(Get-VncAllowedRows @() @{} $false).Count -eq 0)
@@ -425,13 +425,52 @@ Check 'viewer identity logged, non-UltraVNC viewer flagged' ($sv -match 'Get-Vnc
 # elevated writer
 $enc = Get-VncAllowedWriterCommand $t.list
 $dec = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($enc))
-Check 'writer: encoded command is the constant script with only base64 data' ($dec -eq $global:VncAllowedWriterScript.Replace('__DATA__', [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-VncAllowedJson $t.list)))))
+Check 'writer: encoded command is the constant script + reader ACL check + only base64 data' ($dec -eq (Get-VncAllowedWriterText ([Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-VncAllowedJson $t.list))))) -and $dec -notmatch '__DATA__|__ACLCHECK__')
 $pe = $null; [void][System.Management.Automation.Language.Parser]::ParseInput($dec, [ref]$null, [ref]$pe); Check 'writer script parses' ($pe.Count -eq 0)
 Check 'writer: ACL Administrators + SYSTEM full, Users read, inheritance off, owner Administrators' ($global:VncAllowedWriterScript -match "S-1-5-32-544" -and $global:VncAllowedWriterScript -match "@\(\`$usr, 'ReadAndExecute'\)" -and $global:VncAllowedWriterScript -match 'SetAccessRuleProtection\(\$true, \$false\)' -and $global:VncAllowedWriterScript -match 'SetOwner\(\$adm\)')
 Check 'writer: refuses reparse points, re-validates every entry, writes only vnc-allowed.json' ($global:VncAllowedWriterScript -match 'ReparsePoint\) \{ exit 4 \}' -and $global:VncAllowedWriterScript -match 'exit 3' -and @([regex]::Matches($global:VncAllowedWriterScript, "Join-Path \`$dir '")).Count -eq 2)
 Check 'writer: no file or script from a user folder is run' ($global:VncAllowedWriterScript -notmatch 'LOCALAPPDATA|TEMP|APPDATA|Invoke-Expression|iex |& \$|\. \$|Start-Process')
-$se = & $fn 'Save-VncAllowedElevated'; Check 'save: System32 powershell.exe, RunAs, -EncodedCommand' ($se -match "Join-Path \`$env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'" -and $se -match '-Verb RunAs' -and $se -match "'-EncodedCommand', \`$enc")
+$se = & $fn 'Save-VncAllowedElevated'; Check 'save: System folder powershell.exe, RunAs, -EncodedCommand' ($se.Contains("Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\powershell.exe'") -and $se.Contains('-Verb RunAs') -and $se.Contains("'-EncodedCommand', `$enc"))
 Check 'writer: 50 long entries still fit one command line' ([bool](Get-VncAllowedWriterCommand (1..50 | ForEach-Object { [pscustomobject]@{ name = ('Register number {0:00} front till' -f $_); host = ('register-{0:00}.shop.example.local' -f $_); port = 5900 } })))
 # writer re-validation on a hand-made (hostile) payload: decode + run its checks in a sandbox copy with exit trapped
 Check 'Setup menu: Allowed computers (admin)... added; View-only password item unchanged' ($src -match "'Allowed computers \(admin\)\.\.\.'" -and $src -match "'View-only password \(for viewing computers\)\.\.\.'")
+# --- LJ M37 (FIX-FIRST on c202b8b) ---
+$ws = $global:VncAllowedWriterScript
+Check 'M37-M1: untrusted existing folder (link or failed ACL check) is moved aside to .untrusted-<guid>, never deleted' ($ws -match "Test-VncAllowedAclSafe \(\[IO.Directory\]::GetAccessControl\(\`$dir\)\)\)\) \{\s*\[IO.Directory\]::Move\(\`$dir, \(\`$dir \+ '.untrusted-'" -and $ws -notmatch 'Remove-Item|Directory\]::Delete')
+Check 'M37-M1: folder created with its DirectorySecurity, then owner/ACL re-checked (exit 4)' ($ws -match '\[IO.Directory\]::CreateDirectory\(\$dir, \$ds\)' -and $ws -match "(?s)CreateDirectory\(\`$dir, \`$ds\).*?Test-VncAllowedAclSafe \(\[IO.Directory\]::GetAccessControl\(\`$dir\)\)\)\) \{ exit 4 \}")
+Check 'M37-M1: temp file is FileMode CreateNew with FileSecurity, FileShare None; no WriteAllText/SetAccessControl reuse' ($ws -match 'New-Object IO.FileStream\(\$tmp, \[IO.FileMode\]::CreateNew, \[Security.AccessControl.FileSystemRights\]::Write, \[IO.FileShare\]::None, 4096, \[IO.FileOptions\]::None, \$fs\)' -and $ws -notmatch 'WriteAllText|SetAccessControl')
+Check 'M37-M1: existing unsafe vnc-allowed.json refused; final file re-verified (exit 5)' ($ws -match "Test-VncAllowedAclSafe \(\[IO.File\]::GetAccessControl\(\`$file\)\)\)\) \{ exit 4 \}" -and $ws -match "GetAccessControl\(\`$file\)\)\)\) \{ exit 5 \}")
+$full = Get-VncAllowedWriterText 'AA=='; $pe = $null; $wa = [System.Management.Automation.Language.Parser]::ParseInput($full, [ref]$null, [ref]$pe)
+Check 'M37-M1: full elevated script parses and defines the same ACL check as the reader' ($pe.Count -eq 0 -and [bool]$wa.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'Test-VncAllowedAclSafe' }, $true) -and $full.Contains(${function:Test-VncAllowedAclSafe}.ToString()))
+Check 'M37-M1: data appears only inside the FromBase64String literal' (([regex]::Matches($full, "FromBase64String\('AA=='\)")).Count -eq 1 -and ([regex]::Matches($full, 'AA==')).Count -eq 1)
+$se = & $fn 'Save-VncAllowedElevated'
+Check 'M37-I3: powershell.exe from [Environment]::GetFolderPath(System), not $env:SystemRoot' ($se -match "Join-Path \(\[Environment\]::GetFolderPath\('System'\)\) 'WindowsPowerShell\\v1.0\\powershell.exe'" -and $se -notmatch '\$env:SystemRoot')
+# reader ACL check against stand-in ACL objects
+function New-FakeAcl([string]$owner, $rules) {
+    $o = [pscustomobject]@{ owner = $owner; rules = $rules }
+    $o | Add-Member ScriptMethod GetOwner { param($t) [pscustomobject]@{ Value = $this.owner } }
+    $o | Add-Member ScriptMethod GetAccessRules { param($a, $b, $c) $this.rules }
+    return $o }
+function New-FakeAce([string]$sid, [int64]$rights, [int]$prop = 0, [string]$type = 'Allow') { [pscustomobject]@{ IdentityReference = [pscustomobject]@{ Value = $sid }; FileSystemRights = $rights; PropagationFlags = $prop; AccessControlType = $type } }
+$A = 'S-1-5-32-544'; $S = 'S-1-5-18'; $U = 'S-1-5-32-545'
+$good = @((New-FakeAce $A 0x1F01FF), (New-FakeAce $S 0x1F01FF), (New-FakeAce $U 0x1200A9))
+Check 'reader: admin-owned, admins/SYSTEM full, Users read -> safe' (Test-VncAllowedAclSafe (New-FakeAcl $A $good))
+Check 'reader: user-owned -> unsafe' (-not (Test-VncAllowedAclSafe (New-FakeAcl $U $good)))
+Check 'M37-I1: Users delete-child (0x40) -> unsafe' (-not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x40)))))
+Check 'M37-I1: Users GENERIC_WRITE (0x40000000) -> unsafe' (-not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x40000000)))))
+Check 'M37-I1: Users GENERIC_ALL (0x10000000) -> unsafe' (-not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x10000000)))))
+Check 'M37-I1: Users Delete / WRITE_DAC / WRITE_OWNER -> unsafe' (-not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x10000)))) -and -not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x40000)))) -and -not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x80000)))))
+Check 'M37-I1: inherit-only write ACE ignored (CREATOR OWNER style)' (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce 'S-1-3-0' 0x10000000 2))))
+Check 'M37-I1: Deny ACE ignored' (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x1F01FF 0 'Deny'))))
+Check 'M37-I2: dead saved-password path documented, behaviour unchanged (fails closed)' ((& $fn 'Start-VncViewer') -match 'LJ M37-I2' -and -not (Test-VncUsePassword ([pscustomobject]@{ host = 'REG1'; port = 5900; banner = ''; session = $true }) $true))
+# --- ClaudeCode FIX-FIRST on c202b8b ---
+$on = Get-VncAllowedRows $t.list @{ '192.168.1.21:5900' = 'RFB 003.008'; 'REG2:5901' = 'SSH-2.0-x' } $false
+Check 'CC MED-1: online allowed row carries the RFB banner + session -> saved password used (usePassword True)' ($on[0].row.banner -eq 'RFB 003.008' -and $on[0].row.session -and (Test-VncUsePassword $on[0].row $true))
+Check 'CC MED-1: a non-RFB answer is not online and gets no password' ($on[1].seen -eq 'Offline' -and -not (Test-VncUsePassword $on[1].row $true))
+Check 'CC MED-1: nothing saved -> no password and no launcher prompt' (-not (Test-VncUsePassword $on[0].row $false) -and (& $fn 'Start-VncViewer') -notmatch 'Show-VncPasswordDialog')
+Check 'CC MED-1: online check queues key + banner; picker keeps only RFB banners' ($src -match 'Enqueue\(@\{ key = \$b.key; banner = ' -and (& $fn 'Show-VncPicker') -match 'if \(Test-VncBannerText \(\[string\]\$k.banner\)\) \{ \$ui.online\[\[string\]\$k.key\] = \[string\]\$k.banner \}')
+Check 'CC LOW-M: .DSM / .Dsm accepted' ((Get-VncDsmFromLines @('[options]', 'UseDSMPlugin=1', 'DSMPlugin=SecureVNCPlugin64.DSM')) -eq 'SecureVNCPlugin64.DSM' -and ((Get-VncViewerArgs 'REG1' 5900 $false $null 'X.Dsm') -join ' ') -eq 'REG1::5900 -autoscaling -dsmplugin "X.Dsm"')
+Check 'CC LOW-L: a folder named vnc-allowed.json(.tmp) -> exit 6' ($global:VncAllowedWriterScript -match "Test-Path -LiteralPath \`$file -PathType Container\) -or \(Test-Path -LiteralPath \`$tmp -PathType Container\)\) \{ exit 6 \}")
+Check 'CC LOW-L: planted .tmp in an untrusted folder goes aside with the folder; CreateNew never opens an old .tmp' ($global:VncAllowedWriterScript -match 'CreateNew' -and $global:VncAllowedWriterScript -match '\.untrusted-')
+Check "CC LOW-L: clear 'Not saved' messages for codes 3, 4, 5, 6 and others" ((Get-VncAllowedSaveError 3) -like 'Not saved*' -and (Get-VncAllowedSaveError 6) -like 'Not saved: *unexpected*' -and (Get-VncAllowedSaveError 4) -eq (Get-VncAllowedSaveError 5) -and (Get-VncAllowedSaveError 2) -like 'Not saved (code 2)*')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
