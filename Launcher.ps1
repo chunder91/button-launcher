@@ -3262,6 +3262,9 @@ function global:Add-MailOverlay($tile, $wrap, $g, $c, [string]$ir, $btn) {   # E
     $tile.Add_PreviewMouseLeftButtonUp({ Start-MailFollowUp })                      # the click itself still does exactly what it did
     $tile.Add_PreviewKeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { Start-MailFollowUp } })
     [void]$global:mail.ui.Add($e)
+    if (-not $global:MailAnimHooked) {   # Squint: Windows animations turned off or on while running -> redraw at once (one static handler, no polling)
+        $global:MailAnimHooked = $true
+        try { [System.Windows.SystemParameters]::add_StaticPropertyChanged({ param($src0, $chg) if ($chg.PropertyName -eq 'ClientAreaAnimation') { Update-MailUi $false } }) } catch {} }
     Set-MailEntry $e $false
 }
 function global:Add-MailMenu($menu) {   # Squint: status line first, then Check email now, then Email count settings... (only while the count is on)
@@ -3478,9 +3481,13 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
     [void]$wd.Children.Add($wi); [void]$wd.Children.Add($wt); $warn.Child = $wd; [void]$acct.Children.Add($warn)
     $h2 = New-D2Label 'While there are unread emails:' '#FFFFFF' 14; $h2.FontWeight = [System.Windows.FontWeights]::SemiBold; [void]$acct.Children.Add($h2)
     $s2 = $d.TryFindResource('D2Radio'); $radios = @{}
-    foreach ($o in @(@('pulse', 'Pulse'), @('badge', 'Just show the number'))) {
+    foreach ($o in @(@('pulse', 'Pulse the Email button'), @('badge', 'Just show the number'))) {
         $rb = New-Object System.Windows.Controls.RadioButton; $rb.GroupName = 'mailStyle'; $rb.Content = $o[1]; if ($s2) { $rb.Style = $s2 } else { $rb.Foreground = Brush '#FFFFFF'; $rb.FontSize = 14; $rb.Margin = '0,4' }
-        $rb.IsChecked = ([string]$was.style -eq $o[0]); $radios[$o[0]] = $rb; [void]$acct.Children.Add($rb) }
+        $rb.IsChecked = ([string]$was.style -eq $o[0]); $radios[$o[0]] = $rb; [void]$acct.Children.Add($rb)
+        if ($o[0] -eq 'pulse') {   # Squint: hint under the option, the dialog's caption style (12 px #B4B4BC), aligned with the label
+            $ph = New-Object System.Windows.Controls.TextBlock; $ph.Text = 'The pulse stops once every email is read.'; $ph.FontSize = 12; $ph.Foreground = Brush '#B4B4BC'; $ph.Margin = '28,0,0,4'; $ph.TextWrapping = 'Wrap'; [void]$acct.Children.Add($ph) } }
+    $aoff = New-Object System.Windows.Controls.TextBlock; $aoff.Text = 'Windows animations are off, so Launcher just shows the number.'; $aoff.FontSize = 12; $aoff.Foreground = Brush '#B4B4BC'; $aoff.Margin = '0,6,0,0'; $aoff.TextWrapping = 'Wrap'
+    $aoff.Visibility = if (Test-MailAnimOn) { 'Collapsed' } else { 'Visible' }; [void]$acct.Children.Add($aoff)   # Squint: the saved choice stays as it is
     if (-not ($radios.Values | Where-Object { $_.IsChecked })) { $radios['pulse'].IsChecked = $true }   # Charles: Pulse by default
     $h3 = New-D2Label 'Check for new email every:' '#FFFFFF' 14; $h3.FontWeight = [System.Windows.FontWeights]::SemiBold; $h3.Margin = '0,16,0,6'; [void]$acct.Children.Add($h3)
     $cbI = New-Object System.Windows.Controls.ComboBox; $cbI.Width = 140; $cbI.Height = 32; $cbI.HorizontalAlignment = 'Left'; $cbI.FontSize = 14; $cbI.Margin = '0'   # Kern: 16 to the buttons comes from the row
