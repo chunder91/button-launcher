@@ -400,17 +400,17 @@ $rm = & $fn 'New-VncRowMenu'; Check 'row menu: allowed mode has only View only +
 # View only never asks; password for any allowed row when saved
 $sv = & $fn 'Start-VncViewer'
 Check 'View only: no password prompt from the launcher (ask-once removed)' ($sv -notmatch 'Show-VncPasswordDialog' -and $sv -notmatch 'viewOnlyAsked')
-Check 'saved view-only password used for an allowed row with no scan/session' (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.1.21'; port = 5900; banner = ''; session = $false }) $true)
-Check 'saved password also for a hostname row on another port' (Test-VncUsePassword ([pscustomobject]@{ host = 'REG2'; port = 5901 }) $true)
-Check 'no saved password -> none passed (connect with no password)' (-not (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.1.21'; port = 5900 }) $false))
-Check 'invalid host or port -> never a password file' (-not (Test-VncUsePassword ([pscustomobject]@{ host = '-config'; port = 5900 }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ host = 'REG1'; port = 0 }) $true))
+Check 'L4: saved password used for a host that greeted RFB in this session' (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $true }) $true)
+Check 'V2-I1: cached RFB banner alone is not enough (not seen this session)' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $false }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $true))
+Check 'L4: no password file for a host with no or a non-RFB greeting' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = '' }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'SSH-2.0-Open' }) $true))
+Check 'View only, nothing saved: -viewonly, no -config, no password (no-password registers)' (((Get-VncViewerArgs 'REG1' 5900 $true $null) -join ' ') -eq 'REG1::5900 -autoscaling -viewonly' -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $true }) $false))
 Check 'temp .vnc only for View only (Interact never gets the saved password)' ($sv -match '(?s)if \(\$viewOnly\) \{.*?Test-VncUsePassword.*?New-VncTempConfig')
 # Interact unchanged apart from the plugin: no config, no password, -viewonly absent
 $a = Get-VncViewerArgs 'REG1' 5900 $false $null
 Check 'Interact: host::port -autoscaling only (UltraVNC asks for the password)' (($a -join ' ') -eq 'REG1::5900 -autoscaling')
 $a = Get-VncViewerArgs 'REG1' 5901 $false $null 'SecureVNCPlugin64.dsm'
 Check 'Interact with a per-computer DSM plugin: -dsmplugin "<name>" added, nothing else' (($a -join ' ') -eq 'REG1::5901 -autoscaling -dsmplugin "SecureVNCPlugin64.dsm"')
-Check 'View only keeps -viewonly and the plugin' ((Get-VncViewerArgs 'REG1' 5900 $true $null 'MSRC4Plugin.dsm') -join ' ' -eq 'REG1::5900 -autoscaling -viewonly -dsmplugin "MSRC4Plugin.dsm"')
+Check 'View only: no plugin lookup (unchanged path)' ($sv.Contains("`$dsm = if (`$viewOnly) { '' } else { Get-VncHostDsm"))
 foreach ($bad in '..\x.dsm', 'a"b.dsm', 'x.exe', '-password.dsm', ('a' * 70 + '.dsm')) { $th = $false; try { [void](Get-VncViewerArgs 'REG1' 5900 $false $null $bad) } catch { $th = $true }; Check "bad plugin name refused: $($bad.Substring(0, [Math]::Min(20, $bad.Length)))" $th }
 Check 'Interact never -password, never -config' (-not ((Get-VncViewerArgs 'REG1' 5900 $false $null 'X.dsm') -match '^-password$|^-config$'))
 # DSM settings: only the two keys, only in [options], only when enabled
@@ -433,5 +433,5 @@ Check 'writer: no file or script from a user folder is run' ($global:VncAllowedW
 $se = & $fn 'Save-VncAllowedElevated'; Check 'save: System32 powershell.exe, RunAs, -EncodedCommand' ($se -match "Join-Path \`$env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'" -and $se -match '-Verb RunAs' -and $se -match "'-EncodedCommand', \`$enc")
 Check 'writer: 50 long entries still fit one command line' ([bool](Get-VncAllowedWriterCommand (1..50 | ForEach-Object { [pscustomobject]@{ name = ('Register number {0:00} front till' -f $_); host = ('register-{0:00}.shop.example.local' -f $_); port = 5900 } })))
 # writer re-validation on a hand-made (hostile) payload: decode + run its checks in a sandbox copy with exit trapped
-Check 'Setup menu: Allowed computers (admin)... and the optional password label' ($src -match "'Allowed computers \(admin\)\.\.\.'" -and $src -match "'View-only password \(optional, only if your computers need one\)\.\.\.'")
+Check 'Setup menu: Allowed computers (admin)... added; View-only password item unchanged' ($src -match "'Allowed computers \(admin\)\.\.\.'" -and $src -match "'View-only password \(for viewing computers\)\.\.\.'")
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

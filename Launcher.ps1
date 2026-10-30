@@ -1166,7 +1166,7 @@ function global:Panel-Menu($p, $menu) {
     [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
     if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" }) }   # installed copies ship without the builder
     [void](Add-MenuItem $setup 'Allowed computers (admin)...' { Show-VncAllowedDialog $null })   # v1.4.1: elevated save (UAC)
-    [void](Add-MenuItem $setup 'View-only password (optional, only if your computers need one)...' { [void](Show-VncPasswordDialog $null) })
+    [void](Add-MenuItem $setup 'View-only password (for viewing computers)...' { [void](Show-VncPasswordDialog $null) })
     [void](Add-MenuItem $setup 'Unread email count...' { [void](Show-MailSetupDialog $null) })   # v1.4.0, opt-in
     if (-not @($p.items | Where-Object { Test-CustomSlot $_ }).Count) {
         [void](Add-MenuItem $setup 'Add the row of 2 custom buttons' { if (Add-CustomRow $p.items) { Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure()) }
@@ -2130,7 +2130,7 @@ function global:Test-VncPickerButton($btn) {   # L2: the explicit flag, else onl
     if ((([string]$btn.label) -replace '\s+', ' ').Trim() -ne 'VIEW REGISTER') { return $false }
     return (([string]$btn.askTitle) -eq 'Pick the UltraVNC Viewer (vncviewer.exe)' -or (@($btn.detect.lnkNames) -contains 'UltraVNC Viewer'))
 }
-function global:Test-VncUsePassword($row, [bool]$hasSecret) { $hasSecret -and (Test-VncHost ([string]$row.host)) -and [bool](Get-VncPort $row.port) }   # v1.4.1 (Charles): any computer in the admin's allowed list (the only rows the picker has); was: only hosts seen in this session's scan
+function global:Test-VncUsePassword($row, [bool]$hasSecret) { $hasSecret -and [bool]$row.session -and (Test-VncBannerText ([string]$row.banner)) }   # L4 + V2-I1: only to a host that greeted RFB in this session's scan
 
 # ----- view-only password: one shared value, DPAPI CurrentUser + app entropy, in vnc-viewonly.dat beside buttons.json -----
 function global:Get-VncSecretPath { Join-Path (Split-Path -Parent $global:cfgPath) 'vnc-viewonly.dat' }
@@ -2276,7 +2276,7 @@ function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, A
 function global:Show-VncPasswordDialog($owner) {   # set, replace or clear the shared view-only password; returns $true when one is saved
     $dlg = New-D2Dialog 'View-only password' $owner 380; $d = $dlg.win; $sp = $dlg.body   # Kern 6: D2 dialog
     $t = New-D2Label ''
-    $t.Text = "If the computers you view have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). Leave it empty if your computers allow viewing without a password."
+    $t.Text = "If the computers you view have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). If View only can't connect later, change it in Setup > View-only password (for viewing computers)..."
     [void]$sp.Children.Add($t)
     $st = New-Object System.Windows.Controls.TextBlock; $st.Margin = '0,8,0,0'; $st.Foreground = Brush '#A0A0A0'; $st.FontSize = 12; $st.TextWrapping = 'Wrap'
     $st.Text = if (Test-VncSecret) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only connects straight through.' }
@@ -2526,11 +2526,11 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
     $exe = Find-VncViewer $btn; if (-not $exe) { return $false }
     $file = $null; $hex = $null
     try {
-        if ($viewOnly) {   # Interact never uses the saved password. v1.4.1: View only never asks; the saved one (optional) is passed silently
+        if ($viewOnly) {   # Interact never uses the saved password. v1.4.1: no launcher ask-once box (the registers have no VNC password)
             if (Test-VncUsePassword $row (Test-VncSecret)) {
                 $hex = Get-VncSecretHex
                 if ($hex) { $file = New-VncTempConfig $h $p $hex; $hex = $null } } }
-        $dsm = Get-VncHostDsm $h $p; $vi = Get-VncViewerInfo $exe
+        $dsm = if ($viewOnly) { '' } else { Get-VncHostDsm $h $p }; $vi = Get-VncViewerInfo $exe
         Write-LauncherLog ('VNC {0}: {1}::{2} viewer "{3}" {4}{5}{6}' -f $(if ($viewOnly) { 'view only' } else { 'interact' }), $h, $p, $vi.product, $vi.version, $(if ($dsm) { ' plugin ' + $dsm } else { '' }), $(if ($vi.ultra) { '' } else { ' (NOT UltraVNC)' }))
         if (-not $vi.ultra -and $owner -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke(('The picked viewer is "{0}", not UltraVNC. Pick UltraVNC''s vncviewer.exe if it can''t connect.' -f $vi.product)) }
         $proc = Start-Process -FilePath $exe -ArgumentList (Get-VncViewerArgs $h $p $viewOnly $file $dsm) -WorkingDirectory (Split-Path -Parent $exe) -PassThru
@@ -2878,7 +2878,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         $k = $null; while ($c.sync.found.TryDequeue([ref]$k)) { $ui.online[[string]$k] = $true }
         if ($c.sync.done -or (Get-VncWorkerFault $c.ps ([bool]$c.sync.done))) { $ui.stopCheck.Invoke(); Clear-VncDeadWorkers
             $n = @($ui.online.Keys).Count; $ui.refresh.Invoke(); $ui.setStatus.Invoke(('{0} of {1} online at {2}. Press F5 to check again.' -f $n, @($ui.allowed).Count, (Get-Date -Format 't'))) } }.GetNewClosure())
-    $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only password (optional)...") }.GetNewClosure()
+    $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only password (for viewing computers)...") }.GetNewClosure()
     $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; [void](Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw) }.GetNewClosure()
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure())
     $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
