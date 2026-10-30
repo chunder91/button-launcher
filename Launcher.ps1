@@ -2754,8 +2754,8 @@ $global:MailWorkerScript = $null
 $global:MailDialogRes = $null
 $global:MailDeadRuns  = New-Object System.Collections.ArrayList   # stopped checks waiting to end (BeginStop)
 $global:MailLogDetails = @('address not allowed', 'server closed', 'no greeting', 'login has characters IMAP cannot send', 'sign-in refused', 'no continuation', 'server closed at sign-in', 'no sign-in reply',
-                           'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result', 'connection dropped', 'sign-in method not offered')   # the only words the log may carry
-$global:MailLogSteps = @('connect', 'tls', 'greeting', 'login', 'status', 'logout', 'timeout', 'lost-result')   # the failing step; fixed words only
+                           'no STATUS reply', 'connect timed out', 'certificate or TLS check failed', 'TLS handshake failed', 'network error', 'timed out', 'no result', 'connection dropped', 'sign-in method not offered', 'internal error')   # the only words the log may carry
+$global:MailLogSteps = @('connect', 'tls', 'greeting', 'login', 'status', 'logout', 'timeout', 'lost-result', 'worker-error')   # the failing step; fixed words only
 $global:MailLogWords = @('OK', 'NO', 'BAD', 'BYE')   # the server reply's status word only, never the text after it
 # CC L4: the worker gives up after 25 s; the UI cap in Start-MailRun is 45 s
 $global:MailWorkerDeadlineSec = 25
@@ -2914,6 +2914,11 @@ function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureStr
         return $res
     } catch {   # CC L1: connect/TLS failures are the network; a drop or EOF once TLS is up is the server (greeting or status)
         $st = [string]$sync.step; if ($st -cnotin $global:MailLogSteps) { $st = '' }
+        $ex = $_.Exception; while ($ex -is [System.Management.Automation.MethodInvocationException] -and $ex.InnerException) { $ex = $ex.InnerException }
+        $mine = $_.Exception.WasThrownFromThrowStatement -and ([string]$_.TargetObject -cin 'closed', 'deadline', 'line too long')
+        $netx = ($ex -is [IO.IOException]) -or ($ex -is [System.Net.Sockets.SocketException]) -or ($ex -is [ObjectDisposedException]) -or ($ex -is [InvalidOperationException]) -or ($ex -is [TimeoutException]) -or ($ex -is [System.Security.Authentication.AuthenticationException]) -or ($ex -is [System.ComponentModel.Win32Exception])
+        if (-not $sync.timedOut -and -not $mine -and -not $netx) {   # a Launcher bug, not the network: type and line only, never the message (it can hold user data)
+            return @{ kind = 'internal'; unseen = -1; detail = 'internal error'; step = 'worker-error'; etype = $ex.GetType().FullName; eline = [int]$_.InvocationInfo.ScriptLineNumber; estep = $st } }
         if ($sync.timedOut) {   # CC L4: same split as the UI cap (Get-MailLostResult)
             if ($sync.loginSent -and -not $sync.loginOk) { return @{ kind = 'auth'; unclear = $true; unseen = -1; detail = 'timed out'; step = 'timeout' } }
             return @{ kind = 'net'; unseen = -1; detail = 'timed out'; step = 'timeout' } }
@@ -2926,12 +2931,14 @@ function global:Invoke-MailCheckWorker([string]$user, [System.Security.SecureStr
         try { if ($tcp) { $tcp.Close() } } catch {}
         $sync.tcp = $null }
 }
+# the worker's last line: anything that escapes Invoke-MailCheckWorker comes back as a worker-error result (type, line, step; never the message)
+$global:MailWorkerTail = 'try { Invoke-MailCheckWorker $args[0] $args[1] $args[2] } catch { $e = $_.Exception; while ($e -is [System.Management.Automation.MethodInvocationException] -and $e.InnerException) { $e = $e.InnerException }; @{ kind = ''internal''; unseen = -1; detail = ''internal error''; step = ''worker-error''; etype = $e.GetType().FullName; eline = [int]$_.InvocationInfo.ScriptLineNumber; estep = [string]$args[2].step } }'
 function global:Get-MailWorkerScript {   # the worker's functions, copied by name into the runspace (no file, no command line)
     if (-not $global:MailWorkerScript) {
         $parts = foreach ($n in 'ConvertTo-ImapQuotedBytes', 'Get-ImapLoginBytes', 'Get-ImapPlainBytes', 'Get-ImapCaps', 'Read-ImapLine', 'Read-ImapStreamLine', 'Get-ImapTagged', 'Get-ImapStatusUnseen', 'Invoke-ImapSession', 'Invoke-MailCheckWorker') {
             'function global:{0} {{ {1} }}' -f $n, (Get-Item -LiteralPath ('function:' + $n)).ScriptBlock.ToString() }
-        $parts = @("`$global:MailLogSteps = @('" + ($global:MailLogSteps -join "', '") + "')", "`$global:MailWorkerDeadlineSec = $([int]$global:MailWorkerDeadlineSec)") + @($parts)
-        $global:MailWorkerScript = ($parts -join "`n") + "`nInvoke-MailCheckWorker `$args[0] `$args[1] `$args[2]" }
+        $parts = @(("`$global:MailLogSteps = @('" + ($global:MailLogSteps -join "', '") + "')"), ("`$global:MailWorkerDeadlineSec = $([int]$global:MailWorkerDeadlineSec)")) + @($parts)   # parentheses: ',' binds tighter than '+'
+        $global:MailWorkerScript = ($parts -join "`n") + "`n" + $global:MailWorkerTail }
     return $global:MailWorkerScript
 }
 
@@ -3006,14 +3013,15 @@ function global:Get-MailAccessName([string]$base, $s) {   # Squint: 'Email, 3 un
         default { if ([int]$s.count -gt 0) { return "$base, $([int]$s.count) unread" }; if ([int]$s.count -eq 0) { return "$base, no unread email" }; return $base }
     }
 }
-function global:Get-MailTestText($r) {   # Squint's Test results: @{ kind = ok|auth|unclear|net|cert|proto|lost; text }
+function global:Get-MailTestText($r) {   # Squint's Test results: @{ kind = ok|auth|unclear|net|cert|proto|lost|internal; text }
     switch ([string]$r.kind) {
         'ok'   { $n = [int]$r.unseen; $t = if ($n -le 0) { 'Signed in. No unread email in Inbox.' } elseif ($n -eq 1) { 'Signed in. 1 unread email in Inbox.' } else { "Signed in. $n unread emails in Inbox." }; return @{ kind = 'ok'; text = $t } }
         'auth' { if ($r.unclear) { return @{ kind = 'unclear'; text = 'Couldn''t confirm sign-in. Check this PC is online, then press Test again.' } }
                  return @{ kind = 'auth'; text = 'Couldn''t sign in. Check the email address and password, the same ones you use for webmail.' } }
         'net'  { return @{ kind = 'net'; text = 'Can''t reach the mail server. Check this PC is online, then press Test again.' } }   # only real connect/network failures
         'cert' { return @{ kind = 'cert'; text = 'Launcher couldn''t confirm this is the real mail server, so it didn''t send your password. Check the PC''s date and time, then press Test again. If it keeps happening, tell your IT contact.' } }   # true: the worker fails the TLS check before the password is even decoded
-        default { if ([string]$r.step -ceq 'lost-result') { return @{ kind = 'lost'; text = 'The test didn''t finish. Press Test again.' } }   # Launcher lost its own result (polling still retries it as proto)
+        'internal' { return @{ kind = 'internal'; text = 'Launcher hit an internal error while testing (not your password or the server). Tell your IT contact.' } }
+        default { if ([string]$r.step -ceq 'lost-result') { return @{ kind = 'lost'; text = 'Launcher didn''t get an answer back from its own test. Press Test again; if it keeps happening, tell your IT contact.' } }   # Launcher lost its own result (polling still retries it as proto)
                   return @{ kind = 'proto'; text = 'The mail server answered in a way Launcher didn''t expect. Press Test again; if it keeps happening, tell your IT contact.' } }
     }
 }
@@ -3022,7 +3030,13 @@ function global:Format-MailLogLine($r) {   # fixed words only: never the address
     $d = [string]$r.detail; if ($d -cnotin $global:MailLogDetails) { $d = '' }
     $st = [string]$r.step; if ($st -cnotin $global:MailLogSteps) { $st = '' }
     $w = [string]$r.word; if ($w -cnotin $global:MailLogWords) { $w = '' }
-    return ('email count: {0}{1}{2}{3}' -f $k, $(if ($d) { " ($d)" } else { '' }), $(if ($st) { " step=$st" } else { '' }), $(if ($w) { " reply=$w" } else { '' }))
+    $x = ''
+    if ($st -ceq 'worker-error') {   # type: [A-Za-z0-9.] only; line: a number; at: a known step
+        $ty = [string]$r.etype; if ($ty -cnotmatch '^[A-Za-z0-9.]{1,128}$') { $ty = 'unknown' }
+        $ln = 0; try { $ln = [Math]::Max(0, [Math]::Min(999999, [int]$r.eline)) } catch {}
+        $at = [string]$r.estep; if ($at -cnotin $global:MailLogSteps) { $at = '' }
+        $x = " type=$ty line=$ln" + $(if ($at) { " at=$at" } else { '' }) }
+    return ('email count: {0}{1}{2}{3}{4}' -f $k, $(if ($d) { " ($d)" } else { '' }), $(if ($st) { " step=$st" } else { '' }), $x, $(if ($w) { " reply=$w" } else { '' }))
 }
 function global:Write-MailLogLine($r, [string]$from = 'check') {   # background check and Test: the same fixed-word line, never the address, the password or server text
     if ([string]$r.kind -eq 'ok') { return }
@@ -3103,15 +3117,33 @@ function global:Start-MailRun([string]$user, [System.Security.SecureString]$secu
     $t = New-Object System.Windows.Threading.DispatcherTimer; $t.Interval = [TimeSpan]::FromMilliseconds(250)   # only while a check runs
     $t.Add_Tick({
         $r = $null
-        if ($run.handle.IsCompleted) { try { $o = $run.ps.EndInvoke($run.handle); if ($o.Count -gt 0) { $r = $o[$o.Count - 1]; if ($r -is [psobject]) { $r = $r.BaseObject } } } catch {} }
+        if ($run.handle.IsCompleted) { $r = Get-MailRunResult $run }
         elseif (([DateTime]::UtcNow - $run.start).TotalSeconds -ge 45) { Stop-MailRunObjects $run; $r = Get-MailLostResult $run.sync 'timed out' }   # LJ M16-I1: close the socket first, then read the flags
         else { return }
         $t.Stop(); Stop-MailRunObjects $run
         if (-not ($r -is [hashtable])) { $r = Get-MailLostResult $run.sync 'no result' }
+        if ([string]$r.kind -eq 'internal' -and $run.sync.loginSent -and -not $run.sync.loginOk) { $r.stop = $true }   # M15-I1: the sign-in may have gone out; never a timer retry
         $r.epoch = $run.epoch
         if ($run.done) { & $run.done $r } }.GetNewClosure())
     $run.timer = $t; $t.Start()
     return $true
+}
+function global:Get-MailWorkerError($err, $sync) {   # an ErrorRecord or exception from the worker -> worker-error result: type (allowlisted characters) and line only, never the message
+    $ex = if ($err -is [System.Management.Automation.ErrorRecord]) { $err.Exception } else { $err }
+    while ($ex -is [System.Management.Automation.MethodInvocationException] -and $ex.InnerException) { $ex = $ex.InnerException }
+    $line = 0
+    if ($ex -is [System.Management.Automation.ParseException] -and $ex.Errors -and $ex.Errors.Count -gt 0) { $line = [int]$ex.Errors[0].Extent.StartLineNumber }
+    elseif ($err -is [System.Management.Automation.ErrorRecord] -and $err.InvocationInfo) { $line = [int]$err.InvocationInfo.ScriptLineNumber }
+    elseif ($ex -is [System.Management.Automation.IContainsErrorRecord] -and $ex.ErrorRecord.InvocationInfo) { $line = [int]$ex.ErrorRecord.InvocationInfo.ScriptLineNumber }
+    $st = if ($sync) { [string]$sync.step } else { '' }
+    return @{ kind = 'internal'; unseen = -1; detail = 'internal error'; step = 'worker-error'; etype = $(if ($ex) { $ex.GetType().FullName } else { '' }); eline = $line; estep = $st }
+}
+function global:Get-MailRunResult($run) {   # a finished worker -> its result hashtable; a worker that threw -> worker-error; a worker that gave nothing -> $null (lost)
+    $o = $null
+    try { $o = $run.ps.EndInvoke($run.handle) } catch { return (Get-MailWorkerError $_ $run.sync) }
+    if ($o -and $o.Count -gt 0) { $x = $o[$o.Count - 1]; if ($x -is [hashtable]) { return [hashtable]$x } }   # -is sees through the PSObject wrapper; never .BaseObject (on a hashtable it reads the key 'BaseObject' = $null)
+    try { if ($run.ps.Streams.Error.Count -gt 0) { return (Get-MailWorkerError $run.ps.Streams.Error[$run.ps.Streams.Error.Count - 1] $run.sync) } } catch {}
+    return $null
 }
 function global:Stop-MailRunObjects($run) {   # closes the socket first so a stuck read ends at once, then frees the runspace
     if (-not $run) { return }
@@ -3474,7 +3506,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $pErr.Visibility = if ($kind -eq 'auth') { 'Visible' } else { 'Hidden' }   # Kern: #F87171 line on the password after a failed sign-in
         switch ($kind) { 'ok' { $ri.Text = [string][char]0xE930; $ri.Foreground = Brush '#22C55E'; $rt.Foreground = Brush '#4ADE80' }
                          'auth' { $ri.Text = [string][char]0xEA39; $ri.Foreground = Brush '#F87171'; $rt.Foreground = Brush '#F87171' }
-                         { $_ -eq 'net' -or $_ -eq 'unclear' -or $_ -eq 'cert' -or $_ -eq 'proto' -or $_ -eq 'lost' } { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
+                         { $_ -eq 'net' -or $_ -eq 'unclear' -or $_ -eq 'cert' -or $_ -eq 'proto' -or $_ -eq 'lost' -or $_ -eq 'internal' } { $ri.Text = [string][char]0xE7BA; $ri.Foreground = Brush '#FBBF24'; $rt.Foreground = Brush '#FBBF24' }
                          default { $ri.Text = ''; $rt.Foreground = Brush '#B4B4BC' } } }.GetNewClosure()
     $cb.Add_Click({ $ds.tested = $false; & $refresh }.GetNewClosure())
     $ta.Add_TextChanged({ $ds.tested = $false; & $refresh }.GetNewClosure())
