@@ -246,7 +246,7 @@ Check 'D2: hover lift 1 px, press 0.97, focus ring, disabled #2A2A2A/#8A8A8A, 2 
 Check 'status line announced politely' ($pk -match "SetLiveSetting\(\`$status, 'Polite'\)")
 $vncSrc = [regex]::Match($src, '(?s)# ---------- VNC register picker.*?# =+ MAIN').Value
 Check 'VNC code: no -password switch, no Invoke-Expression, no cmd /c' ($vncSrc -notmatch "'-password'" -and $vncSrc -notmatch 'Invoke-Expression|iex ' -and $vncSrc -notmatch 'cmd(\.exe)?\s*/c')
-Check 'launch: Start-Process with an argument list from Get-VncViewerArgs' ((& $fn 'Start-VncViewer') -match 'Start-Process -FilePath \$exe -ArgumentList \(Get-VncViewerArgs')
+Check 'launch: Start-Process with an argument list from Get-VncViewerArgs' ((& $fn 'Start-VncViewer').Contains('$vargs = @(Get-VncViewerArgs $h $p $viewOnly $file)') -and (& $fn 'Start-VncViewer').Contains('Start-Process -FilePath $exe -ArgumentList $vargs '))
 Check 'viewer path must be a local fixed path' ((& $fn 'Find-VncViewer') -match 'Test-LocalFixedPath \$f' -and (& $fn 'Find-VncViewer') -match 'App Paths\\vncviewer\.exe')
 Check 'secret: DPAPI CurrentUser + entropy, plaintext zeroed' ($sv -match "ProtectedData\]::Protect\(\`$raw, \`$global:VncEntropy, 'CurrentUser'\)" -and $sv -match 'ZeroFreeBSTR' -and (& $fn 'Get-VncSecretHex') -match 'Array\]::Clear')
 Check 'secret: separate file, not buttons.json' ((& $fn 'Get-VncSecretPath') -match "'vnc-viewonly\.dat'")
@@ -359,7 +359,7 @@ Check 'LJ M18-I4: an adapter named Bluetooth Network Connection never scanned' (
 
 # ================= v1.4.1 (Charles 4:09 PM / 4:11 PM): allowed computers, View only never asks, Interact keeps UltraVNC's own box =================
 foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'ConvertTo-VncAllowedJson', 'ConvertFrom-VncAllowedText',
-               'ConvertTo-VncAllowedText', 'Get-VncAllowedRows', 'Get-VncAllowedSaveError', 'Get-VncAllowedWriterText', 'Get-VncAllowedWriterCommand', 'Get-VncDsmFromLines', 'Get-VncHostSettingsPath', 'Test-VncAllowedAclSafe') {
+               'ConvertTo-VncAllowedText', 'Get-VncAllowedRows', 'Get-VncAllowedSaveError', 'Get-VncAllowedWriterText', 'Get-VncAllowedWriterCommand', 'Test-VncAllowedAclSafe') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "v1.4.1 defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(VncAllowedMax|VncAllowedWriterScript)\s*=') { Invoke-Expression $l.Extent.Text } }
@@ -405,23 +405,13 @@ Check 'V2-I1: cached RFB banner alone is not enough (not seen this session)' (-n
 Check 'L4: no password file for a host with no or a non-RFB greeting' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = '' }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'SSH-2.0-Open' }) $true))
 Check 'View only, nothing saved: -viewonly, no -config, no password (no-password registers)' (((Get-VncViewerArgs 'REG1' 5900 $true $null) -join ' ') -eq 'REG1::5900 -autoscaling -viewonly' -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $true }) $false))
 Check 'temp .vnc only for View only (Interact never gets the saved password)' ($sv -match '(?s)if \(\$viewOnly\) \{.*?Test-VncUsePassword.*?New-VncTempConfig')
-# Interact unchanged apart from the plugin: no config, no password, -viewonly absent
+# Interact: no config, no password, no -viewonly (UltraVNC asks for the password itself)
 $a = Get-VncViewerArgs 'REG1' 5900 $false $null
-Check 'Interact: host::port -autoscaling only (UltraVNC asks for the password)' (($a -join ' ') -eq 'REG1::5900 -autoscaling')
-$a = Get-VncViewerArgs 'REG1' 5901 $false $null 'SecureVNCPlugin64.dsm'
-Check 'Interact with a per-computer DSM plugin: -dsmplugin "<name>" added, nothing else' (($a -join ' ') -eq 'REG1::5901 -autoscaling -dsmplugin "SecureVNCPlugin64.dsm"')
-Check 'View only: no plugin lookup (unchanged path)' ($sv.Contains("`$dsm = if (`$viewOnly) { '' } else { Get-VncHostDsm"))
-foreach ($bad in '..\x.dsm', 'a"b.dsm', 'x.exe', '-password.dsm', ('a' * 70 + '.dsm')) { $th = $false; try { [void](Get-VncViewerArgs 'REG1' 5900 $false $null $bad) } catch { $th = $true }; Check "bad plugin name refused: $($bad.Substring(0, [Math]::Min(20, $bad.Length)))" $th }
-Check 'Interact never -password, never -config' (-not ((Get-VncViewerArgs 'REG1' 5900 $false $null 'X.dsm') -match '^-password$|^-config$'))
-# DSM settings: only the two keys, only in [options], only when enabled
-Check 'DSM: UseDSMPlugin=1 + DSMPlugin in [options] -> name' ((Get-VncDsmFromLines @('[connection]', 'host=REG1', '[options]', 'UseDSMPlugin=1', 'DSMPlugin=SecureVNCPlugin64.dsm')) -eq 'SecureVNCPlugin64.dsm')
-Check 'DSM: UseDSMPlugin=0 -> none' ((Get-VncDsmFromLines @('[options]', 'UseDSMPlugin=0', 'DSMPlugin=SecureVNCPlugin64.dsm')) -eq '')
-Check 'DSM: NoPlugin / bad names -> none' ((Get-VncDsmFromLines @('[options]', 'UseDSMPlugin=1', 'DSMPlugin=NoPlugin')) -eq '' -and (Get-VncDsmFromLines @('[options]', 'UseDSMPlugin=1', 'DSMPlugin=..\evil.dsm')) -eq '')
-Check 'DSM: keys outside [options] ignored' ((Get-VncDsmFromLines @('[connection]', 'UseDSMPlugin=1', 'DSMPlugin=X.dsm')) -eq '')
-$env:APPDATA = $(if ($env:APPDATA) { $env:APPDATA } else { '/tmp/appdata' })
-Check 'per-computer file name like UltraVNC (host first 15 chars, display 0-99 else port)' ((Split-Path -Leaf (Get-VncHostSettingsPath 'REG1' 5900)) -eq 'REG1-5900.vnc' -and (Split-Path -Leaf (Get-VncHostSettingsPath 'REG1' 5901)) -eq 'REG1-1.vnc' -and (Split-Path -Leaf (Get-VncHostSettingsPath 'averyveryverylongname' 5900)) -eq 'averyveryverylo-5900.vnc')
-$hd = & $fn 'Get-VncHostDsm'; Check 'per-computer file: only plugin lines are read (no password kept)' ($hd -match "Where-Object \{ \`$_ -match '\^\\s\*\\\[\|\^\(\?i\)\\s\*\(UseDSMPlugin\|DSMPlugin\)\\s\*='")
-Check 'viewer identity logged, non-UltraVNC viewer flagged' ($sv -match 'Get-VncViewerInfo' -and $sv -match 'NOT UltraVNC')
+Check 'Interact never -password, -config, -viewonly or -dsmplugin' (-not ((Get-VncViewerArgs 'REG1' 5900 $false $null) -match '^-password$|^-config$|^-viewonly$|^-dsmplugin$'))
+Check 'Interact: same args for an IP or a name, two colons (TCP port, not display)' (((Get-VncViewerArgs '192.168.1.21' 5900 $false $null) -join ' ') -eq '192.168.1.21::5900 -autoscaling')
+Check 'DSM change reverted: no plugin code left' ($src -notmatch '(?i)dsmplugin|Get-VncHostDsm|Get-VncDsmFromLines')
+Check 'Interact: host::port -autoscaling only (UltraVNC asks for the password)' (((Get-VncViewerArgs 'REG1' 5900 $false $null) -join ' ') -eq 'REG1::5900 -autoscaling')
+Check 'viewer path, exact argument line and product/version logged; non-UltraVNC flagged; no secret in the line' ($sv.Contains('Get-VncViewerInfo') -and $sv.Contains('NOT UltraVNC') -and $sv.Contains('$exe, ($vargs -join '' '')') -and $sv -notmatch 'Write-LauncherLog[^\n]*(hex|Secret)')
 # elevated writer
 $enc = Get-VncAllowedWriterCommand $t.list
 $dec = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($enc))
@@ -469,7 +459,6 @@ Check 'CC MED-1: online allowed row carries the RFB banner + session -> saved pa
 Check 'CC MED-1: a non-RFB answer is not online and gets no password' ($on[1].seen -eq 'Offline' -and -not (Test-VncUsePassword $on[1].row $true))
 Check 'CC MED-1: nothing saved -> no password and no launcher prompt' (-not (Test-VncUsePassword $on[0].row $false) -and (& $fn 'Start-VncViewer') -notmatch 'Show-VncPasswordDialog')
 Check 'CC MED-1: online check queues key + banner; picker keeps only RFB banners' ($src -match 'Enqueue\(@\{ key = \$b.key; banner = ' -and (& $fn 'Show-VncPicker') -match 'if \(Test-VncBannerText \(\[string\]\$k.banner\)\) \{ \$ui.online\[\[string\]\$k.key\] = \[string\]\$k.banner \}')
-Check 'CC LOW-M: .DSM / .Dsm accepted' ((Get-VncDsmFromLines @('[options]', 'UseDSMPlugin=1', 'DSMPlugin=SecureVNCPlugin64.DSM')) -eq 'SecureVNCPlugin64.DSM' -and ((Get-VncViewerArgs 'REG1' 5900 $false $null 'X.Dsm') -join ' ') -eq 'REG1::5900 -autoscaling -dsmplugin "X.Dsm"')
 Check 'CC LOW-L: a folder named vnc-allowed.json(.tmp) -> exit 6' ($global:VncAllowedWriterScript -match "Test-Path -LiteralPath \`$file -PathType Container\) -or \(Test-Path -LiteralPath \`$tmp -PathType Container\)\) \{ exit 6 \}")
 Check 'CC LOW-L: planted .tmp in an untrusted folder goes aside with the folder; CreateNew never opens an old .tmp' ($global:VncAllowedWriterScript -match 'CreateNew' -and $global:VncAllowedWriterScript -match '\.untrusted-')
 Check "CC LOW-L: clear 'Not saved' messages for codes 3, 4, 5, 6 and others" ((Get-VncAllowedSaveError 3) -like 'Not saved*' -and (Get-VncAllowedSaveError 6) -like 'Not saved: *unexpected*' -and (Get-VncAllowedSaveError 4) -eq (Get-VncAllowedSaveError 5) -and (Get-VncAllowedSaveError 2) -like 'Not saved (code 2)*')

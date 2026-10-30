@@ -2005,7 +2005,7 @@ function global:Test-VncBannerText([string]$t) { $t -cmatch '^RFB \d{3}\.\d{3}$'
 function global:Get-VncDisplayName([string]$n, [int]$max = 40) {   # L5: shown with an ellipsis, never cut in config
     $t = Get-SafeText $n 1000; if ($t.Length -gt $max) { return ($t.Substring(0, $max - 1) + [char]0x2026) }; return $t
 }
-function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$configFile, [string]$dsm = '') {   # an argument list; no shell
+function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$configFile) {   # an argument list; no shell
     if ($configFile) {
         if ($configFile -notmatch '^[A-Za-z]:\\[^"]+\.vnc$') { throw 'bad config path' }
         $a = @('-config', ('"' + $configFile + '"'))
@@ -2016,7 +2016,6 @@ function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$c
     }
     $a += '-autoscaling'
     if ($viewOnly) { $a += '-viewonly' }
-    if ($dsm) { if ($dsm -cnotmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\.[Dd][Ss][Mm]$') { throw 'bad plugin name' }; $a += @('-dsmplugin', ('"' + $dsm + '"')) }   # v1.4.1: the encryption plugin UltraVNC's own dialog would use
     return $a
 }
 function global:ConvertTo-VncObfuscated([byte[]]$pw) {   # VNC password file form: first 8 bytes, zero padded, DES with the fixed key, as 16 hex digits
@@ -2519,29 +2518,6 @@ function global:Get-VncAllowedRows($list, $online, [bool]$checking) {   # picker
         $v }
     return @($rows | Sort-Object { $_.row.name })
 }
-# UltraVNC's own per-computer settings (%APPDATA%\UltraVNC\<host>-<display or port>.vnc, written by its connection dialog) can name a DSM
-# encryption plugin. A command-line connect never opens that dialog, so the plugin was lost (v1.4.1 Interact refusal). Only the two plugin
-# keys are read; nothing else in that file (it can hold a password) is kept or used.
-function global:Get-VncHostSettingsPath([string]$h, [int]$port) {
-    $disp = $port - 5900; $n = if ($disp -gt 0 -and $disp -lt 100) { $disp } else { $port }
-    $hh = if ($h.Length -gt 15) { $h.Substring(0, 15) } else { $h }
-    return (Join-Path (Join-Path $env:APPDATA 'UltraVNC') ('{0}-{1}.vnc' -f $hh, $n))
-}
-function global:Get-VncDsmFromLines($lines) {   # plugin file name or ''; only UseDSMPlugin / DSMPlugin in [options] are looked at
-    $use = $false; $name = ''; $sec = ''
-    foreach ($l in @($lines)) { $t = ([string]$l).Trim()
-        if ($t -match '^\[(.+)\]$') { $sec = $matches[1].ToLowerInvariant(); continue }
-        if ($sec -ne 'options') { continue }
-        if ($t -match '^(?i)UseDSMPlugin\s*=\s*(\d+)$') { $use = [int]$matches[1] -ne 0 }
-        elseif ($t -match '^(?i)DSMPlugin\s*=\s*(.*)$') { $name = $matches[1].Trim() } }
-    if ($use -and $name -cmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\.[Dd][Ss][Mm]$') { return $name }
-    return ''
-}
-function global:Get-VncHostDsm([string]$h, [int]$port) {
-    try { $p = Get-VncHostSettingsPath $h $port
-          if (-not (Test-Path -LiteralPath $p -PathType Leaf) -or (Get-Item -LiteralPath $p).Length -gt 65536) { return '' }
-          return (Get-VncDsmFromLines @([IO.File]::ReadAllLines($p) | Where-Object { $_ -match '^\s*\[|^(?i)\s*(UseDSMPlugin|DSMPlugin)\s*=' })) } catch { return '' }
-}
 function global:Get-VncViewerInfo([string]$exe) {   # 'UltraVNC 1.5.0.0 (64-bit)' style text for the log; $null product = unknown
     try { $vi = (Get-Item -LiteralPath $exe).VersionInfo; $prod = [string]$vi.ProductName; $ver = [string]$vi.FileVersion } catch { $prod = ''; $ver = '' }
     return @{ product = (Get-SafeText $prod 60); version = (Get-SafeText $ver 30); ultra = ($prod -match 'Ultr@?VNC|UltraVNC') }
@@ -2557,10 +2533,10 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
             if (Test-VncUsePassword $row (Test-VncSecret)) {
                 $hex = Get-VncSecretHex
                 if ($hex) { $file = New-VncTempConfig $h $p $hex; $hex = $null } } }
-        $dsm = if ($viewOnly) { '' } else { Get-VncHostDsm $h $p }; $vi = Get-VncViewerInfo $exe
-        Write-LauncherLog ('VNC {0}: {1}::{2} viewer "{3}" {4}{5}{6}' -f $(if ($viewOnly) { 'view only' } else { 'interact' }), $h, $p, $vi.product, $vi.version, $(if ($dsm) { ' plugin ' + $dsm } else { '' }), $(if ($vi.ultra) { '' } else { ' (NOT UltraVNC)' }))
+        $vargs = @(Get-VncViewerArgs $h $p $viewOnly $file); $vi = Get-VncViewerInfo $exe
+        Write-LauncherLog ('VNC {0}: "{1}" {2} (viewer "{3}" {4}){5}' -f $(if ($viewOnly) { 'view only' } else { 'interact' }), $exe, ($vargs -join ' '), $vi.product, $vi.version, $(if ($vi.ultra) { '' } else { ' NOT UltraVNC' }))   # diagnostic: never a password (Interact has none; View only's is inside the temp .vnc)
         if (-not $vi.ultra -and $owner -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke(('The picked viewer is "{0}", not UltraVNC. Pick UltraVNC''s vncviewer.exe if it can''t connect.' -f $vi.product)) }
-        $proc = Start-Process -FilePath $exe -ArgumentList (Get-VncViewerArgs $h $p $viewOnly $file $dsm) -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+        $proc = Start-Process -FilePath $exe -ArgumentList $vargs -WorkingDirectory (Split-Path -Parent $exe) -PassThru
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit }
         return $true
     } catch {

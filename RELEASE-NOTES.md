@@ -6,7 +6,7 @@ Pending review (build of 2026-10-30). Includes everything in v1.4.0.
 
 - **Only the computers you allow.** View Register now lists only the computers an administrator puts in Setup > Allowed computers (admin)... (one per line: Name, address, for example `Register 1, 192.168.1.21`). Saving asks Windows for an administrator, and the list applies to every Windows user on the PC; users can't add, remove or rename computers. There is no network scan any more: each listed computer shows Online or Offline from a quick check (F5 checks again). Until a list is saved, View Register says "No computers have been allowed yet. Ask your administrator."
 - **View only no longer pops up the launcher's own password box** the first time; it connects with -viewonly and no password, as the registers have none. A saved view-only password (Setup, optional) is still sent only to a computer that answered the quick online check in the same View Register window.
-- **Interact still uses UltraVNC's own password box** (nothing is filled in for you). Fix: if UltraVNC's own settings for that computer use an encryption plugin, the launcher now passes the same plugin, so it connects the same way as opening the computer in UltraVNC directly. The launcher's log notes which viewer it started.
+- **Interact still uses UltraVNC's own password box** (nothing is filled in for you, and the launcher has no password box of its own for it). To help find why Interact was refused, launcher-error.log now notes the exact viewer program and arguments used for each View only / Interact (never a password).
 
 ## v1.4.0: unread email count on the Email button
 
