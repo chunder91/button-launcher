@@ -169,6 +169,9 @@ INSTALL (per-user, no admin)
   buttons, pictures, desktop shortcut and Start with Windows setting.
   Command line flags: ButtonLauncher-Setup-<version>.exe /DESKTOP /NOAUTOSTART
   (the "<name> Setup.ps1" fallback: -Desktop, -NoAutostart).
+  FOR IT: a silent /S install run as SYSTEM or as another admin account installs
+  Launcher into that account, not the user's. Run Setup as the person who will
+  use it, without elevation (no "Run as administrator").
   START WITH WINDOWS is ON by default (HKCU Run value "ButtonLauncher").
   To change it: unlock, right-click a panel > "Start with Windows".
   Uninstall removes the shortcuts, the Run value, the Settings > Apps entry
