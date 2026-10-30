@@ -3299,7 +3299,7 @@ function global:Set-MailPulse($e, [bool]$on, [double]$peak = 1.0) {   # one Stor
         $ez = New-Object System.Windows.Media.Animation.SineEase; $ez.EasingMode = 'EaseInOut'; $a.EasingFunction = $ez; $a.AutoReverse = $true
         [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($a, (New-Object System.Windows.PropertyPath 'Opacity'))
         $sb = New-Object System.Windows.Media.Animation.Storyboard; [void]$sb.Children.Add($a)
-        $sb.RepeatBehavior = [System.Windows.Media.Animation.RepeatBehavior]::Forever
+        $sb.RepeatBehavior = 'Forever'
         [System.Windows.Media.Animation.Timeline]::SetDesiredFrameRate($sb, 20)
         $e.pulse = $sb; $sb.Begin($e.glow, $true)
     } elseif ($e.pulse) { try { $e.pulse.Remove($e.glow) } catch {}; $e.pulse = $null; $e.glow.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null); $e.glow.Opacity = 0 }
@@ -3506,7 +3506,7 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
     $pulseHint = { $t = Get-MailPulseHint (Test-MailAnimOn); $ph.Text = $t; [System.Windows.Automation.AutomationProperties]::SetHelpText($radios['pulse'], $t) }.GetNewClosure()   # Squint: one hint spot, also the radio's HelpText; the saved choice stays as it is
     & $pulseHint
     $animH = [System.ComponentModel.PropertyChangedEventHandler]{ param($src0, $chg) if ($chg.PropertyName -eq 'ClientAreaAnimation') { & $pulseHint } }.GetNewClosure()
-    try { [System.Windows.SystemParameters]::add_StaticPropertyChanged($animH) } catch {}
+    $d.Add_Loaded({ try { [System.Windows.SystemParameters]::add_StaticPropertyChanged($animH) } catch {} }.GetNewClosure())   # CC LOW-F: hooked only once the dialog is up (a build failure never leaves it hooked)
     $d.Add_Closed({ try { [System.Windows.SystemParameters]::remove_StaticPropertyChanged($animH) } catch {} }.GetNewClosure())   # live while the dialog is open, unhooked when it closes
     if (-not ($radios.Values | Where-Object { $_.IsChecked })) { $radios['pulse'].IsChecked = $true }   # Charles: Pulse by default
     $h3 = New-D2Label 'Check for new email every:' '#FFFFFF' 14; $h3.FontWeight = [System.Windows.FontWeights]::SemiBold; $h3.Margin = '0,16,0,6'; [void]$acct.Children.Add($h3)
