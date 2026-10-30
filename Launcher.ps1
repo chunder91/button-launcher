@@ -3226,10 +3226,20 @@ function global:New-MailKeyAnim([double[]]$ms, [double[]]$val, [bool]$sine) {
         [void]$k.KeyFrames.Add($f) }
     return $k
 }
+function global:Get-HexLuminance([string]$hex) {   # WCAG relative luminance of '#RRGGBB' / '#AARRGGBB' (alpha ignored); pure, no WPF
+    $h = ([string]$hex).TrimStart('#'); if ($h.Length -eq 8) { $h = $h.Substring(2) }; if ($h -notmatch '^[0-9A-Fa-f]{6}$') { return 0.0 }
+    $l = foreach ($i in 0, 2, 4) { $v = [Convert]::ToInt32($h.Substring($i, 2), 16) / 255.0; if ($v -le 0.03928) { $v / 12.92 } else { [Math]::Pow(($v + 0.055) / 1.055, 2.4) } }
+    return 0.2126 * $l[0] + 0.7152 * $l[1] + 0.0722 * $l[2]
+}
+function global:Get-MailPulseLook([string]$labelHex) {   # Kern Minor: a light label (luminance > 0.5, a recoloured dark tile) gets a black overlay at 30%; otherwise the yellow one at 45%
+    if ((Get-HexLuminance $labelHex) -gt 0.5) { return @{ color = '#000000'; peak = 0.30 } }
+    return @{ color = 'yellow'; peak = 0.45 }
+}
 function global:Add-MailOverlay($tile, $wrap, $g, $c, [string]$ir, $btn) {   # Email tile only: built collapsed; nothing runs until the count is on
     if (-not $global:mail) { return }
     $ov = New-Object System.Windows.Controls.Border; $ov.IsHitTestVisible = $false; $ov.Opacity = 0; $ov.CornerRadius = $ir
-    $ov.Background = New-VGrad '#C49A0C' '#A8850A'                               # Kern 7b: frozen darker yellow, only its Opacity toggles
+    $look = Get-MailPulseLook ([string](Get-TileColors $btn).fg)
+    $ov.Background = if ($look.color -eq 'yellow') { New-VGrad '#C49A0C' '#A8850A' } else { Brush $look.color }   # Kern 7b: frozen darker yellow (black under a light label), only its Opacity toggles
     $g.Children.Insert([Math]::Max(0, $g.Children.IndexOf($c.el)), $ov)          # under the icon and label
     $cv = New-Object System.Windows.Controls.Canvas; $cv.IsHitTestVisible = $false; $cv.ClipToBounds = $false
     [System.Windows.Controls.Panel]::SetZIndex($cv, 2)
@@ -3256,7 +3266,7 @@ function global:Add-MailOverlay($tile, $wrap, $g, $c, [string]$ir, $btn) {   # E
     [System.Windows.Controls.Canvas]::SetLeft($rg, $ipx - 3); [System.Windows.Controls.Canvas]::SetTop($rg, -1)   # centred where the badge centre is
     [void]$cv.Children.Add($rg); [void]$cv.Children.Add($bd)
     $lab = Get-DisplayLabel $btn; $base = ([string]$lab.main -replace "`n", ' ').Trim(); if (-not $base) { $base = 'Email' }
-    $e = @{ tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; glow = $ov; pulse = $null; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
+    $e = @{ tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; glow = $ov; pulse = $null; peak = [double]$look.peak; glowColor = $look.color; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
     $tile.Add_IsVisibleChanged({ Update-MailPulse $e }.GetNewClosure())                # a hidden panel stops its pulse; shown again, it restarts
     $tile.Add_Unloaded({ Set-MailPulse $e $false }.GetNewClosure())                    # a rebuilt panel (edit mode, layout) drops the old tile's pulse
     $tile.Add_PreviewMouseLeftButtonUp({ Start-MailFollowUp })                      # the click itself still does exactly what it did
@@ -3278,10 +3288,11 @@ function global:Add-MailMenu($menu) {   # Squint: status line first, then Check 
         foreach ($x in @($st, $ck, $se, $sep)) { $x.Visibility = $v }
         if ($on) { $st.Header = Get-MailMenuLine $global:mail.state (Get-Date); $ck.IsEnabled = -not $global:mailRun } }.GetNewClosure())
 }
-function global:Set-MailPulse($e, [bool]$on) {   # one Storyboard per tile on the yellow overlay: 0 -> 0.45 -> 0 every 2.4 s, sine ease, 20 fps; started once, removed when off
+function global:Set-MailPulse($e, [bool]$on, [double]$peak = 0.45, [string]$color = '') {   # one Storyboard per tile on the overlay ($color: yellow or black, Kern Minor): 0 -> $peak -> 0 every 2.4 s, sine ease, 20 fps; started once, removed when off
     if ($on) {
         if ($e.pulse) { return }   # already running: a count change never restarts it
-        $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, 0.45, ([System.Windows.Duration][TimeSpan]::FromMilliseconds(1200))
+        if ($color -and $color -ne 'yellow') { $e.glow.Background = Brush $color }
+        $a = New-Object System.Windows.Media.Animation.DoubleAnimation 0.0, $peak, ([System.Windows.Duration][TimeSpan]::FromMilliseconds(1200))
         $ez = New-Object System.Windows.Media.Animation.SineEase; $ez.EasingMode = 'EaseInOut'; $a.EasingFunction = $ez; $a.AutoReverse = $true
         [System.Windows.Media.Animation.Storyboard]::SetTargetProperty($a, (New-Object System.Windows.PropertyPath 'Opacity'))
         $sb = New-Object System.Windows.Media.Animation.Storyboard; [void]$sb.Children.Add($a)
@@ -3293,7 +3304,7 @@ function global:Set-MailPulse($e, [bool]$on) {   # one Storyboard per tile on th
 function global:Update-MailPulse($e) {
     $m = $global:mail; if (-not $m) { return }
     $on = [bool]$m.set.enabled -and (Test-MailPulseOn $m.state ([string]$m.set.style) (Test-MailAnimOn) ([bool]$global:cfg.locked) ([bool]$e.tile.IsVisible))
-    Set-MailPulse $e $on
+    Set-MailPulse $e $on ([double]$e.peak) ([string]$e.glowColor)
 }
 function global:Stop-MailPulse { if ($global:mail) { foreach ($e in @($global:mail.ui)) { Set-MailPulse $e $false } } }
 function global:Set-MailEntry($e, [bool]$grew) {
