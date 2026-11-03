@@ -1,5 +1,13 @@
 # Button Launcher release notes
 
+## v1.4.5: allowed computers save again
+
+Pending review (build of 2026-11-03). Includes everything in v1.4.4.
+
+- Allowed computers: saving a second time failed with "Not saved (code 27)". The elevated writer passed `$null` as File.Replace's backup path; PowerShell turns that into an empty string, which .NET refuses. It now passes [NullString]::Value like the rest of the launcher.
+- The allowed-list editor says plainly when a port is below 100.
+- Address, name and banner checks use `[0-9]` and `\A...\z` throughout (a trailing newline is refused).
+
 ## v1.4.4: View Register starts UltraVNC with -connect
 
 Pending review (build of 2026-11-03). Includes everything in v1.4.3.

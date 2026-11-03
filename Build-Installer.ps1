@@ -35,7 +35,7 @@ $zip = Join-Path $env:TEMP ("bl-" + [guid]::NewGuid() + '.zip')
 $work = $null
 try {   # CC-L7: temp stage/zip/work dirs are always cleaned up
 New-Item -ItemType Directory $stage | Out-Null
-$AppVersion = '1.4.4'
+$AppVersion = '1.4.5'
 if (-not (Test-Path -LiteralPath (Join-Path $here 'ButtonLauncher.exe'))) { throw 'ButtonLauncher.exe is missing from this folder (build it with exe/build-exe.sh).' }
 # R-M1: only package the exe whose SHA-256 was recorded at build time (exe\ButtonLauncher.exe.sha256 in the repo,
 # ButtonLauncher.exe.sha256 next to an installed copy). tools/verify-exe.sh proves that hash rebuilds from exe\ButtonLauncher.cs.

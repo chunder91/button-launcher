@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.4'
+$global:AppVersion   = '1.4.5'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -1890,13 +1890,13 @@ $global:VncDesKey      = [byte[]](0xE8, 0x4A, 0xD6, 0x60, 0xC4, 0x72, 0x1A, 0xE0
 $global:vncPicker      = $null
 
 function global:Test-VncIPv4([string]$s) {
-    if ($s -notmatch '\A(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\z') { return $false }   # CC L7: \A..\z, a trailing newline is refused
+    if ($s -notmatch '\A([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\z') { return $false }   # CC L7: \A..\z, a trailing newline is refused
     foreach ($i in 1..4) { $o = $matches[$i]; if (($o.Length -gt 1 -and $o[0] -eq '0') -or [int]$o -gt 255) { return $false } }
     return $true
 }
 function global:Test-VncHost([string]$s) {   # untrusted: an IPv4 dotted quad, or a hostname of [A-Za-z0-9.-]
     if (-not $s -or $s.Length -gt 253) { return $false }
-    if ($s -match '\A[\d.]+\z') { return (Test-VncIPv4 $s) }
+    if ($s -match '\A[0-9.]+\z') { return (Test-VncIPv4 $s) }
     if ($s -cnotmatch '\A[A-Za-z0-9.-]+\z') { return $false }   # CC L7
     foreach ($l in $s.TrimEnd('.').Split('.')) { if ($l.Length -lt 1 -or $l.Length -gt 63 -or $l.StartsWith('-') -or $l.EndsWith('-')) { return $false } }
     return $true
@@ -2032,7 +2032,7 @@ function global:Get-RfbBanner([byte[]]$bytes) {   # at most 12 bytes from the se
     $isRfb = $raw -cmatch '^RFB \d{3}\.\d{3}\n$'
     return @{ text = (Get-SafeText ([regex]::Replace($raw, '[^\x20-\x7E]', '')) 12); rfb = [bool]$isRfb }
 }
-function global:Test-VncBannerText([string]$t) { $t -cmatch '^RFB \d{3}\.\d{3}$' }
+function global:Test-VncBannerText([string]$t) { $t -cmatch '\ARFB [0-9]{3}\.[0-9]{3}\z' }
 function global:Get-VncDisplayName([string]$n, [int]$max = 40) {   # L5: shown with an ellipsis, never cut in config
     $t = Get-SafeText $n 1000; if ($t.Length -gt $max) { return ($t.Substring(0, $max - 1) + [char]0x2026) }; return $t
 }
@@ -2458,7 +2458,7 @@ function global:Find-VncViewer($btn) {   # local fixed path to vncviewer.exe, or
 # Saving runs one elevated powershell.exe (UAC) whose script is a constant here (-EncodedCommand); the only data in it is base64 of the validated JSON.
 $global:VncAllowedMax = 50
 function global:Get-VncAllowedPath { Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ButtonLauncher\vnc-allowed.json' }
-function global:Test-VncAllowedName([string]$n) { $n -cmatch '^[A-Za-z0-9][A-Za-z0-9 ._#()-]{0,39}$' }
+function global:Test-VncAllowedName([string]$n) { $n -cmatch '\A[A-Za-z0-9][A-Za-z0-9 ._#()-]{0,39}\z' }
 function global:Test-VncAllowedHost([string]$h) {   # IPv4, or an RFC-1123 hostname (labels 1-63 of letters, digits, '-', not at either end); no trailing dot
     if (-not $h -or $h.EndsWith('.')) { return $false }
     return ((Test-VncHost $h) -and ($h -cmatch '^[A-Za-z0-9.-]+$'))
@@ -2490,6 +2490,7 @@ function global:ConvertFrom-VncAllowedText([string]$text) {   # editor: one 'Nam
         $parts = $t.Split(','); if ($parts.Count -ne 2) { return @{ list = @(); error = ('Line {0}: use Name, address (for example Register 1, 192.168.1.21).' -f $i) } }
         $n = $parts[0].Trim(); $ep = ConvertTo-VncEndpoint $parts[1].Trim() 5900
         if (-not (Test-VncAllowedName $n)) { return @{ list = @(); error = ('Line {0}: the name must be 1-40 letters, numbers, spaces or . _ # ( ) -' -f $i) } }
+        if (-not $ep -and $parts[1].Trim() -match '\A[^:]+::?([0-9]{1,5})\z' -and [int]$matches[1] -lt 100) { return @{ list = @(); error = ('Line {0}: ports below 100 aren''t supported. Use the VNC port (usually 5900).' -f $i) } }   # CC N-L2
         if (-not $ep -or -not (Test-VncAllowedHost $ep.host)) { return @{ list = @(); error = ('Line {0}: that address isn''t valid. Use an IP like 192.168.1.21 or a name like REG1, optionally :port.' -f $i) } }
         $items += [pscustomobject]@{ name = $n; host = $ep.host; port = $ep.port } }
     if ($items.Count -gt $global:VncAllowedMax) { return @{ list = @(); error = ('At most {0} computers.' -f $global:VncAllowedMax) } }
@@ -2533,9 +2534,9 @@ try {
     $out = @(); $seen = @{}
     foreach ($e in @($o.computers)) {
         $n = [string]$e.name; $h = [string]$e.host; $p = [int]$e.port
-        if ($n -cnotmatch '^[A-Za-z0-9][A-Za-z0-9 ._#()-]{0,39}$' -or $h.Length -gt 253 -or $p -lt 100 -or $p -gt 65535) { exit 3 }   # LJ M44-I2
-        if ($h -cmatch '^[\d.]+$') { if ($h -cnotmatch '^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$') { exit 3 } }
-        elseif ($h -cnotmatch '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$') { exit 3 }
+        if ($n -cnotmatch '\A[A-Za-z0-9][A-Za-z0-9 ._#()-]{0,39}\z' -or $h.Length -gt 253 -or $p -lt 100 -or $p -gt 65535) { exit 3 }   # LJ M44-I2
+        if ($h -cmatch '\A[0-9.]+\z') { if ($h -cnotmatch '\A((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\z') { exit 3 } }
+        elseif ($h -cnotmatch '\A[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\z') { exit 3 }
         $k = $h.ToLowerInvariant() + ':' + $p; if ($seen[$k]) { exit 3 }; $seen[$k] = 1
         $out += [ordered]@{ name = $n; host = $h; port = $p } }
     if ($out.Count -gt 50) { exit 3 }
@@ -2566,7 +2567,7 @@ __ACLCHECK__
     $bytes = (New-Object Text.UTF8Encoding $false).GetBytes($text)
     $st = New-Object IO.FileStream($tmp, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::None, $fs)   # brand-new file, admin ACL from creation
     try { $st.Write($bytes, 0, $bytes.Length); $st.Flush() } finally { $st.Dispose() }
-    $s = 7; if (Test-Path -LiteralPath $file) { [IO.File]::Replace($tmp, $file, $null) } else { [IO.File]::Move($tmp, $file) }
+    $s = 7; if (Test-Path -LiteralPath $file) { [IO.File]::Replace($tmp, $file, [NullString]::Value) } else { [IO.File]::Move($tmp, $file) }   # v1.4.5: `$null` became '' and Replace threw (code 27 on every save after the first)
     $fi = Get-Item -LiteralPath $file -Force
     if (($fi.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-VncAllowedAclSafe ([IO.File]::GetAccessControl($file)))) { exit 5 }
     exit 0
