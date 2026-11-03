@@ -1,5 +1,11 @@
 # Button Launcher release notes
 
+
+## 1.4.4
+
+- View Register: the viewer is now started as `-connect <host>:<port> [-viewonly] -autoscaling`. Charles's UltraVNC Viewer 1.5.0.0-dev left VNC Server blank for the bare `<host>::<port>` form; his Win+R test of `-connect 192.168.20.51:5900 -viewonly` filled it in (3:36 PM, Nov 3).
+- Allowed computers: the elevated save now reports which step failed (codes 21-27 with a plain message) instead of a bare "code 2".
+
 ## v1.4.3: finds UltraVNC Viewer in Program Files
 
 Pending review (build of 2026-11-03). Includes everything in v1.4.2.

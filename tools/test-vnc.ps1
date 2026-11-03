@@ -31,11 +31,11 @@ foreach ($t in 'reg1:0', 'reg1:70000', 'reg1:a', 'a:b:c', 'reg 1', '') { Check "
 
 # --- viewer arguments (verified switches: host::port, -autoscaling, -viewonly, -config) ---
 $a = Get-VncViewerArgs '192.168.1.20' 5900 $false $null
-Check 'interact: host::port -autoscaling, no -viewonly' (($a -join ' ') -eq '192.168.1.20::5900 -autoscaling')
+Check 'interact: -connect host:port -autoscaling, no -viewonly' (($a -join ' ') -eq '-connect 192.168.1.20:5900 -autoscaling')
 $a = Get-VncViewerArgs 'reg1' 5901 $true $null
-Check 'view only: host::port -autoscaling -viewonly' (($a -join ' ') -eq 'reg1::5901 -autoscaling -viewonly')
+Check 'view only: -connect host:port -viewonly -autoscaling' (($a -join ' ') -eq '-connect reg1:5901 -viewonly -autoscaling')
 $a = Get-VncViewerArgs 'reg1' 5901 $true 'C:\Users\O Brien\AppData\Local\Temp\bl-vnc-1\c.vnc'
-Check 'view only + saved password: -config "<file>" -autoscaling -viewonly, no host, no password' (($a -join ' ') -eq '-config "C:\Users\O Brien\AppData\Local\Temp\bl-vnc-1\c.vnc" -autoscaling -viewonly')
+Check 'view only + saved password: -config "<file>" -viewonly -autoscaling, no host, no password' (($a -join ' ') -eq '-config "C:\Users\O Brien\AppData\Local\Temp\bl-vnc-1\c.vnc" -viewonly -autoscaling')
 $threw = $false; try { [void](Get-VncViewerArgs 'reg1 -password x' 5900 $true $null) } catch { $threw = $true }; Check 'args: bad host throws' $threw
 $threw = $false; try { [void](Get-VncViewerArgs 'reg1' 0 $true $null) } catch { $threw = $true }; Check 'args: bad port throws' $threw
 $threw = $false; try { [void](Get-VncViewerArgs 'reg1' 5900 $true 'C:\a"b\c.vnc') } catch { $threw = $true }; Check 'args: quote in config path throws' $threw
@@ -413,14 +413,14 @@ Check 'View only: no password prompt from the launcher (ask-once removed)' ($sv 
 Check 'L4: saved password used for a host that greeted RFB in this session' (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $true }) $true)
 Check 'V2-I1: cached RFB banner alone is not enough (not seen this session)' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $false }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $true))
 Check 'L4: no password file for a host with no or a non-RFB greeting' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = '' }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'SSH-2.0-Open' }) $true))
-Check 'View only, nothing saved: -viewonly, no -config, no password (no-password registers)' (((Get-VncViewerArgs 'REG1' 5900 $true $null) -join ' ') -eq 'REG1::5900 -autoscaling -viewonly' -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $true }) $false))
+Check 'View only, nothing saved: -viewonly, no -config, no password (no-password registers)' (((Get-VncViewerArgs 'REG1' 5900 $true $null) -join ' ') -eq '-connect REG1:5900 -viewonly -autoscaling' -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $true }) $false))
 Check 'v1.4.2: Start-VncViewer always passes the picked host::port (no -config only launch)' ($sv.Contains('$vargs = @(Get-VncViewerArgs $h $p $viewOnly $file)') -and $sv -notmatch '\$file = New-VncTempConfig')
 # Interact: no config, no password, no -viewonly (UltraVNC asks for the password itself)
 $a = Get-VncViewerArgs 'REG1' 5900 $false $null
 Check 'Interact never -password, -config, -viewonly or -dsmplugin' (-not ((Get-VncViewerArgs 'REG1' 5900 $false $null) -match '^-password$|^-config$|^-viewonly$|^-dsmplugin$'))
-Check 'Interact: same args for an IP or a name, two colons (TCP port, not display)' (((Get-VncViewerArgs '192.168.1.21' 5900 $false $null) -join ' ') -eq '192.168.1.21::5900 -autoscaling')
+Check 'Interact: same args for an IP or a name, -connect host:port' (((Get-VncViewerArgs '192.168.1.21' 5900 $false $null) -join ' ') -eq '-connect 192.168.1.21:5900 -autoscaling')
 Check 'DSM change reverted: no plugin code left' ($src -notmatch '(?i)dsmplugin|Get-VncHostDsm|Get-VncDsmFromLines')
-Check 'Interact: host::port -autoscaling only (UltraVNC asks for the password)' (((Get-VncViewerArgs 'REG1' 5900 $false $null) -join ' ') -eq 'REG1::5900 -autoscaling')
+Check 'Interact: -connect host:port -autoscaling only (UltraVNC asks for the password)' (((Get-VncViewerArgs 'REG1' 5900 $false $null) -join ' ') -eq '-connect REG1:5900 -autoscaling')
 Check 'viewer path, exact argument line and product/version logged; non-UltraVNC flagged; no secret in the line' ($sv.Contains('Get-VncViewerInfo') -and $sv.Contains('NOT UltraVNC') -and $sv.Contains('$exe, ($vargs -join '' '')') -and $sv -notmatch 'Write-LauncherLog[^\n]*(hex|Secret)')
 # elevated writer
 $enc = Get-VncAllowedWriterCommand $t.list
@@ -462,7 +462,7 @@ Check 'M37-I1: Users GENERIC_ALL (0x10000000) -> unsafe' (-not (Test-VncAllowedA
 Check 'M37-I1: Users Delete / WRITE_DAC / WRITE_OWNER -> unsafe' (-not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x10000)))) -and -not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x40000)))) -and -not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x80000)))))
 Check 'M37-I1: inherit-only write ACE ignored (CREATOR OWNER style)' (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce 'S-1-3-0' 0x10000000 2))))
 Check 'M37-I1: Deny ACE ignored' (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x1F01FF 0 'Deny'))))
-Check 'v1.4.2: exact final args, View only and Interact, address and name' ((((Get-VncViewerArgs '192.168.20.51' 5900 $true $null) -join ' ') -ceq '192.168.20.51::5900 -autoscaling -viewonly') -and (((Get-VncViewerArgs '192.168.20.51' 5900 $false $null) -join ' ') -ceq '192.168.20.51::5900 -autoscaling') -and (((Get-VncViewerArgs 'POS1' 5901 $true $null) -join ' ') -ceq 'POS1::5901 -autoscaling -viewonly') -and (((Get-VncViewerArgs 'POS1' 5901 $false $null) -join ' ') -ceq 'POS1::5901 -autoscaling'))
+Check 'v1.4.2: exact final args, View only and Interact, address and name' ((((Get-VncViewerArgs '192.168.20.51' 5900 $true $null) -join ' ') -ceq '-connect 192.168.20.51:5900 -viewonly -autoscaling') -and (((Get-VncViewerArgs '192.168.20.51' 5900 $false $null) -join ' ') -ceq '-connect 192.168.20.51:5900 -autoscaling') -and (((Get-VncViewerArgs 'POS1' 5901 $true $null) -join ' ') -ceq '-connect POS1:5901 -viewonly -autoscaling') -and (((Get-VncViewerArgs 'POS1' 5901 $false $null) -join ' ') -ceq '-connect POS1:5901 -autoscaling'))
 # --- ClaudeCode FIX-FIRST on c202b8b ---
 $on = Get-VncAllowedRows $t.list @{ '192.168.1.21:5900' = 'RFB 003.008'; 'REG2:5901' = 'SSH-2.0-x' } $false
 Check 'CC MED-1: online allowed row carries the RFB banner + session -> saved password used (usePassword True)' ($on[0].row.banner -eq 'RFB 003.008' -and $on[0].row.session -and (Test-VncUsePassword $on[0].row $true))
@@ -471,7 +471,9 @@ Check 'CC MED-1: nothing saved -> no password and no launcher prompt' (-not (Tes
 Check 'CC MED-1: online check queues key + banner; picker keeps only RFB banners' ($src -match 'Enqueue\(@\{ key = \$b.key; banner = ' -and (& $fn 'Show-VncPicker') -match 'if \(Test-VncBannerText \(\[string\]\$k.banner\)\) \{ \$ui.online\[\[string\]\$k.key\] = \[string\]\$k.banner \}')
 Check 'CC LOW-L: a folder named vnc-allowed.json(.tmp) -> exit 6' ($global:VncAllowedWriterScript -match "Test-Path -LiteralPath \`$file -PathType Container\) -or \(Test-Path -LiteralPath \`$tmp -PathType Container\)\) \{ exit 6 \}")
 Check 'CC LOW-L: planted .tmp in an untrusted folder goes aside with the folder; CreateNew never opens an old .tmp' ($global:VncAllowedWriterScript -match 'CreateNew' -and $global:VncAllowedWriterScript -match '\.untrusted-')
-Check "CC LOW-L: clear 'Not saved' messages for codes 3, 4, 5, 6 and others" ((Get-VncAllowedSaveError 3) -like 'Not saved*' -and (Get-VncAllowedSaveError 6) -like 'Not saved: *unexpected*' -and (Get-VncAllowedSaveError 4) -eq (Get-VncAllowedSaveError 5) -and (Get-VncAllowedSaveError 2) -like 'Not saved (code 2)*')
+Check "CC LOW-L: clear 'Not saved' messages for codes 3, 4, 5, 6 and others" ((Get-VncAllowedSaveError 3) -like 'Not saved*' -and (Get-VncAllowedSaveError 6) -like 'Not saved: *unexpected*' -and (Get-VncAllowedSaveError 4) -eq (Get-VncAllowedSaveError 5) -and (Get-VncAllowedSaveError 2) -like 'Not saved (code 2)*' -and (Get-VncAllowedSaveError 23) -like 'Not saved (code 23): *checking the existing folder*' -and (Get-VncAllowedSaveError 27) -like '*replacing the old file*')
+Check 'v1.4.4: the elevated writer reports the failing step (20+step), never a bare code 2' ($global:VncAllowedWriterScript.Contains('catch { exit (20 + $s) }') -and -not $global:VncAllowedWriterScript.Contains('exit 2 }'))
+Check 'v1.4.4: exact argv POS1 View only / Interact' ((((Get-VncViewerArgs '192.168.20.51' 5900 $true $null) -join '|') -ceq '-connect|192.168.20.51:5900|-viewonly|-autoscaling') -and (((Get-VncViewerArgs '192.168.20.51' 5900 $false $null) -join '|') -ceq '-connect|192.168.20.51:5900|-autoscaling'))
 # --- v1.4.3: find vncviewer.exe in Program Files (override, known, bounded scan, none, links) ---
 foreach ($n in 'Get-VncProgramRoots', 'Get-VncFileVersion', 'Test-VncViewerFile', 'Find-VncViewerInProgramFiles', 'Get-VncViewerLogText') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)

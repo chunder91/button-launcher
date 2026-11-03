@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.3'
+$global:AppVersion   = '1.4.4'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -2042,10 +2042,10 @@ function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$c
     } else {
         $p = Get-VncPort $port
         if (-not (Test-VncHost $h) -or -not $p) { throw 'bad host or port' }
-        $a = @(('{0}::{1}' -f $h, $p))
+        $a = @('-connect', ('{0}:{1}' -f $h, $p))   # v1.4.4 (Charles 3:36 PM Win+R): his UltraVNC 1.5.0.0-dev leaves VNC Server blank for a bare host::port; -connect host:port fills it
     }
-    $a += '-autoscaling'
     if ($viewOnly) { $a += '-viewonly' }
+    $a += '-autoscaling'   # no-argument switch; can't consume the host
     return $a
 }
 function global:ConvertTo-VncObfuscated([byte[]]$pw) {   # VNC password file form: first 8 bytes, zero padded, DES with the fixed key, as 16 hex digits
@@ -2476,8 +2476,9 @@ function global:Read-VncAllowed {   # @{ list; state = 'ok' | 'missing' | 'unsaf
 # Elevated writer: constants only. __DATA__ is replaced by base64 (A-Z a-z 0-9 + / =) of the validated JSON; it re-checks every entry before writing.
 $global:VncAllowedWriterScript = @'
 $ErrorActionPreference = 'Stop'
+$s = 0   # v1.4.4: which step failed -> exit 20+step (was a bare code 2)
 try {
-    $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__DATA__'))
+    $s = 1; $json = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__DATA__'))
     if ($json.Length -gt 65536) { exit 3 }
     $o = $json | ConvertFrom-Json
     $out = @(); $seen = @{}
@@ -2492,35 +2493,35 @@ try {
     $text = ConvertTo-Json -InputObject ([ordered]@{ version = 1; computers = $out }) -Depth 4 -Compress
     # LJ M37-M1: never reuse a folder or file a non-admin could have made or still holds open
 __ACLCHECK__
-    $dir = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ButtonLauncher'
+    $s = 2; $dir = Join-Path ([Environment]::GetFolderPath('CommonApplicationData')) 'ButtonLauncher'
     $adm = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'; $sys = New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'; $usr = New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-545'
     $ds = New-Object Security.AccessControl.DirectorySecurity
     $ds.SetOwner($adm); $ds.SetAccessRuleProtection($true, $false)
     foreach ($x in @(@($adm, 'FullControl'), @($sys, 'FullControl'), @($usr, 'ReadAndExecute'))) {
         $ds.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($x[0], $x[1], 'ContainerInherit, ObjectInherit', 'None', 'Allow'))) }
-    if (Test-Path -LiteralPath $dir) {   # untrusted (link, wrong owner, or anyone else may write): moved aside, never deleted
+    $s = 3; if (Test-Path -LiteralPath $dir) {   # untrusted (link, wrong owner, or anyone else may write): moved aside, never deleted
         $di = Get-Item -LiteralPath $dir -Force
         if (($di.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-VncAllowedAclSafe ([IO.Directory]::GetAccessControl($dir)))) {
             [IO.Directory]::Move($dir, ($dir + '.untrusted-' + [guid]::NewGuid().ToString('N'))) } }
-    if (-not (Test-Path -LiteralPath $dir)) { [void][IO.Directory]::CreateDirectory($dir, $ds) }   # ACL set at creation
+    $s = 4; if (-not (Test-Path -LiteralPath $dir)) { [void][IO.Directory]::CreateDirectory($dir, $ds) }   # ACL set at creation
     $di = Get-Item -LiteralPath $dir -Force
     if (($di.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-VncAllowedAclSafe ([IO.Directory]::GetAccessControl($dir)))) { exit 4 }   # re-check (a re-create race)
-    $file = Join-Path $dir 'vnc-allowed.json'; $tmp = Join-Path $dir 'vnc-allowed.json.tmp'
+    $s = 5; $file = Join-Path $dir 'vnc-allowed.json'; $tmp = Join-Path $dir 'vnc-allowed.json.tmp'
     if ((Test-Path -LiteralPath $file -PathType Container) -or (Test-Path -LiteralPath $tmp -PathType Container)) { exit 6 }   # CC LOW-L: a folder where a file belongs
     foreach ($c in Get-ChildItem -LiteralPath $dir -Force) { if ($c.Attributes -band [IO.FileAttributes]::ReparsePoint) { exit 4 } }
     if (Test-Path -LiteralPath $file) { if (-not (Test-VncAllowedAclSafe ([IO.File]::GetAccessControl($file)))) { exit 4 } }
     if (Test-Path -LiteralPath $tmp) { [IO.File]::Delete($tmp) }   # only an admin could have made it in this folder
-    $fs = New-Object Security.AccessControl.FileSecurity
+    $s = 6; $fs = New-Object Security.AccessControl.FileSecurity
     $fs.SetOwner($adm); $fs.SetAccessRuleProtection($true, $false)
     foreach ($x in @(@($adm, 'FullControl'), @($sys, 'FullControl'), @($usr, 'ReadAndExecute'))) { $fs.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($x[0], $x[1], 'Allow'))) }
     $bytes = (New-Object Text.UTF8Encoding $false).GetBytes($text)
     $st = New-Object IO.FileStream($tmp, [IO.FileMode]::CreateNew, [Security.AccessControl.FileSystemRights]::Write, [IO.FileShare]::None, 4096, [IO.FileOptions]::None, $fs)   # brand-new file, admin ACL from creation
     try { $st.Write($bytes, 0, $bytes.Length); $st.Flush() } finally { $st.Dispose() }
-    if (Test-Path -LiteralPath $file) { [IO.File]::Replace($tmp, $file, $null) } else { [IO.File]::Move($tmp, $file) }
+    $s = 7; if (Test-Path -LiteralPath $file) { [IO.File]::Replace($tmp, $file, $null) } else { [IO.File]::Move($tmp, $file) }
     $fi = Get-Item -LiteralPath $file -Force
     if (($fi.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not (Test-VncAllowedAclSafe ([IO.File]::GetAccessControl($file)))) { exit 5 }
     exit 0
-} catch { exit 2 }
+} catch { exit (20 + $s) }
 '@
 function global:Get-VncAllowedWriterText([string]$b64) {   # constant script + the reader's own ACL check (launcher code, not user data) + base64 data
     $chk = 'function Test-VncAllowedAclSafe {' + ${function:Test-VncAllowedAclSafe}.ToString() + '}'
@@ -2538,6 +2539,8 @@ function global:Get-VncAllowedSaveError([int]$code) {   # CC LOW-L: plain words 
     switch ($code) {
         3 { return 'Not saved: the list was not valid.' }
         { $_ -in 4, 5, 6 } { return "Not saved: $d holds something unexpected (a link, a folder named like the list file, or a file someone else can change). Ask an administrator to check that folder, then save again." }
+        { $_ -ge 21 -and $_ -le 27 } { $step = @('reading the list', 'preparing the folder permissions', 'checking the existing folder (it may be open in another program)', 'creating the folder', 'checking the folder contents', 'writing the new file', 'replacing the old file')[$code - 21]
+            return "Not saved (code $code): Windows refused while $step. Nothing else was changed. Close any window showing $d and try again." }
         default { return "Not saved (code $code). Nothing was changed." } }
 }
 function global:Save-VncAllowedElevated($list) {   # $true when saved; Windows asks for an administrator (UAC)
