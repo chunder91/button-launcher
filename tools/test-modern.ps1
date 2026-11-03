@@ -192,7 +192,18 @@ $nc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Functi
 $nt = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-Tile' }, $true).Extent.Text
 $mf = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-MaxLines' }, $true).Extent.Text
 Invoke-Expression $mf; $tb = [pscustomobject]@{ TextTrimming = $null; Uid = ''; MaxHeight = 0; LineHeight = 15.6 }; Set-MaxLines $tb 3
-Check 'v1.4.2: labels shrink to fit (Viewbox DownOnly, Uniform), no 3-line ellipsis, bigger start sizes, full name tooltip' (-not $nc.Contains('Set-MaxLines $main') -and $nc.Contains("`$vb.Stretch = 'Uniform'; `$vb.StretchDirection = 'DownOnly'; `$vb.Child = `$text") -and $nc.Contains("'hero' { 26 } 'full' { 20 } default { 16 }") -and $nc.Contains('$vb.MaxHeight = [Math]::Max(12,') -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
+Check 'v1.4.2: labels shrink to fit (Viewbox DownOnly, Uniform), no 3-line ellipsis, bigger start sizes, full name tooltip' (-not $nc.Contains('Set-MaxLines $main') -and $nc.Contains("`$vb.Stretch = 'Uniform'; `$vb.StretchDirection = 'DownOnly'; `$vb.Child = `$text") -and $nc.Contains("'hero' { 26 } 'full' { 20 } default { 16 }") -and $nc.Contains('$vb.MaxHeight = $availH') -and $nc.Contains('Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs') -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
+Add-Type -AssemblyName WindowsBase -ErrorAction SilentlyContinue
+if (-not ('System.Windows.Size' -as [type])) { Add-Type -TypeDefinition 'namespace System.Windows { public struct Size { public double Width; public double Height; public Size(double w, double h) { Width = w; Height = h; } } }' }
+Invoke-Expression ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-FitFontSize' }, $true).Extent.Text)
+function New-FakeLabel([int]$chars) { $m = [pscustomobject]@{ FontSize = 0.0; LineHeight = 0.0; Tag = $null }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; chars = $chars }
+    $t | Add-Member ScriptMethod Measure { param($sz) $perLine = [Math]::Max(1, [Math]::Floor($sz.Width / ($this.m.FontSize * 0.55))); $lines = [Math]::Ceiling($this.chars / $perLine); $this.DesiredSize = [pscustomobject]@{ Width = [Math]::Min($sz.Width, $this.chars * $this.m.FontSize * 0.55); Height = $lines * $this.m.LineHeight } }; return @($m, $t) }
+$fk = New-FakeLabel 5; Set-FitFontSize $fk[0] $fk[1] 206 34 20
+Check 'v1.4.2: a short label keeps the full start size (20 px on a full tile)' ($fk[0].FontSize -eq 20 -and $fk[0].Tag -eq 20)
+$fk = New-FakeLabel 35; Set-FitFontSize $fk[0] $fk[1] 206 34 20
+Check 'v1.4.2: a long label steps down until it fits the tile, never below 12, Tag follows' ($fk[0].FontSize -lt 20 -and $fk[0].FontSize -ge 12 -and $fk[1].DesiredSize.Height -le 34 -and $fk[0].Tag -eq $fk[0].FontSize)
+$fk = New-FakeLabel 400; Set-FitFontSize $fk[0] $fk[1] 75 58 16
+Check 'v1.4.2: a label that cannot fit stops at 12 px (the Viewbox then shrinks it, no ellipsis)' ($fk[0].FontSize -eq 12)
 Remove-Item -LiteralPath $tmp -Recurse -Force
 # LJ: setup check at draw time touches only local fixed-drive paths (drive types mocked: C fixed, Z mapped network)
 foreach ($n in 'Expand', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Resolve-IconTarget', 'Get-SetupState', 'Test-ButtonSetUpQuick') {

@@ -637,6 +637,14 @@ function global:New-MissingDot($tip) {
     return $dot
 }
 
+function global:Set-FitFontSize($main, $text, [double]$maxW, [double]$maxH, [double]$fs) {   # v1.4.2: largest size from $fs down to 12 whose wrapped label fits the tile
+    if (-not ($maxW -gt 0)) { $maxW = [double]::PositiveInfinity }
+    for ($size = $fs; $size -gt 12; $size--) {
+        $main.FontSize = $size; $main.LineHeight = [Math]::Round($size * 1.2, 1)
+        $text.Measure((New-Object System.Windows.Size($maxW, [double]::PositiveInfinity)))
+        if ($text.DesiredSize.Height -le $maxH -and $text.DesiredSize.Width -le $maxW) { break } }
+    $main.FontSize = $size; $main.LineHeight = [Math]::Round($size * 1.2, 1); $main.Tag = [double]$size   # Apply-MinFont keeps this as the design size
+}
 # Tile content: Set A icon left of the label (or above it on tall half tiles and the restart tiles).
 function global:New-Content($btn, $h, $cls, $danger, $fg) {
     $fs = switch ($cls) { 'hero' { 26 } 'full' { 20 } default { 16 } }   # v1.4.2 (Charles: bigger text, maximize the space): larger start size; the Viewbox below shrinks a label that doesn't fit
@@ -679,9 +687,11 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
         $text.MaxWidth = if ($cls -eq 'half') { 109 - $iconW } else { 248 - $iconW }   # 290 panel - 12 padding - 6 gap - 24 tile padding
     }
     if ($above) { $text.MaxWidth = if ($cls -eq 'half') { 109 } else { 248 } }   # wrap width for centred labels too
+    $availH = [Math]::Max(12, [double]$h - 22 - $(if ($above -and $icon) { $ipx + 6 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }))   # tile minus 3+3 margin and 8+8 content margin, minus the icon above
+    Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs
     $vb = New-Object System.Windows.Controls.Viewbox; $vb.Stretch = 'Uniform'; $vb.StretchDirection = 'DownOnly'; $vb.Child = $text   # v1.4.2: shrink-to-fit per tile, never clipped or trimmed
     $vb.VerticalAlignment = 'Center'; $vb.HorizontalAlignment = $(if ($above) { 'Center' } else { 'Left' })
-    $vb.MaxHeight = [Math]::Max(12, [double]$h - 22 - $(if ($above -and $icon) { $ipx + 6 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }))   # tile minus 3+3 margin and 8+8 content margin, minus the icon above
+    $vb.MaxHeight = $availH   # safety net: anything still too tall (scaled-up floor) shrinks instead of clipping
     [void]$sp.Children.Add($vb)
     return @{ el = $sp; missingPic = $missingPic; icon = $icon }
 }
