@@ -512,7 +512,7 @@ function global:Apply-MinFont($p) {
     if ($p.grip -and $p.grip.Child -is [System.Windows.Controls.TextBlock]) { $p.grip.Child.FontSize = [Math]::Max(12.0, 12.0 / $s) }   # Kern 12 px floor: the Editing bar too (built outside the label sink)
     if (-not $p.labels) { return }
     foreach ($tb in $p.labels) {
-        $floor = if (([string]$tb.Text).Split("`n").Count -ge 3) { 13.0 } else { 12.0 }
+        $floor = if (([string]$tb.Text).Split("`n").Count -ge 3 -or ($tb.Name -eq 'fitLabel' -and [double]$tb.Tag -ge 13 -and $tb.DesiredSize.Height -ge 2.5 * [double]$tb.LineHeight)) { 13.0 } else { 12.0 }   # CC A2: rendered 3-line labels too
         $tb.FontSize = [Math]::Max([double]$tb.Tag, $floor / $s)
         $tb.LineHeight = [Math]::Round($tb.FontSize * 1.2, 1)
         if ([string]$tb.Uid -match '^maxlines=(\d)$') { $tb.MaxHeight = [int]$Matches[1] * $tb.LineHeight }   # keep the 3-line cap after scaling
@@ -645,18 +645,23 @@ function global:Set-FitFontSize($main, $text, [double]$maxW, [double]$maxH, [dou
         $main.FontSize = $size; $main.LineHeight = [Math]::Round($size * 1.2, 1)
         $text.Measure((New-Object System.Windows.Size($maxW, [double]::PositiveInfinity)))
         $lines = [Math]::Round($main.DesiredSize.Height / $main.LineHeight)
-        if ($lines -le 3 -and $text.DesiredSize.Height -le $maxH -and $text.DesiredSize.Width -le $maxW) { $fits = $true; break } }
-    if (-not $fits) { $size = 12 }
+        if ($lines -le 3 -and ($lines -lt 3 -or $size -ge 13) -and $text.DesiredSize.Height -le $maxH -and $text.DesiredSize.Width -le $maxW) { $fits = $true; break } }   # CC A2: 13 px floor when 3 lines render
+    if (-not $fits) { $size = 13 }   # past the fit it renders 3 lines with '...', so the 3-line floor applies
     $main.FontSize = $size; $main.LineHeight = [Math]::Round($size * 1.2, 1); $main.Tag = [double]$size   # Apply-MinFont keeps this as the design size
     $main.Name = 'fitLabel'
     return $fits
 }
-function global:Sync-RowFontSize($els) {   # Kern 1 / Squint 2: tiles in one row use the smallest fitted size
+function global:Sync-RowFontSize($els) {   # Squint ruling: tiles in a row match the smallest fitted size, but none drops more than one step (2 px); a label that only fits with '...' never pulls the row down
     $labs = @(foreach ($e in $els) { $f = $null; try { $f = [System.Windows.LogicalTreeHelper]::FindLogicalNode($e, 'fitLabel') } catch {}; if ($f) { $f } })
-    if ($labs.Count -lt 2) { return }
-    $min = ($labs | ForEach-Object { [double]$_.Tag } | Measure-Object -Minimum).Minimum
-    foreach ($l in $labs) { $l.Tag = $min; $l.FontSize = $min; $l.LineHeight = [Math]::Round($min * 1.2, 1) }
+    if ($labs.Count -ge 2) { Set-RowSizes $labs }
 }
+function global:Set-RowSizes($labs) {   # the row rule on the labels themselves (testable without WPF)
+    $fit = @($labs | Where-Object { $null -eq $_.ToolTip })
+    if ($fit.Count -eq 0) { return }
+    $min = ($fit | ForEach-Object { [double]$_.Tag } | Measure-Object -Minimum).Minimum
+    foreach ($l in $fit) { $sz = [Math]::Max($min, [double]$l.Tag - 2); $l.Tag = $sz; $l.FontSize = $sz; $l.LineHeight = [Math]::Round($sz * 1.2, 1) }
+}
+
 # Tile content: Set A icon left of the label (or above it on tall half tiles and the restart tiles).
 function global:New-Content($btn, $h, $cls, $danger, $fg) {
     $fs = switch ($cls) { 'hero' { 26 } 'full' { 20 } default { 16 } }   # v1.4.2 (Charles: bigger text, maximize the space): larger start size; Set-FitFontSize steps it down to fit (12 px floor)
@@ -2172,7 +2177,9 @@ function global:Save-VncSecret([System.Security.SecureString]$ss) {   # $false (
         return $true
     } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr); if ($raw) { [Array]::Clear($raw, 0, $raw.Length) } }
 }
-function global:Clear-VncSecret { $p = Get-VncSecretPath; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
+function global:Clear-VncSecret { foreach ($p in @((Get-VncSecretPath), ((Get-VncSecretPath) + '.tmp'))) {   # LJ M40-I1 / CC A1: the .dat and the old save's .tmp; only a plain file, never a folder or link; never prompts
+    $i = Get-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue
+    if ($i -and -not $i.PSIsContainer -and -not ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)) { Remove-Item -LiteralPath $p -Force -Confirm:$false -ErrorAction SilentlyContinue } } }
 function global:Get-VncSecretHex {   # obfuscated hex for the .vnc file, or $null; the plaintext bytes are zeroed
     $p = Get-VncSecretPath; if (-not (Test-Path -LiteralPath $p)) { return $null }
     Add-Type -AssemblyName System.Security

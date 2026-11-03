@@ -205,10 +205,21 @@ Check 'Kern 3 / Squint 1: wraps before shrinking (35 chars keep 16 px on 2 lines
 $fk = New-FakeLabel 60; $ok = Set-FitFontSize $fk[0] $fk[1] 206 34 20
 Check 'v1.4.2: a long label steps down until it fits, never below 12, Tag follows' ($ok -and $fk[0].FontSize -lt 20 -and $fk[0].FontSize -ge 12 -and $fk[1].DesiredSize.Height -le 34 -and $fk[0].Tag -eq $fk[0].FontSize)
 $fk = New-FakeLabel 60; $ok = Set-FitFontSize $fk[0] $fk[1] 75 200 16
-Check 'Kern 2: never more than 3 lines, even when the tile is tall enough' (-not $ok -and $fk[0].FontSize -eq 12)
+Check 'Kern 2 / CC A2: never more than 3 lines; a label past the fit gets the 3-line 13 px floor' (-not $ok -and $fk[0].FontSize -eq 13)
 $fk = New-FakeLabel 400; $ok = Set-FitFontSize $fk[0] $fk[1] 75 58 16
-Check 'Squint 3: too long at 12 px -> reports no fit; caller adds 3-line ellipsis + tooltip' (-not $ok -and $fk[0].FontSize -eq 12 -and $nc.Contains("`$main.ToolTip = (`$lab.main -replace"))
-Check 'Kern 1 / Squint 2: half tiles in a row share the smallest fitted size' ($src.Contains('Sync-RowFontSize @($pendingHalf.Children)') -and $src.Contains("FindLogicalNode(`$e, 'fitLabel')") -and $src.Contains('Measure-Object -Minimum'))
+Check 'Squint 3: too long at 12 px -> reports no fit; caller adds 3-line ellipsis + tooltip' (-not $ok -and $fk[0].FontSize -eq 13 -and $nc.Contains("`$main.ToolTip = (`$lab.main -replace"))
+Invoke-Expression ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-RowSizes' }, $true).Extent.Text)
+function New-RowLab([double]$sz, $tip) { [pscustomobject]@{ Tag = $sz; FontSize = $sz; LineHeight = 0.0; ToolTip = $tip } }
+$r = @((New-RowLab 16 $null), (New-RowLab 12 $null)); Set-RowSizes $r
+$fk = New-FakeLabel 30; $ok = Set-FitFontSize $fk[0] $fk[1] 75 200 16
+Check 'CC A2: a fit that renders 3 lines is never below 13 px' ($ok -and $fk[0].FontSize -ge 13 -and [Math]::Round($fk[0].DesiredSize.Height / $fk[0].LineHeight) -le 3)
+Check 'CC A2: Apply-MinFont uses the 13 px floor for rendered 3-line fitted labels' ($src.Contains("`$tb.Name -eq 'fitLabel' -and [double]`$tb.Tag -ge 13 -and `$tb.DesiredSize.Height -ge 2.5 * [double]`$tb.LineHeight"))
+Check 'Squint ruling: row matching lowers a tile at most one step (16 -> 14), never below its row-mate' ($r[0].FontSize -eq 14 -and $r[0].Tag -eq 14 -and $r[1].FontSize -eq 12)
+$r = @((New-RowLab 16 $null), (New-RowLab 12 'Customer Files and Old Invoices Archive')); Set-RowSizes $r
+Check 'Squint ruling: a label that only fits with ... does not pull the row down' ($r[0].FontSize -eq 16 -and $r[1].FontSize -eq 12)
+$r = @((New-RowLab 16 $null), (New-RowLab 15 $null)); Set-RowSizes $r
+Check 'Kern 1: close sizes still match exactly' ($r[0].FontSize -eq 15 -and $r[1].FontSize -eq 15)
+Check 'Kern 1: rows are synced when the second half tile is added' ($src.Contains('Sync-RowFontSize @($pendingHalf.Children)') -and $src.Contains("FindLogicalNode(`$e, 'fitLabel')"))
 Check 'Kern 3: (needs admin) gets a non-breaking space' ((Get-DisplayLabel ([pscustomobject]@{ label = 'Restart ScreenConnect (needs admin)' })).main -ceq ('Restart ScreenConnect (needs' + [char]0xA0 + 'admin)'))
 Check 'Squint 3: every tile names itself with the full label for Narrator' ($nt.Contains('[System.Windows.Automation.AutomationProperties]::SetName($tile, (($an -replace'))
 Remove-Item -LiteralPath $tmp -Recurse -Force
