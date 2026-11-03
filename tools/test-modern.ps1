@@ -192,18 +192,25 @@ $nc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Functi
 $nt = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-Tile' }, $true).Extent.Text
 $mf = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-MaxLines' }, $true).Extent.Text
 Invoke-Expression $mf; $tb = [pscustomobject]@{ TextTrimming = $null; Uid = ''; MaxHeight = 0; LineHeight = 15.6 }; Set-MaxLines $tb 3
-Check 'v1.4.2: labels shrink to fit (Viewbox DownOnly, Uniform), no 3-line ellipsis, bigger start sizes, full name tooltip' (-not $nc.Contains('Set-MaxLines $main') -and $nc.Contains("`$vb.Stretch = 'Uniform'; `$vb.StretchDirection = 'DownOnly'; `$vb.Child = `$text") -and $nc.Contains("'hero' { 26 } 'full' { 20 } default { 16 }") -and $nc.Contains('$vb.MaxHeight = $availH') -and $nc.Contains('Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs') -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
+Check 'v1.4.2 / CC L1: fit-to-tile labels, no Viewbox (never below 12 px), 3-line cap with ellipsis, tooltip when 12 px overflows, bigger start sizes' ($nc -notmatch 'Viewbox' -and $nc.Contains('Set-MaxLines $main 3   # CC L1') -and $nc.Contains('if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs)) { $main.ToolTip =') -and $nc.Contains("'hero' { 26 } 'full' { 20 } default { 16 }") -and $src -notmatch 'Controls\.Viewbox' -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
 Add-Type -AssemblyName WindowsBase -ErrorAction SilentlyContinue
 if (-not ('System.Windows.Size' -as [type])) { Add-Type -TypeDefinition 'namespace System.Windows { public struct Size { public double Width; public double Height; public Size(double w, double h) { Width = w; Height = h; } } }' }
 Invoke-Expression ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-FitFontSize' }, $true).Extent.Text)
-function New-FakeLabel([int]$chars) { $m = [pscustomobject]@{ FontSize = 0.0; LineHeight = 0.0; Tag = $null }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; chars = $chars }
-    $t | Add-Member ScriptMethod Measure { param($sz) $perLine = [Math]::Max(1, [Math]::Floor($sz.Width / ($this.m.FontSize * 0.55))); $lines = [Math]::Ceiling($this.chars / $perLine); $this.DesiredSize = [pscustomobject]@{ Width = [Math]::Min($sz.Width, $this.chars * $this.m.FontSize * 0.55); Height = $lines * $this.m.LineHeight } }; return @($m, $t) }
-$fk = New-FakeLabel 5; Set-FitFontSize $fk[0] $fk[1] 206 34 20
-Check 'v1.4.2: a short label keeps the full start size (20 px on a full tile)' ($fk[0].FontSize -eq 20 -and $fk[0].Tag -eq 20)
-$fk = New-FakeLabel 35; Set-FitFontSize $fk[0] $fk[1] 206 34 20
-Check 'v1.4.2: a long label steps down until it fits the tile, never below 12, Tag follows' ($fk[0].FontSize -lt 20 -and $fk[0].FontSize -ge 12 -and $fk[1].DesiredSize.Height -le 34 -and $fk[0].Tag -eq $fk[0].FontSize)
-$fk = New-FakeLabel 400; Set-FitFontSize $fk[0] $fk[1] 75 58 16
-Check 'v1.4.2: a label that cannot fit stops at 12 px (the Viewbox then shrinks it, no ellipsis)' ($fk[0].FontSize -eq 12)
+function New-FakeLabel([int]$chars) { $m = [pscustomobject]@{ FontSize = 0.0; LineHeight = 0.0; Tag = $null; Name = ''; DesiredSize = $null }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; chars = $chars }
+    $t | Add-Member ScriptMethod Measure { param($sz) $perLine = [Math]::Max(1, [Math]::Floor($sz.Width / ($this.m.FontSize * 0.55))); $lines = [Math]::Ceiling($this.chars / $perLine); $this.m.DesiredSize = [pscustomobject]@{ Height = $lines * $this.m.LineHeight }; $this.DesiredSize = [pscustomobject]@{ Width = [Math]::Min($sz.Width, $this.chars * $this.m.FontSize * 0.55); Height = $lines * $this.m.LineHeight } }; return @($m, $t) }
+$fk = New-FakeLabel 5; $ok = Set-FitFontSize $fk[0] $fk[1] 206 42 20
+Check 'v1.4.2: a short label keeps the full start size (20 px on a full tile)' ($ok -and $fk[0].FontSize -eq 20 -and $fk[0].Tag -eq 20 -and $fk[0].Name -eq 'fitLabel')
+$fk = New-FakeLabel 35; $ok = Set-FitFontSize $fk[0] $fk[1] 206 42 16
+Check 'Kern 3 / Squint 1: wraps before shrinking (35 chars keep 16 px on 2 lines of a 64 px tile)' ($ok -and $fk[0].FontSize -eq 16 -and $fk[1].DesiredSize.Height -le 42)
+$fk = New-FakeLabel 60; $ok = Set-FitFontSize $fk[0] $fk[1] 206 34 20
+Check 'v1.4.2: a long label steps down until it fits, never below 12, Tag follows' ($ok -and $fk[0].FontSize -lt 20 -and $fk[0].FontSize -ge 12 -and $fk[1].DesiredSize.Height -le 34 -and $fk[0].Tag -eq $fk[0].FontSize)
+$fk = New-FakeLabel 60; $ok = Set-FitFontSize $fk[0] $fk[1] 75 200 16
+Check 'Kern 2: never more than 3 lines, even when the tile is tall enough' (-not $ok -and $fk[0].FontSize -eq 12)
+$fk = New-FakeLabel 400; $ok = Set-FitFontSize $fk[0] $fk[1] 75 58 16
+Check 'Squint 3: too long at 12 px -> reports no fit; caller adds 3-line ellipsis + tooltip' (-not $ok -and $fk[0].FontSize -eq 12 -and $nc.Contains("`$main.ToolTip = (`$lab.main -replace"))
+Check 'Kern 1 / Squint 2: half tiles in a row share the smallest fitted size' ($src.Contains('Sync-RowFontSize @($pendingHalf.Children)') -and $src.Contains("FindLogicalNode(`$e, 'fitLabel')") -and $src.Contains('Measure-Object -Minimum'))
+Check 'Kern 3: (needs admin) gets a non-breaking space' ((Get-DisplayLabel ([pscustomobject]@{ label = 'Restart ScreenConnect (needs admin)' })).main -ceq ('Restart ScreenConnect (needs' + [char]0xA0 + 'admin)'))
+Check 'Squint 3: every tile names itself with the full label for Narrator' ($nt.Contains('[System.Windows.Automation.AutomationProperties]::SetName($tile, (($an -replace'))
 Remove-Item -LiteralPath $tmp -Recurse -Force
 # LJ: setup check at draw time touches only local fixed-drive paths (drive types mocked: C fixed, Z mapped network)
 foreach ($n in 'Expand', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Resolve-IconTarget', 'Get-SetupState', 'Test-ButtonSetUpQuick') {

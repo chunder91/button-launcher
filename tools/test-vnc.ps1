@@ -208,7 +208,7 @@ Check 'nit: temp config creation in try/finally, cleaned on failure' ($tcfg -mat
 
 # --- V13-I1: Latin-1 only ---
 $sv = (& { param($n) $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true).Extent.Text } 'Save-VncSecret')
-Check 'V13-I1: characters above 0xFF are refused before anything is saved' ($sv -match '(?s)-gt 0xFF\) \{ return \$false \}.*ProtectedData' -and (& { param($n) $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true).Extent.Text } 'Show-VncPasswordDialog') -match "has a character UltraVNC can't use")
+Check 'V13-I1: characters above 0xFF are refused before anything is saved' ($sv -match '(?s)-gt 0xFF\) \{ return \$false \}.*ProtectedData')
 
 # --- backward compatibility: which buttons open the picker (L2) ---
 $stock = { [pscustomobject]@{ label = 'VIEW REGISTER'; type = 'program'; target = ''; args = ''; askTitle = 'Pick the UltraVNC Viewer (vncviewer.exe)'; detect = [pscustomobject]@{ lnkNames = @('UltraVNC Viewer') } } }
@@ -253,7 +253,7 @@ Check 'secret: separate file, not buttons.json' ((& $fn 'Get-VncSecretPath') -ma
 $sv2 = & $fn 'Start-VncViewer'
 Check 'v1.4.2: no mode reads the saved password or writes a .vnc (registers have none)' (-not ($sv2 -match 'Get-VncSecretHex|New-VncTempConfig|Test-VncSecret'))
 Check 'temp .vnc: random folder, protected ACL for this user, CreateNew, deleted soon + leftovers' ($tcfg -match "bl-vnc-' \+ \[guid\]" -and $tcfg -match 'SetAccessRuleProtection\(\$true, \$false\)' -and $tcfg -match 'CreateNew' -and $sv2 -match 'Remove-VncTempSoon' -and $pk -match 'Remove-VncTempLeftovers')
-Check 'password box is a PasswordBox, read as SecurePassword' ((& $fn 'Show-VncPasswordDialog') -match 'Controls\.PasswordBox' -and (& $fn 'Show-VncPasswordDialog') -match 'SecurePassword' -and (& $fn 'Show-VncPasswordDialog') -notmatch '\.Password\b')
+Check 'LJ M39-I1: View-only password Setup item and dialog removed; start-up deletes a leftover vnc-viewonly.dat without reading it' ($src -notmatch 'Show-VncPasswordDialog' -and $src -notmatch "'View-only password \(for viewing computers\)\.\.\.'" -and $src.Contains('try { Clear-VncSecret } catch {}') -and ([regex]::Matches($src, 'Clear-VncSecret')).Count -eq 2 -and (& $fn 'Clear-VncSecret') -notmatch 'Get-Content|ReadAll|Unprotect|Get-VncSecretHex')
 Check 'ScreenConnect elevation and force-restart confirm unchanged' ($src -match "Start-Process powershell\.exe -Verb RunAs -WindowStyle Hidden -PassThru" -and $src -match 'CC-M4/LJ-L3: force restart ALWAYS asks')
 Check 'no PS7-only syntax in the VNC code' ($vncSrc -notmatch '\?\?|\?\.|\s\?\s[^:]+\s:\s|ForEach-Object -Parallel|&&|\|\||::new\(')
 Check 'nit: this test file is plain ASCII with no BOM' ($(($b = [IO.File]::ReadAllBytes($PSCommandPath)); -not ($b | Where-Object { $_ -gt 127 })))
@@ -287,7 +287,7 @@ $rv = Get-VncRowView ([pscustomobject]@{ host = '192.168.1.21'; port = 5900; nam
 Check 'Squint 5: stale cached row says Earlier (age only in the status line) and is greyed' ($rv.seen -eq 'Earlier' -and $rv.addrFg -eq '#A0A0A0' -and $rv.nameFg -eq '#A0A0A0')
 
 # ---- v1.3.0 round 3 (Squint / Kern / ClaudeCode) ----
-Check 'Kern 6: Add and password dialogs use the D2 dialog' ($src -match "New-D2Dialog 'Add a computer'" -and $src -match "New-D2Dialog 'View-only password'" -and $src -match "Background = Brush '#0FFFFFFF'" -and $src -match "Background = Brush '#22C55E'")
+Check 'Kern 6: Add and password dialogs use the D2 dialog' ($src -match "New-D2Dialog 'Add a computer'" -and $src -match "Background = Brush '#0FFFFFFF'" -and $src -match "Background = Brush '#22C55E'")
 Check 'Picker Blocker: menu text white 14 px UI font, disabled #9A9A9A' ($xaml2 -match '<Setter Property="Foreground" Value="#FFFFFF"/><Setter Property="FontSize" Value="14"/>' -and $xaml2 -match 'Property="Foreground" Value="#9A9A9A"' -and $src -match "\`$m\.Foreground = Brush '#FFFFFF'; \`$m\.FontFamily = \`$global:UiFont; \`$m\.FontSize = 14")
 Check 'Picker Minor: shortcut text #B4B4B4' ($xaml2 -match 'Text="\{TemplateBinding InputGestureText\}" Foreground="#B4B4B4"')
 Check 'Picker Minor: list border 12% white' ($xaml2 -match 'Background="#2E000000" BorderBrush="#1FFFFFFF"')
@@ -423,7 +423,7 @@ Check 'writer: no file or script from a user folder is run' ($global:VncAllowedW
 $se = & $fn 'Save-VncAllowedElevated'; Check 'save: System folder powershell.exe, RunAs, -EncodedCommand' ($se.Contains("Join-Path ([Environment]::GetFolderPath('System')) 'WindowsPowerShell\v1.0\powershell.exe'") -and $se.Contains('-Verb RunAs') -and $se.Contains("'-EncodedCommand', `$enc"))
 Check 'writer: 50 long entries still fit one command line' ([bool](Get-VncAllowedWriterCommand (1..50 | ForEach-Object { [pscustomobject]@{ name = ('Register number {0:00} front till' -f $_); host = ('register-{0:00}.shop.example.local' -f $_); port = 5900 } })))
 # writer re-validation on a hand-made (hostile) payload: decode + run its checks in a sandbox copy with exit trapped
-Check 'Setup menu: Allowed computers (admin)... added; View-only password item unchanged' ($src -match "'Allowed computers \(admin\)\.\.\.'" -and $src -match "'View-only password \(for viewing computers\)\.\.\.'")
+Check 'Setup menu: Allowed computers (admin)... added; View-only password item removed (LJ M39-I1, CC L2)' ($src -match "'Allowed computers \(admin\)\.\.\.'" -and $src -notmatch "New-D2Dialog 'View-only password'")
 # --- LJ M37 (FIX-FIRST on c202b8b) ---
 $ws = $global:VncAllowedWriterScript
 Check 'M37-M1: untrusted existing folder (link or failed ACL check) is moved aside to .untrusted-<guid>, never deleted' ($ws -match "Test-VncAllowedAclSafe \(\[IO.Directory\]::GetAccessControl\(\`$dir\)\)\)\) \{\s*\[IO.Directory\]::Move\(\`$dir, \(\`$dir \+ '.untrusted-'" -and $ws -notmatch 'Remove-Item|Directory\]::Delete')

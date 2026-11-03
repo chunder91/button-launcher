@@ -6,7 +6,8 @@ Pending review (build of 2026-11-03). Includes everything in v1.4.1.
 
 - **Setup > Unread email count: the grey `name@jartrek.net` placeholder now hides** whenever the Email address box has text (typed, pasted, the `@jartrek.net` start, or a saved address). In v1.4.1 it stayed on top of the address because the Pulse hint reused its variable.
 - **View Register now hands UltraVNC the computer you picked** (`address::port`) for both View only and Interact. In v1.4.1 View only could start the viewer with only a temporary settings file, and on Charles's PC the viewer showed a blank VNC Server and asked for a password for `:5900`. No password is ever sent (the registers have none). If the viewer still shows its own Password box, that computer's UltraVNC server is set to require one.
-- **Bigger button text.** Labels on the main panel start larger (16 / 20 / 26 px) and each one shrinks only as much as it must to fit its tile. Long labels are no longer cut off with "...".
+- **Bigger button text.** Labels on the main panel start larger (16 / 20 / 26 px) and each one shrinks only as much as it must to fit its tile. Half tiles in one row share the same size, a label wraps to up to 3 lines before it shrinks (never below 12 px), and "(needs admin)" stays together. Only a label that still does not fit at 12 px ends in "...", with the full name in its tooltip; Narrator always reads the full label.
+- **Setup > View-only password... is gone.** It is no longer used, and Launcher deletes any old saved view-only password file at start-up without reading it.
 
 ## v1.4.1: View Register shows only allowed computers
 

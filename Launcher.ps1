@@ -487,6 +487,7 @@ function global:Get-DisplayLabel($btn) {
     $sub = $null
     if ($lines.Count -gt 1 -and $lines[-1] -match '^(?i)version\b') { $sub = $lines[-1]; $lines = @($lines[0..($lines.Count - 2)]) }
     $main = if ((Test-DangerButton $btn) -and $lines.Count -gt 1) { $lines[0] + "`n" + (($lines[1..($lines.Count - 1)]) -join ' ') } else { $lines -join ' ' }
+    $main = $main -replace '\(needs admin\)', ('(needs' + [char]0xA0 + 'admin)')   # Kern 3: '(needs admin)' never splits
     return @{ main = $main; sub = $sub }
 }
 
@@ -637,17 +638,28 @@ function global:New-MissingDot($tip) {
     return $dot
 }
 
-function global:Set-FitFontSize($main, $text, [double]$maxW, [double]$maxH, [double]$fs) {   # v1.4.2: largest size from $fs down to 12 whose wrapped label fits the tile
+function global:Set-FitFontSize($main, $text, [double]$maxW, [double]$maxH, [double]$fs) {   # v1.4.2 (Kern/Squint): wrap first (up to 3 lines), then shrink to 12; returns $true when it fits
     if (-not ($maxW -gt 0)) { $maxW = [double]::PositiveInfinity }
-    for ($size = $fs; $size -gt 12; $size--) {
+    $fits = $false
+    for ($size = $fs; $size -ge 12; $size--) {   # measured on the real TextBlock in layout units (DIP), so DPI scaling and 'Make text bigger' don't change the fit
         $main.FontSize = $size; $main.LineHeight = [Math]::Round($size * 1.2, 1)
         $text.Measure((New-Object System.Windows.Size($maxW, [double]::PositiveInfinity)))
-        if ($text.DesiredSize.Height -le $maxH -and $text.DesiredSize.Width -le $maxW) { break } }
+        $lines = [Math]::Round($main.DesiredSize.Height / $main.LineHeight)
+        if ($lines -le 3 -and $text.DesiredSize.Height -le $maxH -and $text.DesiredSize.Width -le $maxW) { $fits = $true; break } }
+    if (-not $fits) { $size = 12 }
     $main.FontSize = $size; $main.LineHeight = [Math]::Round($size * 1.2, 1); $main.Tag = [double]$size   # Apply-MinFont keeps this as the design size
+    $main.Name = 'fitLabel'
+    return $fits
+}
+function global:Sync-RowFontSize($els) {   # Kern 1 / Squint 2: tiles in one row use the smallest fitted size
+    $labs = @(foreach ($e in $els) { $f = $null; try { $f = [System.Windows.LogicalTreeHelper]::FindLogicalNode($e, 'fitLabel') } catch {}; if ($f) { $f } })
+    if ($labs.Count -lt 2) { return }
+    $min = ($labs | ForEach-Object { [double]$_.Tag } | Measure-Object -Minimum).Minimum
+    foreach ($l in $labs) { $l.Tag = $min; $l.FontSize = $min; $l.LineHeight = [Math]::Round($min * 1.2, 1) }
 }
 # Tile content: Set A icon left of the label (or above it on tall half tiles and the restart tiles).
 function global:New-Content($btn, $h, $cls, $danger, $fg) {
-    $fs = switch ($cls) { 'hero' { 26 } 'full' { 20 } default { 16 } }   # v1.4.2 (Charles: bigger text, maximize the space): larger start size; the Viewbox below shrinks a label that doesn't fit
+    $fs = switch ($cls) { 'hero' { 26 } 'full' { 20 } default { 16 } }   # v1.4.2 (Charles: bigger text, maximize the space): larger start size; Set-FitFontSize steps it down to fit (12 px floor)
     $ipx = switch ($cls) { 'hero' { 40 } 'full' { 32 } default { 24 } }
     $above = $danger -or ($cls -eq 'half' -and $h -gt 80) -or ([string]$btn.imageMode -eq 'above' -and $cls -eq 'half' -and $h -gt 80)
     $lab = Get-DisplayLabel $btn
@@ -688,11 +700,9 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
     }
     if ($above) { $text.MaxWidth = if ($cls -eq 'half') { 109 } else { 248 } }   # wrap width for centred labels too
     $availH = [Math]::Max(12, [double]$h - 22 - $(if ($above -and $icon) { $ipx + 6 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }))   # tile minus 3+3 margin and 8+8 content margin, minus the icon above
-    Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs
-    $vb = New-Object System.Windows.Controls.Viewbox; $vb.Stretch = 'Uniform'; $vb.StretchDirection = 'DownOnly'; $vb.Child = $text   # v1.4.2: shrink-to-fit per tile, never clipped or trimmed
-    $vb.VerticalAlignment = 'Center'; $vb.HorizontalAlignment = $(if ($above) { 'Center' } else { 'Left' })
-    $vb.MaxHeight = $availH   # safety net: anything still too tall (scaled-up floor) shrinks instead of clipping
-    [void]$sp.Children.Add($vb)
+    if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs)) { $main.ToolTip = ($lab.main -replace "`n", ' ') }   # Squint 3: at 12 px still too long -> full name in the tooltip
+    Set-MaxLines $main 3   # CC L1: never scaled below 12 px; Wrap breaks an over-wide word by character, and past 3 lines (or a raised floor at panel scale < 1) it ends in '...'
+    [void]$sp.Children.Add($text)
     return @{ el = $sp; missingPic = $missingPic; icon = $icon }
 }
 
@@ -749,6 +759,8 @@ function global:New-Tile($p, $btn) {
         if ($ss -eq 'missing') { [void]$g.Children.Add((New-MissingDot 'Not set up on this PC yet')) }
         elseif ($ss -eq 'unchecked') { $tile.ToolTip = [string]$btn.target + "`n(network location: not checked until you click)" } }
     if (Test-CustomSlot $btn) { $tile.ToolTip = (Get-CustomFullName $btn) + "`n" + [string]$tile.ToolTip }   # Kern: full name, since the label may be trimmed
+    $an = Get-DisplayLabel $btn; $an = (@($(if (Test-CustomSlot $btn) { Get-CustomFullName $btn } else { $an.main }), $an.sub) | Where-Object { $_ }) -join ', '
+    [System.Windows.Automation.AutomationProperties]::SetName($tile, (($an -replace "`n", ' ') -replace [char]0xA0, ' '))   # Squint 3: Narrator reads the full label
     $g.Background = [System.Windows.Media.Brushes]::Transparent
     $tile.Child = $g
     $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-4'; $ring.CornerRadius = [string]($rad + 4)
@@ -1179,7 +1191,6 @@ function global:Panel-Menu($p, $menu) {
     [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
     if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" }) }   # installed copies ship without the builder
     [void](Add-MenuItem $setup 'Allowed computers (admin)...' { Show-VncAllowedDialog $null })   # v1.4.1: elevated save (UAC)
-    [void](Add-MenuItem $setup 'View-only password (for viewing computers)...' { [void](Show-VncPasswordDialog $null) })
     [void](Add-MenuItem $setup 'Unread email count...' { [void](Show-MailSetupDialog $null) })   # v1.4.0, opt-in
     if (-not @($p.items | Where-Object { Test-CustomSlot $_ }).Count) {
         [void](Add-MenuItem $setup 'Add the row of 2 custom buttons' { if (Add-CustomRow $p.items) { Save-Config; Build-Panel $p; Layout-Panel $p } }.GetNewClosure()) }
@@ -1283,7 +1294,7 @@ function global:Add-TileRows($p, $target, $list) {
         if ((Test-SlotEmpty $btn) -and (Get-SlotView $p.items $btn $locked) -eq 'hidden') { continue }   # locked, both empty: no row, no gap
         $el = if (Test-SlotEmpty $btn) { New-AddSlot $p $btn } else { New-Tile $p $btn }
         if ($btn.width -eq 'half') {
-            if ($pendingHalf) { [System.Windows.Controls.Grid]::SetColumn($el, 1); [void]$pendingHalf.Children.Add($el); $pendingHalf = $null }
+            if ($pendingHalf) { [System.Windows.Controls.Grid]::SetColumn($el, 1); [void]$pendingHalf.Children.Add($el); Sync-RowFontSize @($pendingHalf.Children); $pendingHalf = $null }
             else {
                 $g = New-Object System.Windows.Controls.Grid
                 [void]$g.ColumnDefinitions.Add((New-Object System.Windows.Controls.ColumnDefinition))
@@ -1860,7 +1871,7 @@ function global:Stop-TrayAndHotkey {
 # and the viewer source (github.com/ultravnc/UltraVNC vncviewer/VNCOptions.cpp, ClientConnectionFile.cpp):
 #   host::port   two colons = a TCP port (host:N with one colon is display N = port 5900+N), so we always use '::'
 #   -viewonly    do not send keyboard or mouse events;   -autoscaling   scale the remote screen to fit
-#   -config file load host, port and the obfuscated password from a .vnc file ([connection] host=, port=, password=<16 hex>)
+#   -config file (unused since v1.4.2: View only and Interact always pass host::port and no password)
 # The -password switch is never used: a password must never be on a command line.
 $global:VncDefaultPort = 5900
 $global:VncTimeoutMs   = 300
@@ -2285,36 +2296,6 @@ function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, A
     [void]$dlg.win.ShowDialog()
     return $res.out
 }
-function global:Show-VncPasswordDialog($owner) {   # set, replace or clear the shared view-only password; returns $true when one is saved
-    $dlg = New-D2Dialog 'View-only password' $owner 380; $d = $dlg.win; $sp = $dlg.body   # Kern 6: D2 dialog
-    $t = New-D2Label ''
-    $t.Text = "If the computers you view have a view-only password, type it here. It's saved for this Windows user only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols). If View only can't connect later, change it in Setup > View-only password (for viewing computers)..."
-    [void]$sp.Children.Add($t)
-    $st = New-Object System.Windows.Controls.TextBlock; $st.Margin = '0,8,0,0'; $st.Foreground = Brush '#A0A0A0'; $st.FontSize = 12; $st.TextWrapping = 'Wrap'
-    $st.Text = if (Test-VncSecret) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only connects straight through.' }
-    [void]$sp.Children.Add($st)
-    $pb = New-Object System.Windows.Controls.PasswordBox; $pb.MaxLength = 64
-    $pf = New-D2Field $pb; $pf.Margin = '0,8,0,16'; [void]$sp.Children.Add($pf)
-    $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'
-    $res = @{ saved = $false }
-    $bSave = New-D2Button 'Save' 'Green' $dlg; $bSave.IsDefault = $true
-    $bNone = New-D2Button 'No password' 'Chip' $dlg
-    $bCancel = New-D2Button 'Cancel' 'Chip' $dlg; $bCancel.IsCancel = $true
-    $bSave.Add_Click({
-        if ($pb.SecurePassword.Length -gt 0) {
-            if (-not (Save-VncSecret $pb.SecurePassword)) {   # V13-I1: a character above 0xFF
-                $pb.Clear(); $st.Text = "That password has a character UltraVNC can't use. Use standard letters, numbers and symbols, then Save again."; $st.Foreground = Brush '#F59E0B'; [void]$pb.Focus(); return }
-            $res.saved = $true }
-        $pb.Clear(); $d.Close() }.GetNewClosure())
-    $bNone.Add_Click({ Clear-VncSecret; $pb.Clear(); $d.Close() }.GetNewClosure())
-    $bCancel.Add_Click({ $pb.Clear(); $d.Close() }.GetNewClosure())
-    foreach ($b in $bSave, $bNone, $bCancel) { [void]$row.Children.Add($b) }
-    [void]$sp.Children.Add($row)
-    $d.Add_ContentRendered({ [void]$pb.Focus() }.GetNewClosure())
-    if ($global:cfg) { [void](Get-VncState $global:cfg); Set-Prop $global:cfg.vnc 'viewOnlyAsked' $true; Save-Config }
-    [void]$d.ShowDialog()
-    return $res.saved
-}
 
 function global:Find-VncViewer($btn) {   # local fixed path to vncviewer.exe, or $null; asks once and saves it on the button
     $t = Expand $btn.target
@@ -2544,7 +2525,7 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         # v1.4.2 (Charles 11:36 AM, POS1): always hand UltraVNC the picked computer as host::port. With only -config c.vnc his viewer
         # showed a blank VNC Server and 'Authentication :5900'; the registers have no password (Charles, option B), so nothing is sent.
         $vargs = @(Get-VncViewerArgs $h $p $viewOnly $file); $vi = Get-VncViewerInfo $exe
-        Write-LauncherLog ('VNC {0}: "{1}" {2} (viewer "{3}" {4}){5}' -f $(if ($viewOnly) { 'view only' } else { 'interact' }), $exe, ($vargs -join ' '), $vi.product, $vi.version, $(if ($vi.ultra) { '' } else { ' NOT UltraVNC' }))   # diagnostic: never a password (Interact has none; View only's is inside the temp .vnc)
+        Write-LauncherLog ('VNC {0}: "{1}" {2} (viewer "{3}" {4}){5}' -f $(if ($viewOnly) { 'view only' } else { 'interact' }), $exe, ($vargs -join ' '), $vi.product, $vi.version, $(if ($vi.ultra) { '' } else { ' NOT UltraVNC' }))   # diagnostic: never a password (neither mode sends one)
         if (-not $vi.ultra -and $owner -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke(('The picked viewer is "{0}", not UltraVNC. Pick UltraVNC''s vncviewer.exe if it can''t connect.' -f $vi.product)) }
         $proc = Start-Process -FilePath $exe -ArgumentList $vargs -WorkingDirectory (Split-Path -Parent $exe) -PassThru
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit }
@@ -3830,6 +3811,7 @@ try {
     $global:relayoutTimer.Add_Tick({ $global:relayoutTimer.Stop(); $f = [bool]$global:forceRelayout; $global:forceRelayout = $false; [void](Invoke-Relayout -Force:$f) })
 
     $global:middle = New-MiddleState $global:cfg
+    try { Clear-VncSecret } catch {}   # LJ M39-I1: the view-only password is no longer used; delete a leftover vnc-viewonly.dat unread
     try { Initialize-Mail } catch { $global:mail = $null; Add-Content -LiteralPath $global:logPath -Value ('{0}  email count settings unreadable: {1}' -f (Get-Date -Format s), $_.Exception.Message) -ErrorAction SilentlyContinue }   # v1.4.0: reads a per-user file only; no network
     if ((Get-LayoutMode $global:cfg) -eq 'single' -and @($global:cfg.panels).Count -ge 1) { Open-Single }
     else { foreach ($pc in @($global:cfg.panels)) { [void](Open-Panel $pc) } }
