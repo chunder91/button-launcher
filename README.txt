@@ -15,7 +15,10 @@ WHAT EACH BUTTON DOES
   RED DOG BACK OFFICE  Finds Red Dog Backoffice by itself (Program Files,
                        C:\Jartrek, C:\RedDog, or a "Red Dog Backoffice"
                        shortcut). If it can't, it asks you once to pick it.
-  VIEW REGISTER        Opens UltraVNC Viewer (found by itself, or asks once).
+  VIEW REGISTER        Opens UltraVNC Viewer. v1.4.3 looks for it in this order:
+                       a vncviewer.exe you picked, then Program Files and
+                       Program Files (x86), then the machine App Paths entry;
+                       if none, it says so and offers to let you pick it.
                        v1.4.1: lists only the computers an administrator
                        allows in Setup > Allowed computers (admin)... (no
                        network scan). View only never asks for a password;

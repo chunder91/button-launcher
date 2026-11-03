@@ -54,17 +54,6 @@
           "type": "program",
           "target": "",
           "args": "",
-          "detect": {
-            "paths": [
-              "%ProgramFiles%\\uvnc bvba\\UltraVNC\\vncviewer.exe",
-              "%ProgramFiles%\\UltraVNC\\vncviewer.exe",
-              "%ProgramFiles(x86)%\\uvnc bvba\\UltraVNC\\vncviewer.exe",
-              "%ProgramFiles(x86)%\\UltraVNC\\vncviewer.exe"
-            ],
-            "lnkNames": [
-              "UltraVNC Viewer"
-            ]
-          },
           "askTitle": "Pick the UltraVNC Viewer (vncviewer.exe)",
           "vncPicker": true,
           "image": "images/register.png",

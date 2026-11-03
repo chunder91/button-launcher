@@ -269,7 +269,7 @@ $global:touched.Clear()
 Check 'Test-ButtonSetUpQuick: UNC is not missing (no dot) and not touched' ((Test-ButtonSetUpQuick (P '\\srv\share\app.exe')) -and $global:touched.Count -eq 0)
 Check 'tile: only missing gets the dot; unchecked gets a tooltip' ($src -match "if \(\`$ss -eq 'missing'\) \{ \[void\]\`$g\.Children\.Add\(\(New-MissingDot" -and $src -match 'not checked until you click')
 # TS-L2 (a): tile pictures on a share -> default art, the share is never touched
-foreach ($n in 'Get-DefaultPic', 'Resolve-Img', 'Get-PicSource', 'Test-ButtonReady', 'Find-LocalMatch', 'Find-LnkLocal', 'Find-Detected') {
+foreach ($n in 'Get-DefaultPic', 'Resolve-Img', 'Get-PicSource', 'Test-ButtonReady', 'Test-VncPickerButton', 'Find-LocalMatch', 'Find-LnkLocal', 'Find-Detected') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 function global:Join-Path { param([string]$Path, [string]$ChildPath) $Path.TrimEnd('\') + '\' + $ChildPath }

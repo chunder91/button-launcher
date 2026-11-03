@@ -8,6 +8,7 @@ Pending review (build of 2026-11-03). Includes everything in v1.4.2.
 - **Clear message when it's missing.** If no viewer is found, View only and Interact say "UltraVNC Viewer wasn't found in Program Files" and offer to pick `vncviewer.exe`.
 - **Better log.** launcher-error.log now notes the launcher version at start-up, which viewer was used and how it was found (your pick, a known folder, the search, or the Windows App Paths entry), its version, and the exact viewer arguments for every View only / Interact (never a password; none is sent).
 - The computer is still passed as `address::port`, as in v1.4.2.
+- Review fixes: a saved viewer path is used only if it is a real `vncviewer.exe` on this PC (a saved shortcut or other file is ignored and logged, and the search is used instead); "Set up this PC" no longer saves a shortcut for View Register; the search stops after 5000 folders or 2 seconds (logged).
 
 ## v1.4.2: email address placeholder fix
 

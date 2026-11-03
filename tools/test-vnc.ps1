@@ -530,4 +530,28 @@ $fv = (& $fn 'Find-VncViewer')
 Check 'v1.4.3: Find-VncViewer order: valid saved path (override) > Program Files scan > HKLM App Paths > plain message + optional pick' ($fv.IndexOf("`$how = 'override'") -lt $fv.IndexOf('Initialize-VncViewerScan') -and $fv.IndexOf('Initialize-VncViewerScan') -lt $fv.IndexOf('HKLM:\Software') -and $fv.IndexOf('HKLM:\Software') -lt $fv.IndexOf("wasn't found in Program Files") -and $fv -notmatch 'HKCU:' -and $fv -notmatch 'Find-Detected')
 Check 'v1.4.3: start-up logs the version and runs the scan once (cached)' ($src.Contains("Write-LauncherLog ('Launcher {0} started' -f `$global:AppVersion)") -and $src.Contains('try { [void](Initialize-VncViewerScan) } catch {}') -and (& $fn 'Initialize-VncViewerScan').Contains('if ($global:VncViewerScan) { return $global:VncViewerScan }'))
 Check 'v1.4.3: each launch still logs the exact argv (no password switch exists)' ((& $fn 'Start-VncViewer').Contains("(`$vargs -join ' ')") -and $src -notmatch "'-password'")
+# --- LJ M41-L1 / M41-I1 ---
+$pr = New-FakeFs @{ 'C:\Program Files\UltraVNC\vncviewer.exe' = @{ version = '1.5' }; 'C:\Users\x\Desktop\UltraVNC Viewer.lnk' = @{ version = '' }; 'C:\Tools\vncviewer.exe.bak' = @{ version = '' } } @{} $e64
+Check 'M41-L1: override must be a plain local file named exactly vncviewer.exe (.lnk, other names, empty, UNC refused)' ((Test-VncViewerFile 'C:\Program Files\UltraVNC\vncviewer.exe' $pr) -and -not (Test-VncViewerFile 'C:\Users\x\Desktop\UltraVNC Viewer.lnk' $pr) -and -not (Test-VncViewerFile 'C:\Tools\vncviewer.exe.bak' $pr) -and -not (Test-VncViewerFile '' $pr) -and -not (Test-VncViewerFile '\\srv\s\vncviewer.exe' (New-FakeFs @{ '\\srv\s\vncviewer.exe' = @{ version = '1' } } @{} $e64)))
+Check 'M41-L1: odd text never throws in the leaf check' ($null -eq (Test-VncViewerFile 'C:\a<>|?*\x' $pr))
+$fv = (& $fn 'Find-VncViewer')
+Check 'M41-L1: Find-VncViewer uses Test-VncViewerFile for the override and logs + ignores a bad saved path, then searches' ($fv.Contains("if (Test-VncViewerFile `$t `$global:VncViewerProbe) { `$f = `$t; `$how = 'override' }") -and $fv.Contains('ignored (not a plain local vncviewer.exe); using the Program Files search') -and $fv -notmatch 'Test-Path -LiteralPath \$t')
+Check 'M41-I1: the cached search result is rechecked with Test-VncViewerFile, not just Test-Path' ($fv.Contains('if ($s.path -and (Test-VncViewerFile $s.path $global:VncViewerProbe))'))
+$tr = (& $fn 'Test-ButtonReady')
+Check 'M41-L1: Set up this PC never runs Find-Detected for the View Register button' ($tr.IndexOf('if (Test-VncPickerButton $btn) { return $true }') -ge 0 -and $tr.IndexOf('if (Test-VncPickerButton $btn) { return $true }') -lt $tr.IndexOf('Find-Detected'))
+$dj = Get-Content -LiteralPath (Join-Path $root 'buttons.default.json') -Raw | ConvertFrom-Json
+$vb = @(foreach ($pn in @($dj.panels)) { foreach ($b in @($pn.buttons)) { if ($b.vncPicker) { $b } } })
+Check 'M41-L1: shipped View Register button has no detect paths/lnkNames and is still recognised as the picker' ($vb.Count -eq 1 -and $null -eq $vb[0].detect -and (Test-VncPickerButton $vb[0]))
+# --- CC L2: search caps ---
+$many = @{ 'C:\Program Files' = @(1..50 | ForEach-Object { @{ name = "App$_" } }) + @(@{ name = 'UltraVNC2' }) }
+$pr = New-FakeFs @{ 'C:\Program Files\UltraVNC2\vncviewer.exe' = @{ version = '1.5' } } $many $e64; $pr.MaxDirs = 10
+$r = Find-VncViewerInProgramFiles $pr
+Check 'CC L2: folder cap stops the search and reports capped (no crash, nothing past the cap)' ($r.capped -and $r.path -eq '')
+$pr = New-FakeFs @{ 'C:\Program Files\UltraVNC2\vncviewer.exe' = @{ version = '1.5' } } $many $e64
+$r = Find-VncViewerInProgramFiles $pr
+Check 'CC L2: under the default caps the same tree is searched fully' (-not $r.capped -and $r.path -eq 'C:\Program Files\UltraVNC2\vncviewer.exe')
+$slow = New-FakeFs @{ 'C:\Program Files\UltraVNC2\vncviewer.exe' = @{ version = '1.5' } } $many $e64; $slow.MaxMs = 1; $d0 = $slow.Dirs
+$slow.Dirs = { param($d) Start-Sleep -Milliseconds 20; & $d0 $d }.GetNewClosure()
+Check 'CC L2: time cap stops the search' ((Find-VncViewerInProgramFiles $slow).capped)
+Check 'CC L2: default caps 5000 folders / 2000 ms and the cap is logged' ((& $fn 'Find-VncViewerInProgramFiles').Contains('else { 5000 }') -and (& $fn 'Find-VncViewerInProgramFiles').Contains('else { 2000 }') -and (& $fn 'Initialize-VncViewerScan').Contains('search stopped early'))
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
