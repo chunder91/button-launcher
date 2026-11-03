@@ -303,7 +303,8 @@ Check 'badge: Kern -6 top, -8 right' ($src.Contains('SetLeft($bd, $ipx - 8); [Sy
 Check 'motion follows Windows animation setting' ($src -match 'ClientAreaAnimation')
 Check 'exit stops the email check' ($src -match 'try \{ Stop-Mail \} catch \{\}')
 Check 'resume hooks the email check' ($src -match 'Resume-Mail')
-Check 'version 1.4.3' ($src -match "\`$global:AppVersion\s+= '1\.4\.3'")
+$bv = [regex]::Match((Get-Content -Raw -LiteralPath (Join-Path (Split-Path -Parent $PSScriptRoot) 'Build-Installer.ps1')), "\`$AppVersion = '([0-9.]+)'").Groups[1].Value
+Check "version matches Build-Installer.ps1 ($bv)" ($bv -and $src -match ("\`$global:AppVersion\s+= '" + [regex]::Escape($bv) + "'"))
 
 # --- polish round 3 (ClaudeCode L1: loginOk after a tagged OK; Lockjaw M16-I1: close before reading the flags) ---
 # dripstatus: LOGIN gets a tagged OK, then STATUS drips (a few untagged bytes, then the 45 s cap closes the socket)
