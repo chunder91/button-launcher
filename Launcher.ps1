@@ -1890,14 +1890,14 @@ $global:VncDesKey      = [byte[]](0xE8, 0x4A, 0xD6, 0x60, 0xC4, 0x72, 0x1A, 0xE0
 $global:vncPicker      = $null
 
 function global:Test-VncIPv4([string]$s) {
-    if ($s -notmatch '^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$') { return $false }
+    if ($s -notmatch '\A(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\z') { return $false }   # CC L7: \A..\z, a trailing newline is refused
     foreach ($i in 1..4) { $o = $matches[$i]; if (($o.Length -gt 1 -and $o[0] -eq '0') -or [int]$o -gt 255) { return $false } }
     return $true
 }
 function global:Test-VncHost([string]$s) {   # untrusted: an IPv4 dotted quad, or a hostname of [A-Za-z0-9.-]
     if (-not $s -or $s.Length -gt 253) { return $false }
-    if ($s -match '^[\d.]+$') { return (Test-VncIPv4 $s) }
-    if ($s -cnotmatch '^[A-Za-z0-9.-]+$') { return $false }
+    if ($s -match '\A[\d.]+\z') { return (Test-VncIPv4 $s) }
+    if ($s -cnotmatch '\A[A-Za-z0-9.-]+\z') { return $false }   # CC L7
     foreach ($l in $s.TrimEnd('.').Split('.')) { if ($l.Length -lt 1 -or $l.Length -gt 63 -or $l.StartsWith('-') -or $l.EndsWith('-')) { return $false } }
     return $true
 }
@@ -1909,7 +1909,7 @@ function global:Get-VncPort($p) {   # an integer 1-65535, else $null
 }
 function global:ConvertTo-VncEndpoint([string]$text, [int]$defaultPort = 5900) {   # 'host' or 'host:port' -> @{ host; port } or $null
     $t = ([string]$text).Trim(); $port = $defaultPort
-    if ($t -match '^([^:]+)::?(\d+)$') { $t = $matches[1]; $port = Get-VncPort $matches[2]; if (-not $port) { return $null } }
+    if ($t -match '^([^:]+)::?(\d+)$') { $t = $matches[1]; $port = Get-VncPort $matches[2]; if (-not $port -or $port -lt 100) { return $null } }   # LJ M44-I2: ports below 100 refused
     elseif ($t.Contains(':')) { return $null }
     if (-not (Test-VncHost $t)) { return $null }
     return @{ host = $t; port = [int]$port }
@@ -2073,7 +2073,7 @@ function global:Get-VncState($cfg) {
     $favs = New-Object System.Collections.ArrayList; $bad = New-Object System.Collections.ArrayList
     foreach ($f in @($v.favorites)) {
         if (-not $f) { continue }
-        if (-not (Test-VncHost ([string]$f.host)) -or ($f.port -ne $null -and -not (Get-VncPort $f.port))) { [void]$bad.Add($f); continue }   # L5: kept as-is, not shown
+        if (-not (Test-VncHost ([string]$f.host)) -or ($f.port -ne $null -and (-not (Get-VncPort $f.port) -or (Get-VncPort $f.port) -lt 100))) { [void]$bad.Add($f); continue }   # L5: kept as-is, not shown; LJ M44-I2: ports below 100 too
         $p = Get-VncPort $f.port; if (-not $p) { $p = $port }
         [void]$favs.Add([pscustomobject]@{ host = [string]$f.host; port = $p; name = [string]$f.name; pinned = [bool]$f.pinned }) }
     return @{ port = $port; prefix = (Get-VncPrefix $v.prefix); favorites = $favs; invalid = $bad; confirmed = @(@($v.confirmedRanges) | Where-Object { Test-VncRangeKeyCurrent ([string]$_) } | ForEach-Object { [string]$_ }); declined = @(@($v.declinedRanges) | Where-Object { Test-VncRangeKeyCurrent ([string]$_) } | ForEach-Object { [string]$_ }) }   # R3-L1: old keys dropped = unconfirmed
@@ -2089,7 +2089,7 @@ function global:Get-VncInvalidText($invalid) {
     return ('{0} saved computer(s) in buttons.json have an address that is not valid and are hidden: {1}' -f $n, $what)
 }
 function global:Set-VncFavorite($favs, [string]$h, [int]$port, $name, $pinned) {   # add or update; naming never pins (Squint 4); returns $false on bad input
-    if (-not (Test-VncHost $h) -or -not (Get-VncPort $port)) { return $false }
+    if (-not (Test-VncHost $h) -or -not (Get-VncPort $port) -or $port -lt 100) { return $false }   # LJ M44-I2
     $f = $null; foreach ($x in $favs) { if ($x.host -eq $h -and $x.port -eq $port) { $f = $x; break } }
     if (-not $f) { $f = [pscustomobject]@{ host = $h; port = $port; name = ''; pinned = $false }; [void]$favs.Add($f) }
     if ($null -ne $name) { $f.name = Get-SafeText ([string]$name) 200 }   # $name untyped: [string] would turn $null into ''
@@ -2159,7 +2159,7 @@ function global:Test-VncPickerButton($btn) {   # L2: the explicit flag, else onl
     if ((([string]$btn.label) -replace '\s+', ' ').Trim() -ne 'VIEW REGISTER') { return $false }
     return (([string]$btn.askTitle) -eq 'Pick the UltraVNC Viewer (vncviewer.exe)' -or (@($btn.detect.lnkNames) -contains 'UltraVNC Viewer'))
 }
-function global:Test-VncUsePassword($row, [bool]$hasSecret) { $hasSecret -and [bool]$row.session -and (Test-VncBannerText ([string]$row.banner)) }   # L4 + V2-I1: only to a host that greeted RFB in this session's scan
+function global:Test-VncUsePassword($row, [bool]$hasSecret) { $hasSecret -and [bool]$row.session -and (Test-VncBannerText ([string]$row.banner)) -and (Test-VncIPv4 ([string]$row.host)) }   # L4 + V2-I1: only to a host that greeted RFB in this session's scan; LJ M44-L1: only a literal IPv4 (a name could resolve elsewhere), names let the viewer ask
 
 # ----- view-only password -----
 # Legacy (v1.4.1): vnc-viewonly.dat beside buttons.json. Start-up deletes it unread (LJ M39-I1); that path is never the new store.
@@ -2269,7 +2269,7 @@ function global:New-VncTempConfig([string]$h, [int]$port, [string]$hex) {   # %T
 }
 function global:Show-VncPasswordDialog($owner) {   # v1.4.4: set, change or clear this Windows user's view-only password; $true when one is saved
     $dlg = New-D2Dialog 'View-only password' $owner 380; $d = $dlg.win; $sp = $dlg.body
-    $t = New-D2Label "If the computers you view have a view-only password, type it here. It's saved for this Windows user on this PC only and used for View only. Interact always asks for its own password.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols)."
+    $t = New-D2Label "If the computers you view have a view-only password, type it here. It's saved for this Windows user on this PC only and used for View only. Interact always asks for its own password. It's only used for computers listed by IP address; for a computer listed by name the viewer asks.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols)."
     [void]$sp.Children.Add($t)
     $st = New-D2Label '' '#A0A0A0' 12
     $st.Text = if (Test-VncSecret) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only asks for one.' }
@@ -2468,7 +2468,7 @@ function global:ConvertTo-VncAllowedList($items) {   # @{ list = validated entri
     foreach ($e in @($items)) {
         if ($null -eq $e) { $bad++; continue }
         $n = ([string]$e.name).Trim(); $h = ([string]$e.host).Trim(); $p = if ($null -eq $e.port -or [string]$e.port -eq '') { 5900 } else { Get-VncPort $e.port }
-        if (-not (Test-VncAllowedName $n) -or -not (Test-VncAllowedHost $h) -or -not $p -or $list.Count -ge $global:VncAllowedMax) { $bad++; continue }
+        if (-not (Test-VncAllowedName $n) -or -not (Test-VncAllowedHost $h) -or -not $p -or $p -lt 100 -or $list.Count -ge $global:VncAllowedMax) { $bad++; continue }
         $k = ('{0}:{1}' -f $h.ToLowerInvariant(), $p); if ($seen[$k]) { $bad++; continue }; $seen[$k] = $true
         [void]$list.Add([pscustomobject]@{ name = $n; host = $h; port = [int]$p }) }
     return @{ list = @($list); bad = $bad }
@@ -2533,7 +2533,7 @@ try {
     $out = @(); $seen = @{}
     foreach ($e in @($o.computers)) {
         $n = [string]$e.name; $h = [string]$e.host; $p = [int]$e.port
-        if ($n -cnotmatch '^[A-Za-z0-9][A-Za-z0-9 ._#()-]{0,39}$' -or $h.Length -gt 253 -or $p -lt 1 -or $p -gt 65535) { exit 3 }
+        if ($n -cnotmatch '^[A-Za-z0-9][A-Za-z0-9 ._#()-]{0,39}$' -or $h.Length -gt 253 -or $p -lt 100 -or $p -gt 65535) { exit 3 }   # LJ M44-I2
         if ($h -cmatch '^[\d.]+$') { if ($h -cnotmatch '^((25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$') { exit 3 } }
         elseif ($h -cnotmatch '^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$') { exit 3 }
         $k = $h.ToLowerInvariant() + ':' + $p; if ($seen[$k]) { exit 3 }; $seen[$k] = 1

@@ -5,6 +5,7 @@
 Pending review (build of 2026-11-03). Includes everything in v1.4.3.
 
 - View only supplies the view-only password again (Charles, 3:49 PM): enter it once per Windows user in Setup > View-only password (for viewing computers)... It is stored with DPAPI (this user only) in %LOCALAPPDATA%\ButtonLauncher\vnc-viewonly-v2.dat with an owner-only ACL, and handed to UltraVNC in a short-lived owner-only .vnc (`-connect <host>:<port> -config "<temp .vnc>" -viewonly -autoscaling`) that is deleted a few seconds after the viewer opens. Leftovers are deleted at start-up. Never on the command line or in the log (the log says only saved/none). With no password saved, View only behaves as before (the viewer asks). Interact is unchanged and asks.
+- The saved view-only password is only used for computers listed by IP address; for a computer listed by name the viewer asks (LJ M44-L1). Ports below 100 are also refused in the allowed list and saved computers (LJ M44-I2).
 
 - View Register: the viewer is now started as `-connect <host>:<port> [-viewonly] -autoscaling`. Charles's UltraVNC Viewer 1.5.0.0-dev left VNC Server blank for the bare `<host>::<port>` form; his Win+R test of `-connect 192.168.20.51:5900 -viewonly` filled it in (3:36 PM, Nov 3).
 - Allowed computers: the elevated save now reports which step failed (codes 21-27 with a plain message) instead of a bare "code 2"; the old list is kept.

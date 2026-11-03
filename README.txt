@@ -21,8 +21,12 @@ WHAT EACH BUTTON DOES
                        if none, it says so and offers to let you pick it.
                        v1.4.1: lists only the computers an administrator
                        allows in Setup > Allowed computers (admin)... (no
-                       network scan). View only never asks for a password;
-                       Interact uses UltraVNC's own password box.
+                       network scan). v1.4.4: View only uses the view-only
+                       password saved in Setup > View-only password (for
+                       viewing computers)... (this Windows user only), and
+                       only for computers listed by IP address; otherwise
+                       the viewer asks. Interact uses UltraVNC's own
+                       password box.
                        To connect straight to a register, edit the button and
                        put e.g. 192.168.1.50:5900 in Arguments.
   INTERNET             Opens Google in your browser.
