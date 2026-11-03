@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.1'
+$global:AppVersion   = '1.4.2'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -639,13 +639,12 @@ function global:New-MissingDot($tip) {
 
 # Tile content: Set A icon left of the label (or above it on tall half tiles and the restart tiles).
 function global:New-Content($btn, $h, $cls, $danger, $fg) {
-    $fs = switch ($cls) { 'hero' { 22 } 'full' { 16 } default { 13 } }
+    $fs = switch ($cls) { 'hero' { 26 } 'full' { 20 } default { 16 } }   # v1.4.2 (Charles: bigger text, maximize the space): larger start size; the Viewbox below shrinks a label that doesn't fit
     $ipx = switch ($cls) { 'hero' { 40 } 'full' { 32 } default { 24 } }
     $above = $danger -or ($cls -eq 'half' -and $h -gt 80) -or ([string]$btn.imageMode -eq 'above' -and $cls -eq 'half' -and $h -gt 80)
     $lab = Get-DisplayLabel $btn
     $text = New-Object System.Windows.Controls.StackPanel; $text.VerticalAlignment = 'Center'
     $main = New-Label $lab.main $fg $fs; [void]$text.Children.Add($main)
-    if ((Test-CustomSlot $btn) -and -not (Test-SlotEmpty $btn)) { Set-MaxLines $main 3 }   # Kern: custom labels max 3 lines + ellipsis (full name in the tile tooltip)
     if ($lab.sub) { $sl = New-Label $lab.sub $fg 12; $sl.FontWeight = [System.Windows.FontWeights]::Normal; $sl.LineHeight = 14; $sl.Opacity = 0.85; [void]$text.Children.Add($sl) }   # Kern: 12 px Regular
     $isRedDog = ([string]$btn.image) -match '(?i)reddog'
     if ($isRedDog -and $cls -eq 'hero') { $ipx = 64 }
@@ -679,7 +678,11 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
         $iconW = if ($icon) { $ipx + 10 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }
         $text.MaxWidth = if ($cls -eq 'half') { 109 - $iconW } else { 248 - $iconW }   # 290 panel - 12 padding - 6 gap - 24 tile padding
     }
-    [void]$sp.Children.Add($text)
+    if ($above) { $text.MaxWidth = if ($cls -eq 'half') { 109 } else { 248 } }   # wrap width for centred labels too
+    $vb = New-Object System.Windows.Controls.Viewbox; $vb.Stretch = 'Uniform'; $vb.StretchDirection = 'DownOnly'; $vb.Child = $text   # v1.4.2: shrink-to-fit per tile, never clipped or trimmed
+    $vb.VerticalAlignment = 'Center'; $vb.HorizontalAlignment = $(if ($above) { 'Center' } else { 'Left' })
+    $vb.MaxHeight = [Math]::Max(12, [double]$h - 22 - $(if ($above -and $icon) { $ipx + 6 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }))   # tile minus 3+3 margin and 8+8 content margin, minus the icon above
+    [void]$sp.Children.Add($vb)
     return @{ el = $sp; missingPic = $missingPic; icon = $icon }
 }
 
@@ -2528,11 +2531,8 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
     $exe = Find-VncViewer $btn; if (-not $exe) { return $false }
     $file = $null; $hex = $null
     try {
-        if ($viewOnly) {   # Interact never uses the saved password. v1.4.1: no launcher ask-once box (the registers have no VNC password)
-            # LJ M37-I2 / CC MED-1: allowed rows get session + banner from this window's online check, so the existing rule applies again
-            if (Test-VncUsePassword $row (Test-VncSecret)) {
-                $hex = Get-VncSecretHex
-                if ($hex) { $file = New-VncTempConfig $h $p $hex; $hex = $null } } }
+        # v1.4.2 (Charles 11:36 AM, POS1): always hand UltraVNC the picked computer as host::port. With only -config c.vnc his viewer
+        # showed a blank VNC Server and 'Authentication :5900'; the registers have no password (Charles, option B), so nothing is sent.
         $vargs = @(Get-VncViewerArgs $h $p $viewOnly $file); $vi = Get-VncViewerInfo $exe
         Write-LauncherLog ('VNC {0}: "{1}" {2} (viewer "{3}" {4}){5}' -f $(if ($viewOnly) { 'view only' } else { 'interact' }), $exe, ($vargs -join ' '), $vi.product, $vi.version, $(if ($vi.ultra) { '' } else { ' NOT UltraVNC' }))   # diagnostic: never a password (Interact has none; View only's is inside the temp .vnc)
         if (-not $vi.ultra -and $owner -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke(('The picked viewer is "{0}", not UltraVNC. Pick UltraVNC''s vncviewer.exe if it can''t connect.' -f $vi.product)) }
@@ -3680,8 +3680,8 @@ function global:Show-MailSetupDialog($owner) {   # opt-in; Save only after a goo
         $rb = New-Object System.Windows.Controls.RadioButton; $rb.GroupName = 'mailStyle'; $rb.Content = $o[1]; if ($s2) { $rb.Style = $s2 } else { $rb.Foreground = Brush '#FFFFFF'; $rb.FontSize = 14; $rb.Margin = '0,4' }
         $rb.IsChecked = ([string]$was.style -eq $o[0]); $radios[$o[0]] = $rb; [void]$acct.Children.Add($rb)
         if ($o[0] -eq 'pulse') {   # Squint: hint under the option, the dialog's caption style (12 px #B4B4BC), aligned with the label
-            $ph = New-Object System.Windows.Controls.TextBlock; $ph.FontSize = 12; $ph.Foreground = Brush '#B4B4BC'; $ph.Margin = '28,0,0,4'; $ph.TextWrapping = 'Wrap'; [void]$acct.Children.Add($ph) } }
-    $pulseHint = { $t = Get-MailPulseHint (Test-MailAnimOn); $ph.Text = $t; [System.Windows.Automation.AutomationProperties]::SetHelpText($radios['pulse'], $t) }.GetNewClosure()   # Squint: one hint spot, also the radio's HelpText; the saved choice stays as it is
+            $pulsePh = New-Object System.Windows.Controls.TextBlock; $pulsePh.FontSize = 12; $pulsePh.Foreground = Brush '#B4B4BC'; $pulsePh.Margin = '28,0,0,4'; $pulsePh.TextWrapping = 'Wrap'; [void]$acct.Children.Add($pulsePh) } }   # v1.4.2: own name; reusing $ph hid the pulse hint instead of the address placeholder
+    $pulseHint = { $t = Get-MailPulseHint (Test-MailAnimOn); $pulsePh.Text = $t; [System.Windows.Automation.AutomationProperties]::SetHelpText($radios['pulse'], $t) }.GetNewClosure()   # Squint: one hint spot, also the radio's HelpText; the saved choice stays as it is
     & $pulseHint
     $animH = [System.ComponentModel.PropertyChangedEventHandler]{ param($src0, $chg) if ($chg.PropertyName -eq 'ClientAreaAnimation') { & $pulseHint } }.GetNewClosure()
     $d.Add_Loaded({ try { [System.Windows.SystemParameters]::add_StaticPropertyChanged($animH) } catch {} }.GetNewClosure())   # CC LOW-F: hooked only once the dialog is up (a build failure never leaves it hooked)

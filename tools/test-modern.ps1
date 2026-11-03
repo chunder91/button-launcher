@@ -192,7 +192,7 @@ $nc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Functi
 $nt = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-Tile' }, $true).Extent.Text
 $mf = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-MaxLines' }, $true).Extent.Text
 Invoke-Expression $mf; $tb = [pscustomobject]@{ TextTrimming = $null; Uid = ''; MaxHeight = 0; LineHeight = 15.6 }; Set-MaxLines $tb 3
-Check 'Kern: custom labels max 3 lines with ellipsis, kept after scaling, full name tooltip' ($tb.TextTrimming -eq 'CharacterEllipsis' -and [Math]::Abs($tb.MaxHeight - 46.8) -lt 0.01 -and $tb.Uid -eq 'maxlines=3' -and $nc.Contains('Set-MaxLines $main 3') -and $src.Contains("if ([string]`$tb.Uid -match '^maxlines=(\d)`$') { `$tb.MaxHeight") -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
+Check 'v1.4.2: labels shrink to fit (Viewbox DownOnly, Uniform), no 3-line ellipsis, bigger start sizes, full name tooltip' (-not $nc.Contains('Set-MaxLines $main') -and $nc.Contains("`$vb.Stretch = 'Uniform'; `$vb.StretchDirection = 'DownOnly'; `$vb.Child = `$text") -and $nc.Contains("'hero' { 26 } 'full' { 20 } default { 16 }") -and $nc.Contains('$vb.MaxHeight = [Math]::Max(12,') -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
 Remove-Item -LiteralPath $tmp -Recurse -Force
 # LJ: setup check at draw time touches only local fixed-drive paths (drive types mocked: C fixed, Z mapped network)
 foreach ($n in 'Expand', 'Is-Todo', 'Test-LocalFixedPath', 'Test-SafeIconSource', 'Resolve-IconTarget', 'Get-SetupState', 'Test-ButtonSetUpQuick') {

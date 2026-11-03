@@ -251,7 +251,7 @@ Check 'viewer path must be a local fixed path' ((& $fn 'Find-VncViewer') -match 
 Check 'secret: DPAPI CurrentUser + entropy, plaintext zeroed' ($sv -match "ProtectedData\]::Protect\(\`$raw, \`$global:VncEntropy, 'CurrentUser'\)" -and $sv -match 'ZeroFreeBSTR' -and (& $fn 'Get-VncSecretHex') -match 'Array\]::Clear')
 Check 'secret: separate file, not buttons.json' ((& $fn 'Get-VncSecretPath') -match "'vnc-viewonly\.dat'")
 $sv2 = & $fn 'Start-VncViewer'
-Check 'interact never uses the saved password; L4 gate before the file' ($sv2 -match '(?s)if \(\$viewOnly\) \{.*Test-VncUsePassword.*Get-VncSecretHex' -and ([regex]::Matches($sv2, 'Get-VncSecretHex')).Count -eq 1)
+Check 'v1.4.2: no mode reads the saved password or writes a .vnc (registers have none)' (-not ($sv2 -match 'Get-VncSecretHex|New-VncTempConfig|Test-VncSecret'))
 Check 'temp .vnc: random folder, protected ACL for this user, CreateNew, deleted soon + leftovers' ($tcfg -match "bl-vnc-' \+ \[guid\]" -and $tcfg -match 'SetAccessRuleProtection\(\$true, \$false\)' -and $tcfg -match 'CreateNew' -and $sv2 -match 'Remove-VncTempSoon' -and $pk -match 'Remove-VncTempLeftovers')
 Check 'password box is a PasswordBox, read as SecurePassword' ((& $fn 'Show-VncPasswordDialog') -match 'Controls\.PasswordBox' -and (& $fn 'Show-VncPasswordDialog') -match 'SecurePassword' -and (& $fn 'Show-VncPasswordDialog') -notmatch '\.Password\b')
 Check 'ScreenConnect elevation and force-restart confirm unchanged' ($src -match "Start-Process powershell\.exe -Verb RunAs -WindowStyle Hidden -PassThru" -and $src -match 'CC-M4/LJ-L3: force restart ALWAYS asks')
@@ -404,7 +404,7 @@ Check 'L4: saved password used for a host that greeted RFB in this session' (Tes
 Check 'V2-I1: cached RFB banner alone is not enough (not seen this session)' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $false }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $true))
 Check 'L4: no password file for a host with no or a non-RFB greeting' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = '' }) $true) -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'SSH-2.0-Open' }) $true))
 Check 'View only, nothing saved: -viewonly, no -config, no password (no-password registers)' (((Get-VncViewerArgs 'REG1' 5900 $true $null) -join ' ') -eq 'REG1::5900 -autoscaling -viewonly' -and -not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889'; session = $true }) $false))
-Check 'temp .vnc only for View only (Interact never gets the saved password)' ($sv -match '(?s)if \(\$viewOnly\) \{.*?Test-VncUsePassword.*?New-VncTempConfig')
+Check 'v1.4.2: Start-VncViewer always passes the picked host::port (no -config only launch)' ($sv.Contains('$vargs = @(Get-VncViewerArgs $h $p $viewOnly $file)') -and $sv -notmatch '\$file = New-VncTempConfig')
 # Interact: no config, no password, no -viewonly (UltraVNC asks for the password itself)
 $a = Get-VncViewerArgs 'REG1' 5900 $false $null
 Check 'Interact never -password, -config, -viewonly or -dsmplugin' (-not ((Get-VncViewerArgs 'REG1' 5900 $false $null) -match '^-password$|^-config$|^-viewonly$|^-dsmplugin$'))
@@ -452,7 +452,7 @@ Check 'M37-I1: Users GENERIC_ALL (0x10000000) -> unsafe' (-not (Test-VncAllowedA
 Check 'M37-I1: Users Delete / WRITE_DAC / WRITE_OWNER -> unsafe' (-not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x10000)))) -and -not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x40000)))) -and -not (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x80000)))))
 Check 'M37-I1: inherit-only write ACE ignored (CREATOR OWNER style)' (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce 'S-1-3-0' 0x10000000 2))))
 Check 'M37-I1: Deny ACE ignored' (Test-VncAllowedAclSafe (New-FakeAcl $A ($good + (New-FakeAce $U 0x1F01FF 0 'Deny'))))
-Check 'M37-I2: dead saved-password path documented, behaviour unchanged (fails closed)' ((& $fn 'Start-VncViewer') -match 'LJ M37-I2' -and -not (Test-VncUsePassword ([pscustomobject]@{ host = 'REG1'; port = 5900; banner = ''; session = $true }) $true))
+Check 'v1.4.2: exact final args, View only and Interact, address and name' ((((Get-VncViewerArgs '192.168.20.51' 5900 $true $null) -join ' ') -ceq '192.168.20.51::5900 -autoscaling -viewonly') -and (((Get-VncViewerArgs '192.168.20.51' 5900 $false $null) -join ' ') -ceq '192.168.20.51::5900 -autoscaling') -and (((Get-VncViewerArgs 'POS1' 5901 $true $null) -join ' ') -ceq 'POS1::5901 -autoscaling -viewonly') -and (((Get-VncViewerArgs 'POS1' 5901 $false $null) -join ' ') -ceq 'POS1::5901 -autoscaling'))
 # --- ClaudeCode FIX-FIRST on c202b8b ---
 $on = Get-VncAllowedRows $t.list @{ '192.168.1.21:5900' = 'RFB 003.008'; 'REG2:5901' = 'SSH-2.0-x' } $false
 Check 'CC MED-1: online allowed row carries the RFB banner + session -> saved password used (usePassword True)' ($on[0].row.banner -eq 'RFB 003.008' -and $on[0].row.session -and (Test-VncUsePassword $on[0].row $true))
