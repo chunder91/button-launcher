@@ -472,4 +472,62 @@ Check 'CC MED-1: online check queues key + banner; picker keeps only RFB banners
 Check 'CC LOW-L: a folder named vnc-allowed.json(.tmp) -> exit 6' ($global:VncAllowedWriterScript -match "Test-Path -LiteralPath \`$file -PathType Container\) -or \(Test-Path -LiteralPath \`$tmp -PathType Container\)\) \{ exit 6 \}")
 Check 'CC LOW-L: planted .tmp in an untrusted folder goes aside with the folder; CreateNew never opens an old .tmp' ($global:VncAllowedWriterScript -match 'CreateNew' -and $global:VncAllowedWriterScript -match '\.untrusted-')
 Check "CC LOW-L: clear 'Not saved' messages for codes 3, 4, 5, 6 and others" ((Get-VncAllowedSaveError 3) -like 'Not saved*' -and (Get-VncAllowedSaveError 6) -like 'Not saved: *unexpected*' -and (Get-VncAllowedSaveError 4) -eq (Get-VncAllowedSaveError 5) -and (Get-VncAllowedSaveError 2) -like 'Not saved (code 2)*')
+# --- v1.4.3: find vncviewer.exe in Program Files (override, known, bounded scan, none, links) ---
+foreach ($n in 'Get-VncProgramRoots', 'Get-VncFileVersion', 'Test-VncViewerFile', 'Find-VncViewerInProgramFiles', 'Get-VncViewerLogText') {
+    $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
+    Check "defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
+function New-FakeFs($files, $dirs, $envv) {   # files: path -> @{ version; link }; dirs: path -> @( @{ name; link } )
+    $calls = New-Object System.Collections.ArrayList
+    $fs = @{ files = $files; dirs = $dirs; calls = $calls }
+    @{ calls = $calls
+       Env = { $envv }.GetNewClosure()
+       Dirs = { param($d) [void]$calls.Add($d); @(@($dirs[$d]) | Where-Object { $_ } | ForEach-Object { @{ name = $_.name; path = "$d\$($_.name)"; link = [bool]$_.link } }) }.GetNewClosure()
+       File = { param($f) $files[$f] }.GetNewClosure()
+       Local = { param($p) $p -match '^[A-Za-z]:\\' }.GetNewClosure() }
+}
+$e64 = @{ ProgramW6432 = 'C:\Program Files'; ProgramFiles = 'C:\Program Files (x86)'; ProgramFilesX86 = 'C:\Program Files (x86)' }   # 32-bit PowerShell view
+$pr = New-FakeFs @{} @{} $e64
+Check 'v1.4.3: roots from ProgramW6432 + ProgramFiles(x86), 64-bit first, deduped (32-bit PowerShell)' ((@(Get-VncProgramRoots $pr) -join '|') -eq 'C:\Program Files|C:\Program Files (x86)')
+$pr = New-FakeFs @{} @{} @{ ProgramW6432 = 'C:\Users\x\AppData\Local\Temp\Program Files'; ProgramFiles = 'C:\Program Files\'; ProgramFilesX86 = '\\srv\Program Files (x86)' }
+Check 'v1.4.3: user-writable / odd / UNC roots refused; trailing slash trimmed' ((@(Get-VncProgramRoots $pr) -join '|') -eq 'C:\Program Files')
+$pr = New-FakeFs @{} @{} @{ ProgramW6432 = ''; ProgramFiles = 'D:\Program Files'; ProgramFilesX86 = $null }
+Check 'v1.4.3: other system drive ok; empty roots skipped' ((@(Get-VncProgramRoots $pr) -join '|') -eq 'D:\Program Files')
+Check 'v1.4.3: file versions' ((Get-VncFileVersion '1.5.0.0') -eq [version]'1.5.0.0' -and (Get-VncFileVersion '1, 2, 4, 0') -eq [version]'1.2.4.0' -and (Get-VncFileVersion '') -eq [version]'0.0' -and (Get-VncFileVersion '1.10') -gt (Get-VncFileVersion '1.9.9'))
+# known path found: no scan of folders at all
+$pr = New-FakeFs @{ 'C:\Program Files (x86)\uvnc bvba\UltraVNC\vncviewer.exe' = @{ version = '1.2.4.0' } } @{ 'C:\Program Files' = @(@{ name = 'UltraVNC2' }) } $e64
+$r = Find-VncViewerInProgramFiles $pr
+Check 'v1.4.3: known path (x86, uvnc bvba\UltraVNC) found, how=known, no folder listing' ($r.path -eq 'C:\Program Files (x86)\uvnc bvba\UltraVNC\vncviewer.exe' -and $r.how -eq 'known' -and $pr.calls.Count -eq 0 -and @($r.others).Count -eq 0)
+$pr = New-FakeFs @{ 'C:\Program Files (x86)\uvnc bvba\UltraVNC\vncviewer.exe' = @{ version = '1.2.4.0' }; 'C:\Program Files\UltraVNC\vncviewer.exe' = @{ version = '1.5.0.0' } } @{} $e64
+$r = Find-VncViewerInProgramFiles $pr
+Check 'v1.4.3: two known -> newest version wins, the other is listed' ($r.path -eq 'C:\Program Files\UltraVNC\vncviewer.exe' -and (@($r.others) -join '|') -eq 'C:\Program Files (x86)\uvnc bvba\UltraVNC\vncviewer.exe')
+$pr = New-FakeFs @{ 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe' = @{ version = '1.5.0.0' }; 'C:\Program Files\UltraVNC\vncviewer.exe' = @{ version = '1.5.0.0' } } @{} $e64
+$r = Find-VncViewerInProgramFiles $pr
+Check 'v1.4.3: equal versions -> ordinal path order decides (UltraVNC < uvnc)' ($r.path -eq 'C:\Program Files\UltraVNC\vncviewer.exe' -and @($r.others).Count -eq 1)
+# bounded scan
+$dirs = @{ 'C:\Program Files' = @(@{ name = 'Common Files' }, @{ name = 'uvnc' }, @{ name = 'UltraVNC-old'; link = $true }, @{ name = 'Tools' })
+           'C:\Program Files\uvnc' = @(@{ name = 'UltraVNC 1.6' }, @{ name = 'bin' })
+           'C:\Program Files (x86)' = @(@{ name = 'MyUltraVNC' }) }
+$files = @{ 'C:\Program Files\uvnc\UltraVNC 1.6\vncviewer.exe' = @{ version = '1.6.1.0' }; 'C:\Program Files\uvnc\bin\vncviewer.exe' = @{ version = '9.0' }
+            'C:\Program Files\UltraVNC-old\vncviewer.exe' = @{ version = '9.0' }; 'C:\Program Files\Tools\vncviewer.exe' = @{ version = '9.0' }
+            'C:\Program Files (x86)\MyUltraVNC\vncviewer.exe' = @{ version = '1.6.1.0'; link = $true } }
+$pr = New-FakeFs $files $dirs $e64
+$r = Find-VncViewerInProgramFiles $pr
+Check 'v1.4.3: scan picks depth-2 *UltraVNC* folder under *uvnc*, how=scan' ($r.path -eq 'C:\Program Files\uvnc\UltraVNC 1.6\vncviewer.exe' -and $r.how -eq 'scan' -and @($r.others).Count -eq 0)
+Check 'v1.4.3: scan skips non-matching folders (Tools, bin), a linked folder and a linked file' (-not ((@($r.others) + $r.path) -match 'Tools|\\bin\\|old|MyUltraVNC'))
+Check 'v1.4.3: scan is bounded (lists only the roots and matching depth-1 folders, never Common Files / Tools / links)' ((@($pr.calls) -join '|') -eq 'C:\Program Files|C:\Program Files\uvnc|C:\Program Files (x86)|C:\Program Files (x86)\MyUltraVNC')
+$pr = New-FakeFs @{ 'C:\Program Files\UltraVNC\VNCViewer.exe.lnk' = @{ version = '1.0' }; 'C:\Program Files\UltraVNC\vncviewer.exe' = $null } @{ 'C:\Program Files' = @(@{ name = 'UltraVNC' }) } $e64
+$r = Find-VncViewerInProgramFiles $pr
+Check 'v1.4.3: none found -> empty path, no crash' ($r.path -eq '' -and $r.how -eq '' -and @($r.others).Count -eq 0)
+$pr = New-FakeFs @{ 'C:\Program Files\UltraVNC\vncviewer.exe' = @{ version = '1.5'; link = $true } } @{} $e64
+Check 'v1.4.3: a known-path vncviewer.exe that is a link is refused' ((Find-VncViewerInProgramFiles $pr).path -eq '')
+Check 'v1.4.3: only a file named vncviewer.exe counts' ($null -eq (Test-VncViewerFile 'C:\Program Files\UltraVNC\winvnc.exe' (New-FakeFs @{ 'C:\Program Files\UltraVNC\winvnc.exe' = @{ version = '1' } } @{} $e64)))
+# log lines
+$vi = @{ product = 'UltraVNC'; version = '1.5.0.0' }
+Check 'v1.4.3: log line (found)' ((Get-VncViewerLogText 'C:\Program Files\UltraVNC\vncviewer.exe' 'scan' @('C:\x\vncviewer.exe') $vi) -ceq 'VNC viewer: "C:\Program Files\UltraVNC\vncviewer.exe" found by scan (viewer "UltraVNC" 1.5.0.0); also found: "C:\x\vncviewer.exe"')
+Check 'v1.4.3: log line (none)' ((Get-VncViewerLogText '' '' @() $null) -ceq 'VNC viewer: not found in Program Files')
+Check 'v1.4.3: log line strips control characters' ((Get-VncViewerLogText ("C:\a`r`nb\vncviewer.exe") 'override' @() $vi) -notmatch "[`r`n]")
+$fv = (& $fn 'Find-VncViewer')
+Check 'v1.4.3: Find-VncViewer order: valid saved path (override) > Program Files scan > HKLM App Paths > plain message + optional pick' ($fv.IndexOf("`$how = 'override'") -lt $fv.IndexOf('Initialize-VncViewerScan') -and $fv.IndexOf('Initialize-VncViewerScan') -lt $fv.IndexOf('HKLM:\Software') -and $fv.IndexOf('HKLM:\Software') -lt $fv.IndexOf("wasn't found in Program Files") -and $fv -notmatch 'HKCU:' -and $fv -notmatch 'Find-Detected')
+Check 'v1.4.3: start-up logs the version and runs the scan once (cached)' ($src.Contains("Write-LauncherLog ('Launcher {0} started' -f `$global:AppVersion)") -and $src.Contains('try { [void](Initialize-VncViewerScan) } catch {}') -and (& $fn 'Initialize-VncViewerScan').Contains('if ($global:VncViewerScan) { return $global:VncViewerScan }'))
+Check 'v1.4.3: each launch still logs the exact argv (no password switch exists)' ((& $fn 'Start-VncViewer').Contains("(`$vargs -join ' ')") -and $src -notmatch "'-password'")
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

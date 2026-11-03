@@ -1,5 +1,14 @@
 # Button Launcher release notes
 
+## v1.4.3: finds UltraVNC Viewer in Program Files
+
+Pending review (build of 2026-11-03). Includes everything in v1.4.2.
+
+- **Finds the viewer by itself.** At start-up Launcher looks for `vncviewer.exe` once in Program Files and Program Files (x86): first `uvnc bvba\UltraVNC` and `UltraVNC`, then only folders named like `uvnc` / `UltraVNC` (one or two levels down, never a full search). A viewer path you picked yourself still wins when it is valid. If several are found, the newest version is used.
+- **Clear message when it's missing.** If no viewer is found, View only and Interact say "UltraVNC Viewer wasn't found in Program Files" and offer to pick `vncviewer.exe`.
+- **Better log.** launcher-error.log now notes the launcher version at start-up, which viewer was used and how it was found (your pick, a known folder, the search, or the Windows App Paths entry), its version, and the exact viewer arguments for every View only / Interact (never a password; none is sent).
+- The computer is still passed as `address::port`, as in v1.4.2.
+
 ## v1.4.2: email address placeholder fix
 
 Pending review (build of 2026-11-03). Includes everything in v1.4.1.

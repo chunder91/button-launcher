@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.2'
+$global:AppVersion   = '1.4.3'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -2304,21 +2304,93 @@ function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, A
     return $res.out
 }
 
-function global:Find-VncViewer($btn) {   # local fixed path to vncviewer.exe, or $null; asks once and saves it on the button
-    $t = Expand $btn.target
-    if (-not (Is-Todo $t) -and (Test-LocalFixedPath $t) -and (Test-Path -LiteralPath $t -PathType Leaf)) { return $t }
-    $f = Find-Detected $btn   # local detect paths only
-    if (-not $f) { foreach ($k in 'HKCU:', 'HKLM:') { try {
-        $v = [string](Get-ItemProperty -LiteralPath "$k\Software\Microsoft\Windows\CurrentVersion\App Paths\vncviewer.exe" -ErrorAction Stop).'(default)'
-        $v = (Expand $v).Trim('"'); if ($v -and (Test-LocalFixedPath $v) -and (Test-Path -LiteralPath $v -PathType Leaf)) { $f = $v; break } } catch {} } }
+# v1.4.3 (Charles 1:14 PM): look for vncviewer.exe in Program Files once per session (start-up), never a full crawl.
+# Roots: ProgramW6432, ProgramFiles, ProgramFiles(x86) (a 32-bit PowerShell sees x86 as ProgramFiles, so ProgramW6432 finds 64-bit).
+# A root counts only if it is X:\Program Files or X:\Program Files (x86) on a local fixed disk with no link in it (env vars are user-settable).
+# Known folders first (uvnc bvba\UltraVNC, UltraVNC); only if none hold the viewer, folders named *uvnc* / *UltraVNC* at depth 1,
+# and their *uvnc* / *UltraVNC* subfolders at depth 2. Links (reparse points) are never entered or accepted. Only a plain file
+# named vncviewer.exe counts. Several: the newest file version wins, ties by path (ordinal); the others are logged.
+$global:VncViewerScan = $null   # @{ path; how = 'known'|'scan'|''; others = @(); ms } after the first look
+$global:VncViewerProbe = @{
+    Env  = { @{ ProgramW6432 = [string]$env:ProgramW6432; ProgramFiles = [Environment]::GetFolderPath('ProgramFiles'); ProgramFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86') } }
+    Dirs = { param($d) @(Get-ChildItem -LiteralPath $d -Force -Directory -ErrorAction SilentlyContinue | ForEach-Object { @{ name = $_.Name; path = $_.FullName; link = [bool]($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } }) }
+    File = { param($f) try { $i = Get-Item -LiteralPath $f -Force -ErrorAction Stop; if ($i.PSIsContainer) { return $null }; @{ link = [bool]($i.Attributes -band [IO.FileAttributes]::ReparsePoint); version = [string]$i.VersionInfo.FileVersion } } catch { $null } }
+    Local = { param($p) Test-LocalFixedPath $p }
+}
+function global:Get-VncProgramRoots($probe) {   # distinct trusted Program Files roots, 64-bit first
+    if (-not $probe) { $probe = $global:VncViewerProbe }
+    $e = & $probe.Env; $out = @()
+    foreach ($r in @($e.ProgramW6432, $e.ProgramFiles, $e.ProgramFilesX86)) {
+        $r = ([string]$r).Trim().TrimEnd('\')
+        if ($r -notmatch '^(?i)[A-Z]:\\Program Files( \(x86\))?$') { continue }
+        if ($out -contains $r) { continue }
+        if (-not (& $probe.Local $r)) { continue }
+        $out += $r }
+    return $out
+}
+function global:Get-VncFileVersion([string]$v) {   # '1.5.0.0' / '1, 2, 4, 0' -> [version]; unknown = 0.0
+    $m = [regex]::Match([string]$v, '^\s*(\d+)[.,]\s*(\d+)(?:[.,]\s*(\d+))?(?:[.,]\s*(\d+))?')
+    if (-not $m.Success) { return [version]'0.0' }
+    $p = @(foreach ($g in 1..4) { if ($m.Groups[$g].Success) { [int]$m.Groups[$g].Value } else { 0 } })
+    try { return New-Object version $p[0], $p[1], $p[2], $p[3] } catch { return [version]'0.0' }
+}
+function global:Test-VncViewerFile([string]$f, $probe) {   # file info when $f is a plain local vncviewer.exe, else $null
+    if ((Split-Path -Leaf $f) -ne 'vncviewer.exe') { return $null }
+    $i = & $probe.File $f; if (-not $i -or $i.link) { return $null }
+    if (-not (& $probe.Local $f)) { return $null }
+    return $i
+}
+function global:Find-VncViewerInProgramFiles($probe) {   # @{ path; how; others } ; path '' when none
+    if (-not $probe) { $probe = $global:VncViewerProbe }
+    $roots = @(Get-VncProgramRoots $probe); $hits = @(); $how = 'known'
+    foreach ($r in $roots) { foreach ($k in 'uvnc bvba\UltraVNC', 'UltraVNC') {
+        $f = "$r\$k\vncviewer.exe"; $i = Test-VncViewerFile $f $probe; if ($i) { $hits += @{ path = $f; ver = (Get-VncFileVersion $i.version) } } } }
+    if (-not $hits) {
+        $how = 'scan'; $pat = '(?i)uvnc|ultravnc'
+        foreach ($r in $roots) {
+            foreach ($d1 in @(& $probe.Dirs $r)) {
+                if ($d1.link -or $d1.name -notmatch $pat) { continue }
+                $dirs = @($d1.path) + @(foreach ($d2 in @(& $probe.Dirs $d1.path)) { if (-not $d2.link -and $d2.name -match $pat) { $d2.path } })
+                foreach ($d in $dirs) { $f = "$d\vncviewer.exe"; $i = Test-VncViewerFile $f $probe
+                    if ($i -and -not (@(foreach ($h in $hits) { $h.path }) -contains $f)) { $hits += @{ path = $f; ver = (Get-VncFileVersion $i.version) } } } } } }
+    if (-not $hits) { return @{ path = ''; how = ''; others = @() } }
+    $sorted = @($hits | Sort-Object @{ Expression = { $_.ver }; Descending = $true }, @{ Expression = { $_.path }; Descending = $false })
+    # Sort-Object is culture-aware for strings; settle exact version ties by ordinal path
+    $tie = New-Object System.Collections.Generic.List[string]; foreach ($h in $sorted) { if ($h.ver -eq $sorted[0].ver) { $tie.Add($h.path) } }; $tie.Sort([StringComparer]::Ordinal)
+    return @{ path = $tie[0]; how = $how; others = @(foreach ($h in $sorted) { if ($h.path -ne $tie[0]) { $h.path } }) }
+}
+function global:Get-VncViewerLogText([string]$path, [string]$how, $others, $vi) {   # one log line; never a password (there is none)
+    if (-not $path) { return 'VNC viewer: not found in Program Files' }
+    $t = 'VNC viewer: "{0}" found by {1} (viewer "{2}" {3})' -f (Get-SafeText $path 260), $how, $vi.product, $vi.version
+    $o = @(foreach ($x in @($others)) { if ($x) { '"' + (Get-SafeText $x 260) + '"' } }); if ($o) { $t += '; also found: ' + ($o -join ', ') }
+    return $t
+}
+function global:Initialize-VncViewerScan {   # once per session; logs what it found
+    if ($global:VncViewerScan) { return $global:VncViewerScan }
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    try { $r = Find-VncViewerInProgramFiles } catch { $r = @{ path = ''; how = ''; others = @() } }
+    $r.ms = $sw.ElapsedMilliseconds; $global:VncViewerScan = $r
+    $vi = if ($r.path) { Get-VncViewerInfo $r.path } else { $null }
+    Write-LauncherLog ((Get-VncViewerLogText $r.path $r.how $r.others $vi) + (' [{0} ms]' -f $r.ms))
+    return $r
+}
+function global:Find-VncViewer($btn) {   # local fixed path to vncviewer.exe, or $null. Order: valid saved path (override), Program Files, HKLM App Paths, ask.
+    $t = Expand $btn.target; $how = $null; $f = $null; $others = @()
+    if (-not (Is-Todo $t) -and (Test-LocalFixedPath $t) -and (Test-Path -LiteralPath $t -PathType Leaf)) { $f = $t; $how = 'override' }
+    if (-not $f) { $s = Initialize-VncViewerScan; if ($s.path -and (Test-Path -LiteralPath $s.path -PathType Leaf)) { $f = $s.path; $how = $s.how; $others = $s.others } }
+    if (-not $f) { try {   # HKLM only: HKCU is user-writable
+        $v = [string](Get-ItemProperty -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\vncviewer.exe' -ErrorAction Stop).'(default)'
+        $v = (Expand $v).Trim('"'); if ($v -and (Split-Path -Leaf $v) -eq 'vncviewer.exe' -and (Test-LocalFixedPath $v) -and (Test-Path -LiteralPath $v -PathType Leaf)) { $f = $v; $how = 'registry' } } catch {} }
     if (-not $f) {
-        [System.Windows.MessageBox]::Show("Please pick the UltraVNC Viewer (vncviewer.exe) on this PC.", 'View Register') | Out-Null
-        $f = Ask-ForPath $btn 'program' }
-    if (-not $f) { return $null }
-    if ($f -like '*.lnk') { try { $f = (New-Object -ComObject WScript.Shell).CreateShortcut($f).TargetPath } catch { $f = $null } }
-    if (-not $f -or -not (Test-LocalFixedPath $f) -or -not (Test-Path -LiteralPath $f -PathType Leaf)) {
-        [System.Windows.MessageBox]::Show("The viewer has to be on this PC's own drive (not a network share).", 'View Register') | Out-Null; return $null }
-    if ($f -ne $t) { Set-Prop $btn 'target' $f; Save-Config }
+        $ans = [System.Windows.MessageBox]::Show("UltraVNC Viewer wasn't found in Program Files.`n`nInstall it, or choose Yes to pick vncviewer.exe on this PC now.", 'View Register', 'YesNo', 'Information', 'No')
+        if ($ans -ne 'Yes') { return $null }
+        $f = Ask-ForPath $btn 'program'; $how = 'picked'
+        if (-not $f) { return $null }
+        if ($f -like '*.lnk') { try { $f = (New-Object -ComObject WScript.Shell).CreateShortcut($f).TargetPath } catch { $f = $null } }
+        if (-not $f -or -not (Test-LocalFixedPath $f) -or -not (Test-Path -LiteralPath $f -PathType Leaf)) {
+            [System.Windows.MessageBox]::Show("The viewer has to be on this PC's own drive (not a network share).", 'View Register') | Out-Null; return $null }
+        Set-Prop $btn 'target' $f; Save-Config }   # only a user pick is saved; it is the override next time
+    if ($global:VncViewerUsed -ne "$how|$f") { $global:VncViewerUsed = "$how|$f"; Write-LauncherLog (Get-VncViewerLogText $f $how $others (Get-VncViewerInfo $f)) }
     return $f
 }
 # ---------- v1.4.1 allowed computers (Charles 4:09 PM, option A) ----------
@@ -3791,6 +3863,8 @@ try {
         }
         if (-not $got) { [void]$global:showEvent.Set(); exit 0 }   # already running: ask it to show its panels, then quit quietly
     }
+    Write-LauncherLog ('Launcher {0} started' -f $global:AppVersion)   # v1.4.3: which copy ran
+    try { [void](Initialize-VncViewerScan) } catch {}   # v1.4.3: find vncviewer.exe once (bounded, a few folder reads)
     if (-not (Test-Path -LiteralPath $global:cfgPath) -and (Test-Path -LiteralPath $global:cfgDefault)) { Copy-Item -LiteralPath $global:cfgDefault -Destination $global:cfgPath }
     try { $global:cfg = Get-Content -LiteralPath $global:cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if (-not $global:cfg) { throw 'buttons.json is empty.' } }
     catch {
