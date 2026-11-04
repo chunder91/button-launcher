@@ -236,7 +236,7 @@ $pk = & $fn 'Show-VncPicker'
 $xaml = [regex]::Match($src, "(?s)\`$global:VncPickerXaml = @'.*?'@").Value
 Check 'XAML parses as XML' ($(try { [void]([xml]($xaml -replace "^\`$global:VncPickerXaml = @'\r?\n", '' -replace "\r?\n'@$", '')); $true } catch { $false }))
 Check 'Kern 1: one button row: View only, Interact | Rescan, Add..., More; 32 px; no WrapPanel; window still 620' ($xaml -notmatch 'WrapPanel' -and $xaml -match '(?s)x:Name="View".*x:Name="Interact".*x:Name="Rescan".*x:Name="Add".*x:Name="More"' -and $xaml -match 'Property="Height" Value="32"' -and $xaml -match 'Width="620"' -and $xaml -match 'Margin="8,0,0,0"' -and $xaml -match '&#xE712;' -and $xaml -match 'AutomationProperties.Name="More actions"')
-Check 'Kern 2: Win11 selection: white 9%, 3x16 #22C55E pill, radius 6, hover 5%' ($xaml -match 'Value="#17FFFFFF"' -and $xaml -match 'Width="3" Height="16"[^>]*Fill="#22C55E"' -and $xaml -match 'x:Name="bg" CornerRadius="6"' -and $xaml -match 'Value="#0DFFFFFF"' -and $xaml -notmatch '#0B6E99"/>\s*</Trigger>')
+Check 'Kern 2: Win11 selection: white 9%, 3x18 (v1.4.10) #22C55E pill, radius 6, hover 5%' ($xaml -match 'Value="#17FFFFFF"' -and $xaml -match 'Width="3" Height="18"[^>]*Fill="#22C55E"' -and $xaml -match 'x:Name="bg" CornerRadius="6"' -and $xaml -match 'Value="#0DFFFFFF"' -and $xaml -notmatch '#0B6E99"/>\s*</Trigger>')
 Check 'Squint 7: title once (chrome), hint line, no H1' ($xaml -match 'Title="View Register"' -and $xaml -match 'Pick a computer\. View only to watch, Interact to take control\.' -and $xaml -notmatch 'FontSize="20"')
 Check 'Squint 5: Interact tooltip' ($xaml -match [regex]::Escape("Take control of this computer's mouse and keyboard. Asks for the full password."))
 $menu = & $fn 'New-VncRowMenu'

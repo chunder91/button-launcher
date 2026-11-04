@@ -3138,9 +3138,9 @@ $global:VncPickerXaml = @'
     </Style>
     <Style TargetType="ListBoxItem">
       <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
-        <Grid Margin="4,0" Height="32">
+        <Grid Margin="4,0" Height="38">
           <Border x:Name="bg" CornerRadius="6" Background="Transparent"/>
-          <Rectangle x:Name="pill" Width="3" Height="16" RadiusX="1.5" RadiusY="1.5" Fill="#22C55E" HorizontalAlignment="Left" Visibility="Collapsed"/>
+          <Rectangle x:Name="pill" Width="3" Height="18" RadiusX="1.5" RadiusY="1.5" Fill="#22C55E" HorizontalAlignment="Left" Visibility="Collapsed"/>
           <ContentPresenter VerticalAlignment="Center"/>
           <Border x:Name="ring" CornerRadius="8" BorderBrush="#FFFFFF" BorderThickness="2" Visibility="Collapsed"/>
         </Grid>
@@ -3158,23 +3158,23 @@ $global:VncPickerXaml = @'
     <TextBlock Grid.Row="0" Text="Pick a computer. View only to watch, Interact to take control." FontSize="13" Foreground="#A0A0A0" Margin="0,0,0,12"/>
     <Border Grid.Row="1" CornerRadius="10" Background="#2E000000" BorderBrush="#1FFFFFFF" BorderThickness="1">
       <Grid>
-        <Grid.RowDefinitions><RowDefinition Height="28"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <Grid Margin="4,0" TextElement.FontSize="12" TextElement.FontWeight="SemiBold" TextElement.Foreground="#A0A0A0">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="130"/></Grid.ColumnDefinitions>
+        <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Grid Margin="4,0" TextElement.FontSize="14" TextElement.FontWeight="SemiBold" TextElement.Foreground="#A0A0A0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
           <TextBlock Grid.Column="1" Text="Name" VerticalAlignment="Center" Margin="4,0"/><TextBlock Grid.Column="2" Text="Address" VerticalAlignment="Center"/><TextBlock Grid.Column="3" Text="Seen" VerticalAlignment="Center"/>
         </Grid>
         <Rectangle Grid.Row="0" Height="1" VerticalAlignment="Bottom" Fill="#14FFFFFF"/>
-        <ListBox x:Name="List" Grid.Row="1" TabIndex="0" Background="Transparent" BorderThickness="0" Foreground="#FFFFFF" FontSize="14" Padding="0,4"
+        <ListBox x:Name="List" Grid.Row="1" TabIndex="0" Background="Transparent" BorderThickness="0" Foreground="#FFFFFF" FontSize="16" Padding="0,4"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Computers">
           <ListBox.ItemTemplate><DataTemplate>
             <Grid ToolTip="{Binding tip}">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="150"/><ColumnDefinition Width="130"/></Grid.ColumnDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
               <Border Tag="star" Background="Transparent" Cursor="Hand" ToolTip="{Binding starTip}" AutomationProperties.Name="{Binding starName}">
-                <TextBlock x:Name="star" Text="{Binding star}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="14" Foreground="#F59E0B" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                <TextBlock x:Name="star" Text="{Binding star}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="16" Foreground="#F59E0B" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
               </Border>
               <TextBlock Grid.Column="1" Text="{Binding nameText}" ToolTip="{Binding nameFull}" Foreground="{Binding nameFg}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0,12,0"/>
               <TextBlock Grid.Column="2" Text="{Binding addr}" Foreground="{Binding addrFg}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-              <TextBlock Grid.Column="3" Text="{Binding seen}" Foreground="#A0A0A0" FontSize="13" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="3" Text="{Binding seen}" Foreground="#A0A0A0" FontSize="15" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
             </Grid>
             <DataTemplate.Triggers>
               <MultiDataTrigger>
@@ -3233,6 +3233,7 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
     $m.Foreground = Brush '#FFFFFF'; $m.FontFamily = $global:UiFont; $m.FontSize = 14   # Kern Blocker: a popup doesn't inherit the window's text colour or font
     return $m
 }
+# v1.4.10 (Charles 11:07 AM): list text +2 px (headers 12->14, rows 14->16, Seen 13->15), rows 32->38, header 28->32, Address 150->180, Seen 130->150
 # ---------- v1.4.9 View Register tiles, option B "with icons" (Charles 10:34 AM; Smudge v2 + Kern review). Look only.
 # Two glossy style C tiles 271x72, 16 px apart; Lucide eye / hand (ISC) drawn as constant path geometry, visibly 8 px from a 24 px label with a 3.2 px outline.
 $global:VncTiles = @{
@@ -3245,11 +3246,11 @@ function global:Get-VncTileBandHeight {   # Kern Minor 2: band ends 4.5 px above
     return [Math]::Min($capTop, $inkTop) - 4.5
 }
 function global:Get-VncPickerReason([bool]$hasSelection) { if ($hasSelection) { '' } else { $global:VncTileSize.reason } }
-function global:Get-VncPickerHeight([double]$want, [double]$workH, [double]$chrome = 236, [double]$rowH = 32, [int]$minRows = 4) {   # the window grows; only past the work area do list rows go, never below $minRows
+function global:Get-VncPickerHeight([double]$want, [double]$workH, [double]$chrome = 240, [double]$rowH = 38, [int]$minRows = 4) {   # the window grows; only past the work area do list rows go, never below $minRows
     if (-not ($workH -gt 0) -or $want -le $workH) { return $want }
     return [Math]::Max([Math]::Floor($workH), [Math]::Max(402, $chrome + $minRows * $rowH + 8))   # CC Low: never under the XAML MinHeight (402)
 }
-function global:Get-VncPickerRows([double]$winH, [double]$chrome = 236, [double]$rowH = 32) { [Math]::Floor(($winH - $chrome - 8) / $rowH) }   # visible list rows at a window height
+function global:Get-VncPickerRows([double]$winH, [double]$chrome = 240, [double]$rowH = 38) { [Math]::Floor(($winH - $chrome - 8) / $rowH) }   # visible list rows at a window height
 function global:Get-VncTileLook([string]$kind, [string]$state) {   # rest | hover | pressed | disabled -> fill stops, gloss, sparkle, label colour (pure; tested)
     $t = $global:VncTiles[$kind]
     if ($state -eq 'disabled') { return @{ stops = @($t.disabled, $t.disabled, $t.disabled); band = $false; sparkle = $false; label = $global:VncTileSize.disabledLabel; outline = (Get-GlossOutlineHex $t.disabled) } }

@@ -2,6 +2,7 @@
 
 ## v1.4.10: View Register fits the remote screen again
 - The viewer gets -autoscaling again, last on the line: Interact `host:port -autoscaling`, View only `host:port -viewonly -autoscaling`, saved password `host:port -config "<temp .vnc>" -viewonly -autoscaling`. The address is still always first, and the 1.4.9 Windows shell start (which fixed Interact) is unchanged.
+- View Register's computer list is easier to read: names and addresses 14 -> 16 px, Seen 13 -> 15 px, column headers 12 -> 14 px; rows 32 -> 38 px tall; the Address and Seen columns are wider (180 and 150 px) so 192.168.20.51:5900 and "Not found last scan" fit. Colours are unchanged, and at least 4 rows still show at the smallest window size.
 - Start-up diagnostics: the parent-chain lookup is now one process query (1 s timeout) instead of one per parent.
 
 ## v1.4.9: View Register always hands the viewer its address; launch log shows the exact arguments
