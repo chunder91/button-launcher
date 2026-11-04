@@ -1,5 +1,18 @@
 # Button Launcher release notes
 
+## v1.4.8: glossy buttons (style C, "rounder candy gloss")
+
+Pending review (build of 2026-11-04). Includes everything in v1.4.7.
+
+- Charles picked style C (8:44 AM Nov 4). Every button keeps its own colours, size, gaps, fonts, auto-fit and layout. Only the finish changes:
+  - 18 px corners (never more than half the button's height)
+  - a soft white gloss band at the top that stops at least 2 px above the text
+  - a soft inner glow
+  - light labels get a dark outline (2.4 px under 16 px, 3.2 px at 16 px and up); dark labels such as Department of Revenue stay as they are
+  - one small static sparkle near the top-right corner
+- Hover is 10% lighter. Pressed is 12% darker with no gloss. Keyboard focus shows a 2 px white and 2 px dark ring inside the button.
+- Pictures, edit mode, the email count and the restart buttons work as before. No new files, no effects and no animation on the gloss.
+
 ## v1.4.7: viewer started with a bare host:port (no -connect)
 
 Pending review (build of 2026-11-04). Includes everything in v1.4.6.

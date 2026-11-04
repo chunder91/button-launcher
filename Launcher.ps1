@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.7'
+$global:AppVersion   = '1.4.8'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -711,6 +711,87 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
     return @{ el = $sp; missingPic = $missingPic; icon = $icon }
 }
 
+# ---------- v1.4.8 glossy style C "rounder candy gloss" (Charles 8:44 AM Nov 4). Same colours, sizes, fonts and layout as D2; only the finish changes.
+# Smudge v2 C + Kern fixes: 18 px corners (clamped), white gloss band <= 0.30 alpha ending >= 2 px above the caps, fill shift top +4% / bottom -6%,
+# inner glow 0.22, outlined light labels (2.4 px under 16 px, 3.2 px at 16+), dark labels unchanged, one static sparkle. Frozen brushes, cached and shared.
+$global:Gloss = @{ radius = 18; glossTop = 0.30; glossBottom = 0.045; glow = 0.22; fillTop = 0.04; fillBottom = 0.06; hover = 0.10; pressed = 0.12; capGap = 2; sparkleIn = 12; sparkleR = 2.6; labelGap = 8 }
+$global:GlossCache = @{}
+function global:Get-GlossRadius([double]$h, [double]$w = 0) {   # 18 px, never more than half the tile's height (or width), so small/half tiles keep a clean shape
+    $r = [double]$global:Gloss.radius; $r = [Math]::Min($r, [Math]::Floor($h / 2)); if ($w -gt 0) { $r = [Math]::Min($r, [Math]::Floor($w / 2)) }; return [Math]::Max(0, $r)
+}
+function global:Test-GlossDarkLabel([string]$fg) {   # dark label (e.g. #111111 on #F0E68C): drawn as configured, no outline (Kern fix 1)
+    $c = Get-Color $fg; return ((0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B) -le 150)
+}
+function global:Get-GlossOutlineWidth([double]$fontSize) { if ($fontSize -ge 16) { 3.2 } else { 2.4 } }   # Kern fix 2/5
+function global:Get-GlossOutlineHex([string]$fill) { ConvertTo-Hex (Mix-Color (Get-Color $fill) (Get-Color '#000000') 0.72) }   # dark tone of the button's own fill
+function global:Get-GlossFillStops([string]$fill, [string]$state = 'rest') {   # 3 stops (top, 0.55 = the configured colour, bottom); hover +10% toward white, pressed 12% darker
+    $c = Get-Color $fill; $w = Get-Color '#FFFFFF'; $b = Get-Color '#000000'; $G = $global:Gloss
+    if ($state -eq 'hover') { $c = Mix-Color $c $w $G.hover } elseif ($state -eq 'pressed') { $c = Mix-Color $c $b $G.pressed }
+    return @((ConvertTo-Hex (Mix-Color $c $w $G.fillTop)), (ConvertTo-Hex $c), (ConvertTo-Hex (Mix-Color $c $b $G.fillBottom)))
+}
+function global:Get-GlossBrush([string]$key, [scriptblock]$make) {   # one frozen brush per key, shared by every tile
+    if (-not $global:GlossCache.ContainsKey($key)) { $br = & $make; if ($br.CanFreeze) { $br.Freeze() }; $global:GlossCache[$key] = $br }
+    return $global:GlossCache[$key]
+}
+function global:New-GlossFill([string]$fill, [string]$state) {
+    Get-GlossBrush ('fill|' + $fill + '|' + $state) { $st = Get-GlossFillStops $fill $state
+        $g = New-Object System.Windows.Media.LinearGradientBrush; $g.StartPoint = '0,0'; $g.EndPoint = '0,1'
+        foreach ($i in 0..2) { [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop (Get-Color $st[$i]), (@(0.0, 0.55, 1.0)[$i]))) }; $g }.GetNewClosure()
+}
+function global:New-GlossBand {   # white top band: alpha 0.30 -> 0.045
+    Get-GlossBrush 'band' { $G = $global:Gloss
+        $g = New-Object System.Windows.Media.LinearGradientBrush; $g.StartPoint = '0,0'; $g.EndPoint = '0,1'
+        [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb([byte][Math]::Round(255 * $G.glossTop), 255, 255, 255)), 0.0))
+        [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb([byte][Math]::Round(255 * $G.glossBottom), 255, 255, 255)), 1.0)); $g }
+}
+function global:New-GlossInnerGlow {   # soft inner glow: clear to 0.55 of the radius, 0.22 white at the rim
+    Get-GlossBrush 'glow' { $g = New-Object System.Windows.Media.RadialGradientBrush; $g.Center = '0.5,0.55'; $g.GradientOrigin = '0.5,0.55'; $g.RadiusX = 0.75; $g.RadiusY = 0.75
+        [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb(0, 255, 255, 255)), 0.55))
+        [void]$g.GradientStops.Add((New-Object System.Windows.Media.GradientStop ([System.Windows.Media.Color]::FromArgb([byte][Math]::Round(255 * $global:Gloss.glow), 255, 255, 255)), 1.0)); $g }
+}
+function global:Get-GlossBandHeight([double]$capTop, [double]$h) {   # ends >= 2 px above the caps; at most 30% of the tile; 0 = no band (too little room)
+    $hb = [Math]::Min([Math]::Floor($capTop - $global:Gloss.capGap - 1.5), [Math]::Round($h * 0.30, 1))
+    if ($hb -lt 4) { return 0 }; return $hb
+}
+function global:Get-GlossFillShift([string]$fill, [double]$yFrac, [double]$rNorm) {   # max channel shift vs the configured fill at a point (yFrac 0..1 down the tile, rNorm = radial distance / radius)
+    $c = Get-Color $fill; $st = Get-GlossFillStops $fill 'rest'
+    $a = Get-Color $(if ($yFrac -le 0.55) { $st[0] } else { $st[2] }); $t = if ($yFrac -le 0.55) { (0.55 - $yFrac) / 0.55 } else { ($yFrac - 0.55) / 0.45 }
+    $m = Mix-Color $c $a $t
+    $ga = if ($rNorm -le 0.55) { 0 } else { [Math]::Min(1, ($rNorm - 0.55) / 0.45) * $global:Gloss.glow }
+    $m = Mix-Color $m (Get-Color '#FFFFFF') $ga
+    return [Math]::Max([Math]::Abs([int]$m.R - $c.R), [Math]::Max([Math]::Abs([int]$m.G - $c.G), [Math]::Abs([int]$m.B - $c.B)))
+}
+function global:Test-GlossSparkle([double]$tileW, [double]$capTop, [double]$labelRight, [double]$radius) {   # >= 8 px from the label ink, >= 4 px inside the corner curve
+    $G = $global:Gloss; $cx = $tileW - $G.sparkleIn; $cy = $G.sparkleIn
+    $clearV = $capTop - ($cy + $G.sparkleR); $clearH = ($cx - $G.sparkleR) - $labelRight
+    $toArc = $radius - [Math]::Sqrt(2 * [Math]::Pow($radius - $G.sparkleIn, 2)) - $G.sparkleR   # sparkle centre is on the corner's diagonal
+    if ($radius -le $G.sparkleIn) { $toArc = $G.sparkleIn - $G.sparkleR }   # small radius: the curve ends before the sparkle
+    return (($clearV -ge $G.labelGap -or $clearH -ge $G.labelGap) -and $toArc -ge 4)
+}
+function global:New-GlossSparkle {   # static 4-point star, 2.6 px radius; never animated
+    $pth = New-Object System.Windows.Shapes.Path; $pth.IsHitTestVisible = $false; $pth.Width = 5.2; $pth.Height = 5.2; $pth.Stretch = 'None'
+    $pth.Data = Get-GlossBrush 'sparkleGeo' { [System.Windows.Media.Geometry]::Parse('M2.6,0 L3.2,2 5.2,2.6 3.2,3.2 2.6,5.2 2,3.2 0,2.6 2,2 Z') }
+    $pth.Fill = Get-GlossBrush 'sparkleFill' { New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromArgb(230, 255, 255, 255)) }
+    $pth.HorizontalAlignment = 'Right'; $pth.VerticalAlignment = 'Top'
+    $o = $global:Gloss.sparkleIn - $global:Gloss.sparkleR; $pth.Margin = ('0,{0},{0},0' -f ($o - 1))   # inside the 1 px rim
+    return $pth
+}
+function global:Add-GlossOutline($main, [string]$hex, [double]$width) {   # no Effect (D2 rule): 8 dark copies offset by width/2 behind the label, bound to it so fit/row sizing follow
+    $par = $main.Parent; if (-not $par) { return }
+    $i = $par.Children.IndexOf($main); $par.Children.RemoveAt($i)
+    $gr = New-Object System.Windows.Controls.Grid; $gr.HorizontalAlignment = $main.HorizontalAlignment; $gr.VerticalAlignment = $main.VerticalAlignment
+    $br = Get-GlossBrush ('ol|' + $hex) { New-Object System.Windows.Media.SolidColorBrush (Get-Color $hex) }.GetNewClosure()
+    $d = $width / 2; $dd = [Math]::Round($d * 0.7071, 2)
+    foreach ($o in @(@($d, 0), @(-$d, 0), @(0, $d), @(0, -$d), @($dd, $dd), @(-$dd, $dd), @($dd, -$dd), @(-$dd, -$dd), @(0, 0.96))) {
+        $t = New-Object System.Windows.Controls.TextBlock; $t.IsHitTestVisible = $false; $t.Foreground = $br
+        foreach ($pr in 'Text', 'FontSize', 'LineHeight', 'FontFamily', 'FontWeight', 'TextAlignment', 'TextTrimming', 'MaxHeight', 'TextWrapping', 'LineStackingStrategy', 'HorizontalAlignment') {
+            $bd = New-Object System.Windows.Data.Binding $pr; $bd.Source = $main; $bd.Mode = 'OneWay'
+            $dp = if ($pr -in 'MaxHeight', 'HorizontalAlignment') { [System.Windows.FrameworkElement]::($pr + 'Property') } else { [System.Windows.Controls.TextBlock]::($pr + 'Property') }
+            [void]$t.SetBinding($dp, $bd) }
+        $t.RenderTransform = New-Object System.Windows.Media.TranslateTransform $o[0], $o[1]
+        [void]$gr.Children.Add($t) }
+    [void]$gr.Children.Add($main); $par.Children.Insert($i, $gr)
+}
 # One tile (D2 Fluent 3D): 12 px gradient fill, gradient rim, top sheen, pre-built glow, hover lift + glow, press 0.97, launch flash, 2 px focus ring,
 # dashed outline while editing, amber dot when not set up.
 function global:New-Tile($p, $btn) {
@@ -723,7 +804,7 @@ function global:New-Tile($p, $btn) {
     $fgHex = if ($danger) { '#FFFFFF' } else { $col.fg }
     # D2: three frozen gradient layers (rest, hover, pressed) stacked; only their Opacity animates, never a brush or an effect
     $f = Get-D2Fill $fillHex $danger
-    $rad = if ($cls -eq 'hero') { 14 } else { 12 }
+    $rad = Get-GlossRadius $h   # v1.4.8 style C: 18 px for every size (was 12, hero 14), clamped to half the height
     $oProp = [System.Windows.UIElement]::OpacityProperty
 
     $wrap = New-Object System.Windows.Controls.Grid; $wrap.Margin = '3'                  # 3 + 3 = Kern's 6 px gap
@@ -732,8 +813,8 @@ function global:New-Tile($p, $btn) {
     $glow = New-Object System.Windows.Controls.Border; $glow.IsHitTestVisible = $false; $glow.Margin = '-6'; $glow.Opacity = 0
     $glow.CornerRadius = [string]($rad + 6); $glow.Background = New-GlowBrush $f[6] 1.0 0.45 0.62 0.75; $glow.Height = $h + 12
     $wrap.ClipToBounds = $false
-    $tile = New-Object System.Windows.Controls.Border; $tile.Background = New-VGrad $f[0] $f[1]; $tile.Height = $h
-    $sheen = Set-D2Surface $tile $rad 10 '#4DFFFFFF'; $sheen.Opacity = 0.73   # 30% brush: 22% at rest, 30% hover, 12% pressed
+    $tile = New-Object System.Windows.Controls.Border; $tile.Background = New-GlossFill $fillHex 'rest'; $tile.Height = $h
+    $sheen = Set-D2Surface $tile $rad 10 '#4DFFFFFF'; $sheen.Background = New-GlossBand; $sheen.Opacity = 1   # v1.4.8: gloss band 0.30 -> 0.045 at rest and hover, 0 pressed; height set from the label below
     if ($danger) { $tile.BorderBrush = Brush $global:Theme.restartRed; $tile.BorderThickness = '2' }
     $lift = New-Object System.Windows.Media.TranslateTransform 0, 0
     $press = New-Object System.Windows.Media.ScaleTransform 1, 1
@@ -744,13 +825,23 @@ function global:New-Tile($p, $btn) {
     $tile.ToolTip = $btn.target
     $g = New-Object System.Windows.Controls.Grid
     $ir = [string]([Math]::Max(0, $rad - 1))
-    $hov = New-Object System.Windows.Controls.Border; $hov.IsHitTestVisible = $false; $hov.Opacity = 0; $hov.CornerRadius = $ir; $hov.Background = New-VGrad $f[2] $f[3]
-    $prs = New-Object System.Windows.Controls.Border; $prs.IsHitTestVisible = $false; $prs.Opacity = 0; $prs.CornerRadius = $ir; $prs.Background = New-VGrad $f[4] $f[5]
+    $hov = New-Object System.Windows.Controls.Border; $hov.IsHitTestVisible = $false; $hov.Opacity = 0; $hov.CornerRadius = $ir; $hov.Background = New-GlossFill $fillHex 'hover'
+    $prs = New-Object System.Windows.Controls.Border; $prs.IsHitTestVisible = $false; $prs.Opacity = 0; $prs.CornerRadius = $ir; $prs.Background = New-GlossFill $fillHex 'pressed'
     $shade = New-Object System.Windows.Controls.Border; $shade.IsHitTestVisible = $false; $shade.BorderThickness = '0,0,0,1'
     $shade.BorderBrush = Brush '#40000000'; $shade.CornerRadius = ('0,0,{0},{0}' -f $ir)
-    [void]$g.Children.Add($hov); [void]$g.Children.Add($prs); [void]$g.Children.Add($sheen); [void]$g.Children.Add($shade)
+    $iglow = New-Object System.Windows.Controls.Border; $iglow.IsHitTestVisible = $false; $iglow.CornerRadius = $ir; $iglow.Background = New-GlossInnerGlow
+    [void]$g.Children.Add($hov); [void]$g.Children.Add($prs); [void]$g.Children.Add($iglow); [void]$g.Children.Add($sheen); [void]$g.Children.Add($shade)
     $c = New-Content $btn $h $cls $danger $fgHex
     $c.el.Margin = '12,8'; [void]$g.Children.Add($c.el)
+    # v1.4.8: gloss band height from where the caps start (label centred in the 8 px content margin), sparkle only where it clears the label
+    $mainLab = $null; try { $mainLab = [System.Windows.LogicalTreeHelper]::FindLogicalNode($c.el, 'fitLabel') } catch {}
+    $c.el.Measure((New-Object System.Windows.Size([double]::PositiveInfinity, [double]::PositiveInfinity))); $ds = $c.el.DesiredSize
+    $capTop = 8 + [Math]::Max(0, ($h - 16 - $ds.Height) / 2) + $(if ($mainLab) { [double]$mainLab.FontSize * 0.2 } else { 0 })
+    $bandH = Get-GlossBandHeight $capTop $h
+    if ($bandH -gt 0) { $sheen.Height = $bandH; $sheen.Margin = '3.7,0.5,3.7,0'; $sheen.CornerRadius = ('{0},{0},4,4' -f [Math]::Max(0, $rad - 2)) } else { $sheen.Visibility = 'Collapsed' }
+    $tileW = if ($cls -eq 'half') { 133 } else { 272 }   # 290 panel - 12 padding - 6 gap; halves split it
+    if ($mainLab -and -not (Test-GlossDarkLabel $fgHex)) { Add-GlossOutline $mainLab (Get-GlossOutlineHex $fillHex) (Get-GlossOutlineWidth ([double]$mainLab.FontSize)) }   # Kern fix 1: dark labels unchanged
+    if (Test-GlossSparkle $tileW $capTop (12 + $ds.Width) $rad) { [void]$g.Children.Add((New-GlossSparkle)) }
     $iscale = New-Object System.Windows.Media.ScaleTransform 1, 1
     if ($c.icon) { $c.icon.RenderTransform = $iscale; $c.icon.RenderTransformOrigin = '0.5,0.5' }
     $flash = New-Object System.Windows.Controls.Border; $flash.IsHitTestVisible = $false; $flash.Opacity = 0
@@ -768,8 +859,11 @@ function global:New-Tile($p, $btn) {
     [System.Windows.Automation.AutomationProperties]::SetName($tile, (($an -replace "`n", ' ') -replace [char]0xA0, ' '))   # Squint 3: Narrator reads the full label
     $g.Background = [System.Windows.Media.Brushes]::Transparent
     $tile.Child = $g
-    $ring = New-Object System.Windows.Controls.Border; $ring.IsHitTestVisible = $false; $ring.Margin = '-4'; $ring.CornerRadius = [string]($rad + 4)
-    $ring.BorderThickness = '2'; $ring.BorderBrush = [System.Windows.Media.Brushes]::White; $ring.Visibility = 'Hidden'
+    # v1.4.8 (Kern fix 3): focus = 2 px white + 2 px dark ring inside the button, edges 18/14 (concentric), moves with the tile
+    $ring = New-Object System.Windows.Controls.Grid; $ring.IsHitTestVisible = $false; $ring.Visibility = 'Hidden'; $ring.Height = $h; $ring.VerticalAlignment = $tile.VerticalAlignment; $ring.RenderTransform = $tg; $ring.RenderTransformOrigin = '0.5,0.5'
+    $rw = New-Object System.Windows.Controls.Border; $rw.BorderThickness = '2'; $rw.BorderBrush = [System.Windows.Media.Brushes]::White; $rw.CornerRadius = [string]$rad
+    $rk = New-Object System.Windows.Controls.Border; $rk.Margin = '2'; $rk.BorderThickness = '2'; $rk.BorderBrush = Brush '#111111'; $rk.CornerRadius = [string]([Math]::Max(0, $rad - 2))
+    [void]$ring.Children.Add($rw); [void]$ring.Children.Add($rk)
     [void]$wrap.Children.Add($glow); [void]$wrap.Children.Add($tile); [void]$wrap.Children.Add($ring)
 
     $st = @{ down = $false }
@@ -779,18 +873,18 @@ function global:New-Tile($p, $btn) {
         Start-Anim $lift $yProp -2 120 -Ease; Start-Anim $glowLift $yProp -2 120 -Ease
         Start-Anim $press $sxProp 1 120 -Ease; Start-Anim $press $syProp 1 120 -Ease
         Start-Anim $glow $oProp $glowMax 120 -Ease; Start-Anim $hov $oProp 1 120 -Ease; Start-Anim $prs $oProp 0 120 -Ease
-        Start-Anim $sheen $oProp 1 120 -Ease
+        Start-Anim $sheen $oProp 1 120 -Ease   # v1.4.8: hover = fill +10% (gloss stays <= 0.30)
         Start-Anim $iscale $sxProp 1.06 120 -Ease; Start-Anim $iscale $syProp 1.06 120 -Ease }.GetNewClosure()
     $toRest = {
         Start-Anim $lift $yProp 0 120 -Ease; Start-Anim $glowLift $yProp 0 120 -Ease
         Start-Anim $press $sxProp 1 120 -Ease; Start-Anim $press $syProp 1 120 -Ease
         Start-Anim $glow $oProp 0 120 -Ease; Start-Anim $hov $oProp 0 120 -Ease; Start-Anim $prs $oProp 0 120 -Ease
-        Start-Anim $sheen $oProp 0.73 120 -Ease
+        Start-Anim $sheen $oProp 1 120 -Ease
         Start-Anim $iscale $sxProp 1 120 -Ease; Start-Anim $iscale $syProp 1 120 -Ease }.GetNewClosure()
     $toPress = {
         Start-Anim $lift $yProp 0 60; Start-Anim $glowLift $yProp 0 60
         Start-Anim $press $sxProp 0.97 60; Start-Anim $press $syProp 0.97 60
-        Start-Anim $glow $oProp ($glowMax * 0.43) 60; Start-Anim $prs $oProp 1 60; Start-Anim $sheen $oProp 0.4 60
+        Start-Anim $glow $oProp ($glowMax * 0.43) 60; Start-Anim $prs $oProp 1 60; Start-Anim $sheen $oProp 0 60
         Start-Anim $iscale $sxProp 1 60; Start-Anim $iscale $syProp 1 60 }.GetNewClosure()
     $run = {
         $ok = Invoke-Button $btn                   # launch first; the flash never delays it
