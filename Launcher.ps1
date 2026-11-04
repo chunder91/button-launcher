@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.6'
+$global:AppVersion   = '1.4.7'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -1628,7 +1628,7 @@ function global:New-Chip($btn, [int]$index) {
     $chip.Add_KeyDown({ if (($_.Key -eq 'Enter' -or $_.Key -eq 'Space') -and -not $_.IsRepeat) { $_.Handled = $true; $ok = Invoke-Button $btn; if ($ok -eq $true) { Start-Flash $flash } } }.GetNewClosure())
     $chip.Add_Drop({
         $d = [string]$_.Data.GetData([string])
-        if ($d -match '^bl-chip:(\d+)$') { Move-Chip ([int]$matches[1]) $index; $_.Handled = $true } }.GetNewClosure())
+        if ($d -match '\Abl-chip:([0-9]{1,9})\z') { Move-Chip ([int]$matches[1]) $index; $_.Handled = $true } }.GetNewClosure())
     $chip.ContextMenu = Chip-Menu $btn
     return $chip
 }
@@ -2041,7 +2041,7 @@ function global:Get-VncDisplayName([string]$n, [int]$max = 40) {   # L5: shown w
 function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$configFile) {   # an argument list; no shell
     $p = Get-VncPort $port
     if (-not (Test-VncHost $h) -or -not $p -or $p -lt 100) { throw 'bad host or port' }   # L6/M43-I2: one colon + a number below 100 is a display number, not a port
-    $a = @('-connect', ('{0}:{1}' -f $h, $p))   # v1.4.4 (Charles 3:36 PM Win+R): his UltraVNC 1.5.0.0-dev leaves VNC Server blank for a bare host::port; -connect host:port fills it
+    $a = @(('{0}:{1}' -f $h, $p))   # v1.4.7 (Charles 8:22 AM Nov 4, Win+R): '"...\vncviewer.exe" 192.168.20.51:5900' connects and takes his password; with -connect first VNC Server was blank and auth failed. Bare host:port (one colon) comes FIRST, no -connect
     if ($configFile) {   # v1.4.4: View only with a saved view-only password: the .vnc also holds host and port ([connection]), so the host is set twice
         if ($configFile -notmatch '^[A-Za-z]:\\[^"]+\.vnc$') { throw 'bad config path' }
         $a += @('-config', ('"' + $configFile + '"'))
@@ -2404,8 +2404,8 @@ function global:Get-VncProgramRoots($probe) {   # distinct trusted Program Files
 function global:Get-VncFileVersion([string]$v) {   # '1.5.0.0' / '1, 2, 4, 0' -> [version]; unknown = 0.0
     $m = [regex]::Match([string]$v, '^\s*([0-9]+)[.,]\s*([0-9]+)(?:[.,]\s*([0-9]+))?(?:[.,]\s*([0-9]+))?')
     if (-not $m.Success) { return [version]'0.0' }
-    $p = @(foreach ($g in 1..4) { if ($m.Groups[$g].Success) { [int]$m.Groups[$g].Value } else { 0 } })
-    try { return New-Object version $p[0], $p[1], $p[2], $p[3] } catch { return [version]'0.0' }
+    try { $p = @(foreach ($g in 1..4) { if ($m.Groups[$g].Success) { [int]$m.Groups[$g].Value } else { 0 } })   # CC I2: a part over int32 -> 0.0 (unknown), never an error that hides the viewer
+          return New-Object version $p[0], $p[1], $p[2], $p[3] } catch { return [version]'0.0' }
 }
 function global:Test-VncViewerFile([string]$f, $probe) {   # file info when $f is a plain local vncviewer.exe, else $null
     if (-not $f -or ($f -replace '^.*[\\/]', '') -ne 'vncviewer.exe') { return $null }   # leaf name, no path parsing that could throw
@@ -2444,8 +2444,12 @@ function global:Get-VncViewerLogText([string]$path, [string]$how, $others, $vi) 
     $o = @(foreach ($x in @($others)) { if ($x) { '"' + (Get-SafeText $x 260) + '"' } }); if ($o) { $t += '; also found: ' + ($o -join ', ') }
     return $t
 }
+function global:Get-VncScanAge($at) {   # CC D1: seconds since $at; clock moved back (negative) or missing = expired
+    if (-not ($at -is [DateTime])) { return [double]::MaxValue }
+    $s = ([DateTime]::UtcNow - $at).TotalSeconds; if ($s -lt 0) { return [double]::MaxValue }; return $s
+}
 function global:Initialize-VncViewerScan([switch]$Retry) {   # once per session (again with -Retry while not found); logs what it found
-    if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry -or ([DateTime]::UtcNow - $global:VncViewerScan.at).TotalSeconds -lt $global:VncViewerRetrySec)) { return $global:VncViewerScan }   # v1.4.6 (Squint 2): a cached 'not found' is searched again on Retry; LJ M47-I2/CC N2: at most every 30 s, so it logs at most once per window
+    if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry -or (Get-VncScanAge $global:VncViewerScan.at) -lt $global:VncViewerRetrySec)) { return $global:VncViewerScan }   # v1.4.6 (Squint 2): a cached 'not found' is searched again on Retry; LJ M47-I2/CC N2: at most every 30 s, so it logs at most once per window
     $sw = [Diagnostics.Stopwatch]::StartNew()
     try { $r = Find-VncViewerInProgramFiles } catch { $r = @{ path = ''; how = ''; others = @() } }
     $r.ms = $sw.ElapsedMilliseconds; $r.at = [DateTime]::UtcNow; $global:VncViewerScan = $r

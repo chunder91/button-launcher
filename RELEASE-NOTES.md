@@ -1,5 +1,13 @@
 # Button Launcher release notes
 
+## v1.4.7: viewer started with a bare host:port (no -connect)
+
+Pending review (build of 2026-11-04). Includes everything in v1.4.6.
+
+- View Register: the viewer is started as `<host>:<port> [-config "<temp .vnc>"] [-viewonly] -autoscaling`, address first and no `-connect`. Charles (8:22 AM Nov 4): Win+R `"C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe" 192.168.20.51:5900` connects and accepts his password, while `-connect 192.168.20.51:5900 -autoscaling` left VNC Server blank and the password got "auth failed". Ports below 100 are still refused.
+- The not-found re-search throttle treats a clock that moved backwards as expired (CC D1).
+- The chip drag-and-drop handler uses `[0-9]` (CC I1). A viewer version number too large to read is treated as unknown instead of stopping the viewer from being found (CC I2).
+
 ## v1.4.6: View only says why it asks; viewer found after install; password dialog tidy-up
 
 Pending review (build of 2026-11-04). Includes everything in v1.4.5.
