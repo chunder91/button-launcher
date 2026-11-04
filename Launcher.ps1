@@ -3063,7 +3063,7 @@ function global:Step-VncScan($ui) {   # UI thread, every 200 ms while a scan run
 # Picker window (Kern D2 + Squint). Standard window chrome stays, so the title shows once there; the client area is D2.
 $global:VncPickerXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="View Register" Width="620" Height="522" MinWidth="616" MinHeight="402" WindowStartupLocation="CenterScreen"
+        Title="View Register" Width="620" Height="522" MinWidth="616" MinHeight="410" WindowStartupLocation="CenterScreen"
         UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
   <Window.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#26262C" Offset="0"/><GradientStop Color="#16161A" Offset="1"/></LinearGradientBrush></Window.Background>
   <Window.Resources>
@@ -3159,8 +3159,8 @@ $global:VncPickerXaml = @'
     <Border Grid.Row="1" CornerRadius="10" Background="#2E000000" BorderBrush="#1FFFFFFF" BorderThickness="1">
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-        <Grid Margin="4,0" TextElement.FontSize="14" TextElement.FontWeight="SemiBold" TextElement.Foreground="#A0A0A0">
-          <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
+        <Grid x:Name="Hdr" Margin="4,0" TextElement.FontSize="14" TextElement.FontWeight="SemiBold" TextElement.Foreground="#A0A0A0">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
           <TextBlock Grid.Column="1" Text="Name" VerticalAlignment="Center" Margin="4,0"/><TextBlock Grid.Column="2" Text="Address" VerticalAlignment="Center"/><TextBlock Grid.Column="3" Text="Seen" VerticalAlignment="Center"/>
         </Grid>
         <Rectangle Grid.Row="0" Height="1" VerticalAlignment="Bottom" Fill="#14FFFFFF"/>
@@ -3168,13 +3168,13 @@ $global:VncPickerXaml = @'
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Computers">
           <ListBox.ItemTemplate><DataTemplate>
             <Grid ToolTip="{Binding tip}">
-              <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
               <Border Tag="star" Background="Transparent" Cursor="Hand" ToolTip="{Binding starTip}" AutomationProperties.Name="{Binding starName}">
                 <TextBlock x:Name="star" Text="{Binding star}" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="16" Foreground="#F59E0B" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False"/>
               </Border>
               <TextBlock Grid.Column="1" Text="{Binding nameText}" ToolTip="{Binding nameFull}" Foreground="{Binding nameFg}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0,12,0"/>
               <TextBlock Grid.Column="2" Text="{Binding addr}" Foreground="{Binding addrFg}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-              <TextBlock Grid.Column="3" Text="{Binding seen}" Foreground="#A0A0A0" FontSize="15" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              <TextBlock Grid.Column="3" Text="{Binding seen}" ToolTip="{Binding seen}" Foreground="#A0A0A0" FontSize="16" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
             </Grid>
             <DataTemplate.Triggers>
               <MultiDataTrigger>
@@ -3233,7 +3233,7 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
     $m.Foreground = Brush '#FFFFFF'; $m.FontFamily = $global:UiFont; $m.FontSize = 14   # Kern Blocker: a popup doesn't inherit the window's text colour or font
     return $m
 }
-# v1.4.10 (Charles 11:07 AM): list text +2 px (headers 12->14, rows 14->16, Seen 13->15), rows 32->38, header 28->32, Address 150->180, Seen 130->150
+# v1.4.10 (Charles 11:07 AM): list text +2 px (headers 12->14, rows 14->16, Seen 13->16 + tooltip), rows 32->38, header 28->32, Address 150->180, Seen 130->160; header right margin follows the list's scrollbar
 # ---------- v1.4.9 View Register tiles, option B "with icons" (Charles 10:34 AM; Smudge v2 + Kern review). Look only.
 # Two glossy style C tiles 271x72, 16 px apart; Lucide eye / hand (ISC) drawn as constant path geometry, visibly 8 px from a 24 px label with a 3.2 px outline.
 $global:VncTiles = @{
@@ -3245,10 +3245,17 @@ function global:Get-VncTileBandHeight {   # Kern Minor 2: band ends 4.5 px above
     $S = $global:VncTileSize; $capTop = ($S.h - $S.font * 1.2) / 2 + $S.font * 0.2; $inkTop = ($S.h - $S.icon) / 2 + 1.5   # Kern: top of the visible ink, not the icon box
     return [Math]::Min($capTop, $inkTop) - 4.5
 }
+function global:Get-VncHeaderInset([string]$vis, [double]$barW) { if ($vis -eq 'Visible') { 4.0 + $barW } else { 4.0 } }   # header right margin: the row margin, plus the scrollbar while it shows (numbers only; culture-safe)
+function global:Find-VncScrollViewer($root) {   # the ListBox's own ScrollViewer (first one in its visual tree)
+    $q = New-Object System.Collections.Queue; $q.Enqueue($root)
+    while ($q.Count) { $n = $q.Dequeue(); if ($n -is [System.Windows.Controls.ScrollViewer]) { return $n }
+        for ($k = 0; $k -lt [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($n); $k++) { $q.Enqueue([System.Windows.Media.VisualTreeHelper]::GetChild($n, $k)) } }
+    return $null
+}
 function global:Get-VncPickerReason([bool]$hasSelection) { if ($hasSelection) { '' } else { $global:VncTileSize.reason } }
 function global:Get-VncPickerHeight([double]$want, [double]$workH, [double]$chrome = 240, [double]$rowH = 38, [int]$minRows = 4) {   # the window grows; only past the work area do list rows go, never below $minRows
     if (-not ($workH -gt 0) -or $want -le $workH) { return $want }
-    return [Math]::Max([Math]::Floor($workH), [Math]::Max(402, $chrome + $minRows * $rowH + 8))   # CC Low: never under the XAML MinHeight (402)
+    return [Math]::Max([Math]::Floor($workH), [Math]::Max(410, $chrome + $minRows * $rowH + 8))   # CC Low: never under the XAML MinHeight (410, v1.4.10 Kern/Squint)
 }
 function global:Get-VncPickerRows([double]$winH, [double]$chrome = 240, [double]$rowH = 38) { [Math]::Floor(($winH - $chrome - 8) / $rowH) }   # visible list rows at a window height
 function global:Get-VncTileLook([string]$kind, [string]$state) {   # rest | hover | pressed | disabled -> fill stops, gloss, sparkle, label colour (pure; tested)
@@ -3309,6 +3316,10 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
     $w.FontFamily = $global:UiFont
     $ui.win = $w
     $lv = $w.FindName('List'); $status = $w.FindName('Status'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
+    $hdr = $w.FindName('Hdr')
+    $lv.Add_Loaded({   # v1.4.10 (Kern/Squint): while the list shows its vertical scrollbar, the header gets the same right inset so Address/Seen stay over their columns
+        try { $sv = Find-VncScrollViewer $lv; $hd = $hdr; if ($sv) { $fix = { $hd.Margin = New-Object System.Windows.Thickness 4, 0, (Get-VncHeaderInset ([string]$sv.ComputedVerticalScrollBarVisibility) ([double][System.Windows.SystemParameters]::VerticalScrollBarWidth)), 0 }.GetNewClosure()
+            $sv.Add_ScrollChanged($fix); $sv.Add_SizeChanged($fix); & $fix } } catch {} }.GetNewClosure())
     $bView = $w.FindName('View'); $bInt = $w.FindName('Interact')
     $w.Height = Get-VncPickerHeight 522 ([System.Windows.SystemParameters]::WorkArea.Height)   # v1.4.9 option B: +42 px for the tiles; shrink the list only past the work area, never under 4 rows
     $bView.Content = New-VncTileFace $bView 'view'; $bInt.Content = New-VncTileFace $bInt 'interact'   # look only: clicks, Enter and Ctrl+Enter below are unchanged
