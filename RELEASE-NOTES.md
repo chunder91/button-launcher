@@ -1,5 +1,9 @@
 # Button Launcher release notes
 
+## v1.4.10: View Register fits the remote screen again
+- The viewer gets -autoscaling again, last on the line: Interact `host:port -autoscaling`, View only `host:port -viewonly -autoscaling`, saved password `host:port -config "<temp .vnc>" -viewonly -autoscaling`. The address is still always first, and the 1.4.9 Windows shell start (which fixed Interact) is unchanged.
+- Start-up diagnostics: the parent-chain lookup is now one process query (1 s timeout) instead of one per parent.
+
 ## v1.4.9: View Register always hands the viewer its address; launch log shows the exact arguments
 
 Pending review (build of 2026-11-04). Includes everything in v1.4.8.

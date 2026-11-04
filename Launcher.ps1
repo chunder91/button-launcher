@@ -70,7 +70,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.9'
+$global:AppVersion   = '1.4.10'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -2025,7 +2025,7 @@ function global:Stop-TrayAndHotkey {
 # and the viewer source (github.com/ultravnc/UltraVNC vncviewer/VNCOptions.cpp, ClientConnectionFile.cpp):
 #   host:port    first, one colon (v1.4.7; Charles's Win+R form). Ports below 100 are refused, since host:N with N < 100 means display N (port 5900+N)
 #   -config file only for View only with a saved view-only password: a short-lived owner-only temp .vnc, after host:port ('host:port -config "<file>" -viewonly')
-#   -viewonly    do not send keyboard or mouse events. -autoscaling is not sent (v1.4.9). -connect is not sent (v1.4.7).
+#   -viewonly    do not send keyboard or mouse events. -autoscaling   fit the remote screen to the window (last; back in v1.4.10). -connect is not sent (v1.4.7).
 # The -password switch is never used: a password must never be on a command line.
 $global:VncDefaultPort = 5900
 $global:VncTimeoutMs   = 300
@@ -2192,7 +2192,7 @@ function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$c
         $a += @('-config', ('"' + $configFile + '"'))
     }
     if ($viewOnly) { $a += '-viewonly' }
-    # v1.4.9 (Charles 10:05 AM, log on 1.4.8): '<host>:<port> -autoscaling' still left VNC Server blank on his UltraVNC 1.5.0.0-dev, while Win+R '<host>:<port>' (no -autoscaling) works. -autoscaling is no longer sent.
+    $a += '-autoscaling'   # v1.4.10 (Charles 11:06 AM): with the Shell.Application start, '<host>:<port> -autoscaling' connects (same string as Win+R / admin cmd); host:port stays first
     return $a
 }
 function global:ConvertTo-VncObfuscated([byte[]]$pw) {   # VNC password file form: first 8 bytes, zero padded, DES with the fixed key, as 16 hex digits
@@ -2892,11 +2892,12 @@ function global:Get-VncViewerDir([string]$exe) {   # the viewer's own folder; a 
 function global:Test-LauncherElevated {   # v1.4.9 diagnostics: running with the Administrators token? $false if it can't be read
     try { return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch { return $false }
 }
-function global:Get-LauncherParentChain([int]$max = 5, [int]$budgetMs = 2000) {   # 'ButtonLauncher.exe < explorer.exe' : exe names only, nearest first; '' if unknown
-    $out = @(); $sw = [Diagnostics.Stopwatch]::StartNew(); try { $id = $PID; for ($i = 0; $i -lt $max -and $sw.ElapsedMilliseconds -lt $budgetMs; $i++) {   # CC Low: ~2 s total budget
-        $p = Get-CimInstance Win32_Process -Property Name, ProcessId, ParentProcessId -OperationTimeoutSec 1 -Filter ('ProcessId = {0}' -f [int]$id) -ErrorAction Stop; if (-not $p) { break }
-        $pp = Get-CimInstance Win32_Process -Property Name, ProcessId, ParentProcessId -OperationTimeoutSec 1 -Filter ('ProcessId = {0}' -f [int]$p.ParentProcessId) -ErrorAction SilentlyContinue; if (-not $pp) { break }
-        $out += (Get-SafeText ([string]$pp.Name) 60); $id = $pp.ProcessId } } catch {}
+function global:Get-LauncherParentChain([int]$max = 5) {   # 'ButtonLauncher.exe < explorer.exe' : exe names only, nearest first; '' if unknown
+    $out = @(); try {   # v1.4.10 (CC Low): ONE Win32_Process query (3 properties, 1 s timeout), then walk the parents in memory
+        $all = @{}; foreach ($q in @(Get-CimInstance Win32_Process -Property Name, ProcessId, ParentProcessId -OperationTimeoutSec 1 -ErrorAction Stop)) { $all[[int]$q.ProcessId] = $q }
+        $id = [int]$PID
+        for ($i = 0; $i -lt $max; $i++) { $p = $all[$id]; if (-not $p) { break }; $pp = $all[[int]$p.ParentProcessId]; if (-not $pp -or [int]$pp.ProcessId -eq $id) { break }
+            $out += (Get-SafeText ([string]$pp.Name) 60); $id = [int]$pp.ProcessId } } catch {}
     return ($out -join ' < ')
 }
 function global:Get-LauncherEnvText {   # v1.4.9 diagnostics: what a child inherits (paths only, never values that could hold secrets)
