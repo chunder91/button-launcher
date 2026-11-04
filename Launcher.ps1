@@ -70,7 +70,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.10'
+$global:AppVersion   = '1.4.11'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -2900,6 +2900,16 @@ function global:Get-LauncherParentChain([int]$max = 5) {   # 'ButtonLauncher.exe
             $out += (Get-SafeText ([string]$pp.Name) 60); $id = [int]$pp.ProcessId } } catch {}
     return ($out -join ' < ')
 }
+function global:Start-LauncherDiagnostics {   # v1.4.11: the WMI parent walk runs off the UI thread; the runspace only builds and writes two log lines
+    try {
+        $defs = foreach ($n in 'Get-SafeText', 'Get-LauncherParentChain', 'Get-LauncherStartLogText', 'Get-LauncherEnvText', 'Write-LauncherLog') { 'function global:{0} {{{1}}}' -f $n, (Get-Item ('function:' + $n)).ScriptBlock }
+        $ps = [PowerShell]::Create()
+        $body = '$global:logPath = $args[0]; try { Write-LauncherLog (Get-LauncherStartLogText $args[1] $args[2] ([Environment]::Is64BitProcess) $args[3] (Get-LauncherParentChain)); Write-LauncherLog (Get-LauncherEnvText) } catch {}'
+        [void]$ps.AddScript(($defs -join "`n") + "`n" + $body).AddArgument($global:logPath).AddArgument($global:AppVersion).AddArgument([bool]$global:LauncherElevated).AddArgument([string]$global:LauncherStartCwd)
+        $global:LauncherDiag = @{ ps = $ps; h = $ps.BeginInvoke() }   # kept so it isn't collected mid-run
+        return $true
+    } catch { return $false }
+}
 function global:Get-LauncherEnvText {   # v1.4.9 diagnostics: what a child inherits (paths only, never values that could hold secrets)
     $pathN = @(([string]$env:PATH) -split ';' | Where-Object { $_ }).Count
     return ('env: TEMP="{0}" APPDATA="{1}" USERPROFILE="{2}" PATH entries={3} __COMPAT_LAYER="{4}" session={5}' -f (Get-SafeText ([string]$env:TEMP) 200), (Get-SafeText ([string]$env:APPDATA) 200), (Get-SafeText ([string]$env:USERPROFILE) 200), $pathN, (Get-SafeText ([string]$env:__COMPAT_LAYER) 80), [Diagnostics.Process]::GetCurrentProcess().SessionId)
@@ -3252,6 +3262,12 @@ function global:Find-VncScrollViewer($root) {   # the ListBox's own ScrollViewer
         for ($k = 0; $k -lt [System.Windows.Media.VisualTreeHelper]::GetChildrenCount($n); $k++) { $q.Enqueue([System.Windows.Media.VisualTreeHelper]::GetChild($n, $k)) } }
     return $null
 }
+function global:Close-VncPickerAfterStart($win, [bool]$viewOnly, $started) {   # v1.4.11 (Charles 12:06 PM): Interact + a start that didn't throw -> close View Register; View only or any failure -> stay open
+    if ($viewOnly -or $started -ne $true -or -not $win) { return $false }
+    Write-LauncherLog 'View Register closed after Interact start'
+    [void]$win.Dispatcher.BeginInvoke('Background', [Action]{ try { $win.Close() } catch {} }.GetNewClosure())   # after the click finishes; Closed still runs the watcher/worker cleanup, and the temp .vnc timer is not tied to the window
+    return $true
+}
 function global:Get-VncPickerReason([bool]$hasSelection) { if ($hasSelection) { '' } else { $global:VncTileSize.reason } }
 function global:Get-VncPickerHeight([double]$want, [double]$workH, [double]$chrome = 240, [double]$rowH = 38, [int]$minRows = 4) {   # the window grows; only past the work area do list rows go, never below $minRows
     if (-not ($workH -gt 0) -or $want -le $workH) { return $want }
@@ -3354,7 +3370,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         if ($c.sync.done -or (Get-VncWorkerFault $c.ps ([bool]$c.sync.done))) { $ui.stopCheck.Invoke(); Clear-VncDeadWorkers
             $n = @($ui.online.Keys).Count; $ui.refresh.Invoke(); $ui.setStatus.Invoke(('{0} of {1} online at {2}. Press F5 to check again.' -f $n, @($ui.allowed).Count, (Get-Date -Format 't'))) } }.GetNewClosure())
     $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only password (for viewing computers)...") }.GetNewClosure()
-    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; [void](Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw) }.GetNewClosure()
+    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; $ok = Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw; Close-VncPickerAfterStart $ui.win $vo $ok }.GetNewClosure()   # v1.4.11: Interact closes View Register once the viewer started
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure())
     $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $r = Get-VncPickerReason $has; if ($r) { $ui.setStatus.Invoke($r) } }.GetNewClosure())
@@ -4274,7 +4290,7 @@ try {
     }
     $global:LauncherElevated = Test-LauncherElevated
     $global:LauncherStartCwd = [string](Get-Location).ProviderPath
-    [void][System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::Background, [Action]{ try { Write-LauncherLog (Get-LauncherStartLogText $global:AppVersion $global:LauncherElevated ([Environment]::Is64BitProcess) $global:LauncherStartCwd (Get-LauncherParentChain)); Write-LauncherLog (Get-LauncherEnvText) } catch {} })   # CC Low: after the panels show   # v1.4.3: which copy ran; v1.4.9: how it ran (diagnostics only, no behaviour change)
+    Start-LauncherDiagnostics   # v1.4.11 (CC Low): parent chain + env line written from a background runspace; never touches the UI
     try { [void](Initialize-VncViewerScan) } catch {}   # v1.4.3: find vncviewer.exe once (bounded, a few folder reads)
     if (-not (Test-Path -LiteralPath $global:cfgPath) -and (Test-Path -LiteralPath $global:cfgDefault)) { Copy-Item -LiteralPath $global:cfgDefault -Destination $global:cfgPath }
     try { $global:cfg = Get-Content -LiteralPath $global:cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if (-not $global:cfg) { throw 'buttons.json is empty.' } }
