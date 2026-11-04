@@ -1141,6 +1141,7 @@ function global:New-DefaultButton {
                        type = 'program'; target = 'TODO: set a target'; args = ''; image = ''; imageMode = 'left' }
 }
 
+function global:Get-LauncherVersionText { 'Button Launcher ' + $global:AppVersion }   # v1.4.6: Setup menu version line
 function global:Add-MenuItem($menu, $text, $action) {
     $mi = New-Object System.Windows.Controls.MenuItem; $mi.Header = $text; $mi.Add_Click($action); [void]$menu.Items.Add($mi); return $mi
 }
@@ -1194,6 +1195,7 @@ function global:Panel-Menu($p, $menu) {
     $h1 = New-Object System.Windows.Controls.TextBlock; $h1.Text = 'Setup'
     $h2 = New-Object System.Windows.Controls.TextBlock; $h2.Text = $(if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { 'PC setup, panels, installer' } else { 'PC setup, panels' }); $h2.FontSize = 12; $h2.Foreground = Brush '#A0A0A0'
     [void]$hs.Children.Add($h1); [void]$hs.Children.Add($h2); $setup.Header = $hs
+    $ver = New-Object System.Windows.Controls.MenuItem; $ver.Header = Get-LauncherVersionText; $ver.IsEnabled = $false; [void]$setup.Items.Add($ver)   # v1.4.6: version, first, not clickable
     [void](Add-MenuItem $setup 'Set up this PC...' { Show-SetupWindow })
     if (Test-Path -LiteralPath (Join-Path $global:here 'Build-Installer.ps1')) { [void](Add-MenuItem $setup 'Build installer...' { Save-Config; Start-Process powershell.exe -ArgumentList "-NoProfile -STA -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$(Join-Path $global:here 'Build-Installer.ps1')`"" }) }   # installed copies ship without the builder
     [void](Add-MenuItem $setup 'Allowed computers (admin)...' { Show-VncAllowedDialog $null })   # v1.4.1: elevated save (UAC)
@@ -2295,7 +2297,10 @@ function global:Show-VncPasswordDialog($owner) {   # v1.4.4: set, change or clea
         if ($null -eq $ok) { $pb.Clear(); & $say "Couldn't save it. Nothing was changed." '#F59E0B'; Write-LauncherLog 'view-only password: save failed'; return }
         if (-not $ok) { $pb.Clear(); & $say "That password has a character UltraVNC can't use. Use standard letters, numbers and symbols, then Save again." '#F59E0B'; [void]$pb.Focus(); return }
         $res.saved = $true; Write-LauncherLog 'view-only password: saved'; $pb.Clear(); $d.Close() }.GetNewClosure())
-    $bNone.Add_Click({ Remove-VncViewOnlySecret; Write-LauncherLog 'view-only password: none'; $pb.Clear(); $res.saved = $false
+    $bNone.Add_Click({ try { Remove-VncViewOnlySecret } catch {}; $pb.Clear()
+        $left = $true; try { $left = [bool](Test-VncSecret) } catch {}   # LJ M47-I1: recheck, don't assume it worked
+        if ($left) { Write-LauncherLog 'view-only password: remove failed'; & $say "Couldn't remove the saved password. It's still saved; try again." '#F59E0B'; return }
+        Write-LauncherLog 'view-only password: none'; $res.saved = $false
         $bNone.Visibility = Get-VncRemoveButtonVisibility $false; & $say 'Saved password removed. View only will ask for one.' '#B4B4BC'; [void]$pb.Focus() }.GetNewClosure())
     $bCancel.Add_Click({ $pb.Clear(); $d.Close() }.GetNewClosure())
     foreach ($b in $bSave, $bNone, $bCancel) { [void]$row.Children.Add($b) }
@@ -2377,6 +2382,7 @@ function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, A
 # Known folders first (uvnc bvba\UltraVNC, UltraVNC); only if none hold the viewer, folders named *uvnc* / *UltraVNC* at depth 1,
 # and their *uvnc* / *UltraVNC* subfolders at depth 2. Links (reparse points) are never entered or accepted. Only a plain file
 # named vncviewer.exe counts. Several: the newest file version wins, ties by path (ordinal); the others are logged.
+$global:VncViewerRetrySec = 10   # LJ M47-I2
 $global:VncViewerScan = $null   # @{ path; how = 'known'|'scan'|''; others = @(); ms } after the first look
 $global:VncViewerProbe = @{
     Env  = { @{ ProgramW6432 = [string]$env:ProgramW6432; ProgramFiles = [Environment]::GetFolderPath('ProgramFiles'); ProgramFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86') } }
@@ -2439,10 +2445,10 @@ function global:Get-VncViewerLogText([string]$path, [string]$how, $others, $vi) 
     return $t
 }
 function global:Initialize-VncViewerScan([switch]$Retry) {   # once per session (again with -Retry while not found); logs what it found
-    if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry)) { return $global:VncViewerScan }   # v1.4.6 (Squint 2): a cached 'not found' is searched again on Retry
+    if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry -or ([DateTime]::UtcNow - $global:VncViewerScan.at).TotalSeconds -lt $global:VncViewerRetrySec)) { return $global:VncViewerScan }   # v1.4.6 (Squint 2): a cached 'not found' is searched again on Retry; LJ M47-I2: at most every 10 s
     $sw = [Diagnostics.Stopwatch]::StartNew()
     try { $r = Find-VncViewerInProgramFiles } catch { $r = @{ path = ''; how = ''; others = @() } }
-    $r.ms = $sw.ElapsedMilliseconds; $global:VncViewerScan = $r
+    $r.ms = $sw.ElapsedMilliseconds; $r.at = [DateTime]::UtcNow; $global:VncViewerScan = $r
     $vi = if ($r.path) { Get-VncViewerInfo $r.path } else { $null }
     Write-LauncherLog ((Get-VncViewerLogText $r.path $r.how $r.others $vi) + (' [{0} ms]' -f $r.ms) + $(if ($r.capped) { ' (search stopped early: folder or time limit reached)' } else { '' }))
     return $r

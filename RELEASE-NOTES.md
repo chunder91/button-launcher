@@ -8,6 +8,8 @@ Pending review (build of 2026-11-04). Includes everything in v1.4.5.
 - UltraVNC Viewer installed while the launcher is open is now found: a "not found" result is searched again when View Register opens and on every View only / Interact click (Squint 2). The not-found message asks a plain yes/no question.
 - Setup > View-only password (Charles, 7:55 AM Nov 4): short intro, a visible "Password" label, a 12 px note "Only used for computers listed by IP address. UltraVNC uses only the first 8 characters.", status text in #B4B4BC announced to screen readers, and "Remove password" (was "No password") shown only when one is saved; it keeps the dialog open and says "Saved password removed. View only will ask for one." (Squint 5, Kern).
 - Allowed computers intro: "Use IP addresses if you want View only to use the saved password."
+- Setup menu shows "Button Launcher 1.4.6" as a disabled first item.
+- Remove password checks that the password is really gone and says so if it is still saved (LJ M47-I1). A not-found viewer is searched again at most every 10 s (LJ M47-I2).
 - Port parsing uses `[0-9]` and `\A...\z` (LJ M46-I2).
 
 ## v1.4.5: allowed computers save again
