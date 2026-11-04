@@ -551,7 +551,7 @@ Check 'v1.4.3: log line (none)' ((Get-VncViewerLogText '' '' @() $null) -ceq 'VN
 Check 'v1.4.3: log line strips control characters' ((Get-VncViewerLogText ("C:\a`r`nb\vncviewer.exe") 'override' @() $vi) -notmatch "[`r`n]")
 $fv = (& $fn 'Find-VncViewer')
 Check 'v1.4.3: Find-VncViewer order: valid saved path (override) > Program Files scan > HKLM App Paths > plain message + optional pick' ($fv.IndexOf("`$how = 'override'") -lt $fv.IndexOf('Initialize-VncViewerScan') -and $fv.IndexOf('Initialize-VncViewerScan') -lt $fv.IndexOf('HKLM:\Software') -and $fv.IndexOf('HKLM:\Software') -lt $fv.IndexOf("isn't installed on this PC") -and $fv -notmatch 'HKCU:' -and $fv -notmatch 'Find-Detected')
-Check 'v1.4.3: start-up logs the version and runs the scan once (cached)' ($src.Contains("Write-LauncherLog ('Launcher {0} started' -f `$global:AppVersion)") -and $src.Contains('try { [void](Initialize-VncViewerScan) } catch {}') -and (& $fn 'Initialize-VncViewerScan').Contains('if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry -or'))
+Check 'v1.4.3: start-up logs the version and runs the scan once (cached)' ($src.Contains("Write-LauncherLog (Get-LauncherStartLogText `$global:AppVersion `$global:LauncherElevated") -and $src.Contains('try { [void](Initialize-VncViewerScan) } catch {}') -and (& $fn 'Initialize-VncViewerScan').Contains('if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry -or'))
 Check 'v1.4.4: no -password switch anywhere; store owner-only ACL from creation; DPAPI CurrentUser v2 entropy' ($src -notmatch "'-password'" -and (& $fn 'Save-VncSecret').Contains('New-VncOwnerOnlySecurity $false') -and (& $fn 'Save-VncSecret').Contains('[IO.Directory]::CreateDirectory($dir, (New-VncOwnerOnlySecurity $true))') -and (& $fn 'Save-VncSecret').Contains('[IO.File]::SetAccessControl($p, (New-VncOwnerOnlySecurity $false))') -and (& $fn 'New-VncOwnerOnlySecurity').Contains('SetAccessRuleProtection($true, $false)') -and (& $fn 'New-VncOwnerOnlySecurity').Contains("'S-1-5-18'") -and $src.Contains("GetBytes('ButtonLauncher.VNC.ViewOnly.v2')") -and (& $fn 'Save-VncSecret').Contains("'CurrentUser'"))
 $td9 = Join-Path ([IO.Path]::GetTempPath()) ('bl-vnc-' + [guid]::NewGuid().ToString('N')); [void](New-Item -ItemType Directory -Path $td9); Set-Content -LiteralPath (Join-Path $td9 'c.vnc') -Value '[connection]'
 $td8 = Join-Path ([IO.Path]::GetTempPath()) ('bl-vnc-' + [guid]::NewGuid().ToString('N')); [void](New-Item -ItemType Directory -Path $td8); Set-Content -LiteralPath (Join-Path $td8 'other.txt') -Value 'k'
@@ -634,7 +634,7 @@ Check 'CC D1: scan age: clock moved back or missing = expired; recent = small' (
 Check 'CC I1: chip drop handler uses [0-9] with \A..\z' ($src.Contains("'\Abl-chip:([0-9]{1,9})\z'") -and $src -notmatch "bl-chip:\(\\d")
 Check 'CC I2: viewer version part over int32 -> 0.0, no throw' ((Get-VncFileVersion '99999999999.1') -eq [version]'0.0' -and (Get-VncFileVersion '1.5.0.0') -eq [version]'1.5.0.0')
 # --- v1.4.9: the real View Register handler path (allowed list -> picker rows -> SelectedItem.row -> Start-VncViewer -> Start-Process) ---
-foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'Get-VncAllowedRows', 'Start-VncViewer', 'Get-VncRowHost', 'Get-VncRowPort', 'Get-VncArgLine', 'Show-VncNotice', 'Get-VncViewerDir', 'Get-VncProcState', 'New-VncStartInfo', 'Get-VncStartInfoLogText') { Invoke-Expression (& $fn $n) }
+foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'Get-VncAllowedRows', 'Start-VncViewer', 'Get-VncRowHost', 'Get-VncRowPort', 'Get-VncArgLine', 'Show-VncNotice', 'Get-VncViewerDir', 'Get-VncProcState', 'Get-VncElevatedWarning', 'Get-LauncherStartLogText', 'Test-LauncherElevated', 'Get-LauncherParentChain', 'New-VncStartInfo', 'Get-VncStartInfoLogText') { Invoke-Expression (& $fn $n) }
 $global:VncAllowedMax = 50
 $global:t9 = @{ sp = @(); log = @(); box = @() }
 function global:Find-VncViewer($b) { 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe' }
@@ -651,10 +651,10 @@ $lv9 = [pscustomobject]@{ SelectedItem = $rows9[0] }
 # the closure body of $ui.go, run with the same names it captures
 $ui9 = @{ btn = @{ label = 'View Register' }; win = $null }
 $go9 = { param($vo) $s = $lv9.SelectedItem; if (-not $s) { return }; [void](Start-VncViewer $ui9.btn $s.row $vo $ui9.win $null) }
-$global:t9.sp = @(); & $go9 $false
+$env:USERPROFILE = 'C:\Users\Charles'; $global:LauncherElevated = $false; $global:t9.sp = @(); & $go9 $false
 $a9 = [string]$global:t9.sp[0][1]
 Check 'v1.4.9: View Register > POS1 > Interact: one argument string starting "192.168.20.51:5900"' ($global:t9.sp.Count -eq 1 -and $global:t9.sp[0][1] -is [string] -and $a9.StartsWith('192.168.20.51:5900') -and $a9 -ceq '192.168.20.51:5900')
-Check 'v1.4.9: Interact log line shows the exact exe and argument string' (@($global:t9.log) -contains 'VNC viewer start: exe="C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe" args="192.168.20.51:5900" dir="C:\Program Files\uvnc bvba\UltraVNC" shell=True' -and $global:t9.sp[0][3] -eq $true -and [string]$global:t9.sp[0][4] -eq '' -and $global:t9.sp[0][2] -eq 'C:\Program Files\uvnc bvba\UltraVNC')
+Check 'v1.4.9: Interact log line shows the exact exe and argument string' (@($global:t9.log) -contains 'VNC viewer start: exe="C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe" args="192.168.20.51:5900" dir="C:\Program Files\uvnc bvba\UltraVNC" shell=True elevated=False' -and $global:t9.sp[0][3] -eq $true -and [string]$global:t9.sp[0][4] -eq '' -and $global:t9.sp[0][2] -eq 'C:\Program Files\uvnc bvba\UltraVNC')
 $global:t9.sp = @(); & $go9 $true
 Check 'v1.4.9: View Register > POS1 > View only: "192.168.20.51:5900 -viewonly"' ($global:t9.sp.Count -eq 1 -and [string]$global:t9.sp[0][1] -ceq '192.168.20.51:5900 -viewonly')
 foreach ($rw in @(@{ host = '192.168.20.51'; port = 5900 }, ([pscustomobject]@{ host = '192.168.20.51'; port = 5900 }), $rows9[0], @{ row = @{ host = '192.168.20.51'; port = '5900' } })) {
@@ -669,7 +669,7 @@ foreach ($rw in @(@{ host = 'reg1 -password x'; port = 5900 }, @{ host = '[::1]'
 Check 'v1.4.9: no assignment to the automatic $host anywhere' (-not $ast.Find({ param($x) $x -is [System.Management.Automation.Language.AssignmentStatementAst] -and $x.Left.Extent.Text -match '^\[?[^\]]*\]?\$host$' }, $true) -and $src -notmatch '(?i)foreach\s*\(\s*\$host\s+in|param\([^)]*\$host\b')
 Check 'v1.4.9: -autoscaling is never sent (Interact = exactly host:port, View only = host:port -viewonly)' (((Get-VncViewerArgs '192.168.20.51' 5900 $false $null) -join ' ') -ceq '192.168.20.51:5900' -and ((Get-VncViewerArgs '192.168.20.51' 5900 $true $null) -join ' ') -ceq '192.168.20.51:5900 -viewonly' -and (& $fn 'Get-VncViewerArgs') -notmatch "'-autoscaling'")
 $psi9 = New-VncStartInfo 'C:\v\vncviewer.exe' '192.168.20.51:5900 -config "C:\T\bl-vnc-1\c.vnc" -viewonly'
-Check 'v1.4.9: ProcessStartInfo log reads the object, redacts the temp .vnc; no Verb, no env changes in the VNC launch' ((Get-VncStartInfoLogText $psi9 'C:\T\bl-vnc-1\c.vnc') -ceq 'VNC viewer start: exe="C:\v\vncviewer.exe" args="192.168.20.51:5900 -config "<temp .vnc>" -viewonly" dir="C:\v" shell=True' -and (& $fn 'New-VncStartInfo') -notmatch 'Verb|Environment' -and (& $fn 'Start-VncViewer') -notmatch 'RunAs|Verb|EnvironmentVariables')
+Check 'v1.4.9: ProcessStartInfo log reads the object, redacts the temp .vnc; no Verb, no env changes in the VNC launch' ((Get-VncStartInfoLogText $psi9 'C:\T\bl-vnc-1\c.vnc') -ceq 'VNC viewer start: exe="C:\v\vncviewer.exe" args="192.168.20.51:5900 -config "<temp .vnc>" -viewonly" dir="C:\v" shell=True elevated=False' -and (& $fn 'New-VncStartInfo') -notmatch 'Verb|Environment' -and (& $fn 'Start-VncViewer') -notmatch 'RunAs|Verb|EnvironmentVariables')
 # --- v1.4.9 review follow-ups (CC Low/Minors, LJ M42-I1) ---
 $ps9 = Get-VncProcState $null
 $acts9 = @(foreach ($t in 0..12) { Get-VncTempAction $t $ps9.exited $ps9.window -1 })
@@ -695,4 +695,23 @@ if ([System.Windows.MessageBox].GetField('Answer')) {
     $script:pick9 = 'C:\Tools\vncviewer.exe'; $b9 = @{ target = 'TODO' }; $r9 = Find-VncViewer $b9
     Check 'LJ M42-I1: a good hand-picked vncviewer.exe is used and saved' ($r9 -eq 'C:\Tools\vncviewer.exe' -and $b9.target -eq 'C:\Tools\vncviewer.exe')
 } else { 'SKIP  hand-picked viewer (real WPF MessageBox loaded)' }
+# --- v1.4.9 start-up diagnostics, elevation, Win+R-like start (Charles 10:35/10:37 AM) ---
+Check 'diag: start-up line has version, elevated, 64-bit, cwd and the parent chain (names only)' ((Get-LauncherStartLogText '1.4.9' $true $false 'C:\Users\Charles\AppData\Local\Button Launcher' 'powershell.exe < ButtonLauncher.exe < explorer.exe') -ceq 'Launcher 1.4.9 started (elevated=True, 64-bit=False, cwd="C:\Users\Charles\AppData\Local\Button Launcher", parents="powershell.exe < ButtonLauncher.exe < explorer.exe")' -and (& $fn 'Get-LauncherParentChain') -match '\.Name\) 60' -and (& $fn 'Get-LauncherParentChain') -notmatch 'CommandLine|ExecutablePath')
+Check 'diag: elevation read with WindowsPrincipal IsInRole Administrator, never throws; no behaviour depends on it except the warning' ((& $fn 'Test-LauncherElevated') -match 'IsInRole\(\[Security\.Principal\.WindowsBuiltInRole\]::Administrator\)' -and ($src -split 'LauncherElevated').Count -le 7)
+$global:LauncherElevated = $true; $global:t9.sp = @(); $global:t9.log = @(); $wst9 = @(); $global:vncPicker = @{ setStatus = [Action[string]]{ param($x) $script:wst9 += $x } }
+function global:Start-VncProcess($psi) { $global:t9.sp += ,@($psi.FileName, $psi.Arguments, $psi.WorkingDirectory); 1 }
+$ok9 = Start-VncViewer @{} $rows9[0] $false $null $null
+Check 'elevated launcher: one-line warning on the status line, launch log says elevated=True, viewer still started with the same arguments' ($ok9 -and $global:t9.sp.Count -eq 1 -and [string]$global:t9.sp[0][1] -ceq '192.168.20.51:5900' -and @($script:wst9) -contains 'Button Launcher is running as administrator; restart it normally for VNC.' -and (@($global:t9.log) -join '|') -like '*elevated=True*')
+$global:LauncherElevated = $false; $script:wst9 = @(); $global:t9.sp = @(); [void](Start-VncViewer @{} $rows9[0] $false $null $null)
+Check 'not elevated: no warning' (@($script:wst9).Count -eq 0 -and (Get-VncElevatedWarning $false) -eq '')
+$global:vncPicker = $null
+Invoke-Expression (& $fn 'Start-VncProcess'); Invoke-Expression (& $fn 'Get-LauncherEnvText')
+$sh9 = @{ calls = @() }; function global:New-ShellApplication { $o = [pscustomobject]@{}; $o | Add-Member ScriptMethod ShellExecute { param($f, $a, $d, $v, $n) $script:sh9.calls += ,@($f, $a, $d, $v, $n) }; $o }
+$global:t9.log = @(); $psiA = New-VncStartInfo 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe' '192.168.20.51:5900'; $rA = Start-VncProcess $psiA
+Check 'Explorer start: Shell.Application.ShellExecute(viewer, exact args, viewer folder, open, 1 = normal window); no process object (fixed 8 s temp delete); method logged' ($null -eq $rA -and $sh9.calls.Count -eq 1 -and $sh9.calls[0][0] -ceq 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe' -and $sh9.calls[0][1] -ceq '192.168.20.51:5900' -and $sh9.calls[0][2] -ceq 'C:\Program Files\uvnc bvba\UltraVNC' -and $sh9.calls[0][3] -eq 'open' -and $sh9.calls[0][4] -eq 1 -and $global:VncStartMethod -eq 'Shell.Application' -and (& $fn 'Start-VncViewer').Contains("Write-LauncherLog ('VNC viewer start: method={0}' -f `$global:VncStartMethod)"))
+function global:New-ShellApplication { throw [System.Runtime.InteropServices.COMException]::new('no shell') }
+$fb9 = $null; try { $fb9 = Start-VncProcess (New-VncStartInfo '/bin/true' '') } catch {}
+Check 'fallback: Shell.Application throws -> logged, ProcessStartInfo ShellExecute, WindowStyle Normal, viewer folder' ($global:VncStartMethod -eq 'ProcessStartInfo' -and (@($global:t9.log) -join '|') -like '*Shell.Application failed (COMException); using ProcessStartInfo*' -and [string]$psiA.WindowStyle -eq 'Normal' -and $psiA.UseShellExecute -and $psiA.WorkingDirectory -ceq 'C:\Program Files\uvnc bvba\UltraVNC')
+$env9 = Get-LauncherEnvText
+Check 'diag: env line lists TEMP, APPDATA, USERPROFILE, PATH entry count, __COMPAT_LAYER, session; logged at start-up' ($env9 -match '^env: TEMP="[^"]*" APPDATA="[^"]*" USERPROFILE="[^"]*" PATH entries=\d+ __COMPAT_LAYER="[^"]*" session=\d+$' -and $src.Contains('Write-LauncherLog (Get-LauncherEnvText)'))
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

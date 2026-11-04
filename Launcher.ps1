@@ -2852,7 +2852,9 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         if (-not $vi.ultra -and $owner -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke(('The picked viewer is "{0}", not UltraVNC. Pick UltraVNC''s vncviewer.exe if it can''t connect.' -f $vi.product)) }
         $psi = New-VncStartInfo $exe $argLine   # v1.4.9: like a Win+R / manual start: ShellExecute, the viewer's own folder, one exact argument string
         Write-LauncherLog (Get-VncStartInfoLogText $psi $file)   # read back from the ProcessStartInfo right before Start(); temp .vnc redacted, never a password
+        $ew = Get-VncElevatedWarning ([bool]$global:LauncherElevated); if ($ew -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke($ew) }   # v1.4.9: an elevated viewer uses another settings file; still started as before
         $proc = Start-VncProcess $psi
+        Write-LauncherLog ('VNC viewer start: method={0}' -f $global:VncStartMethod)
         if ($null -eq $proc) { Write-LauncherLog ('VNC viewer start: no process object returned' + $(if ($file) { '; temp .vnc deleted at 8 s' } else { '' })) }   # CC Low: not 'early', no 'viewer closed'
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit; $file = $null }   # deleted 3 s after the viewer shows a window, or at 8 s
         return $true
@@ -2880,16 +2882,40 @@ function global:Get-VncArgLine($vargs) { (@($vargs) | ForEach-Object { [string]$
 function global:Get-VncViewerDir([string]$exe) {   # the viewer's own folder; a drive root stays 'C:\' (never 'C:', which means that drive's current folder)
     $d = $exe -replace '[\\/][^\\/]*$', ''; if ($d -match '^[A-Za-z]:$') { $d += '\' }; return $d
 }
+function global:Test-LauncherElevated {   # v1.4.9 diagnostics: running with the Administrators token? $false if it can't be read
+    try { return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch { return $false }
+}
+function global:Get-LauncherParentChain([int]$max = 5) {   # 'ButtonLauncher.exe < explorer.exe' : exe names only, nearest first; '' if unknown
+    $out = @(); try { $id = $PID; for ($i = 0; $i -lt $max; $i++) {
+        $p = Get-CimInstance Win32_Process -Filter ('ProcessId = {0}' -f [int]$id) -ErrorAction Stop; if (-not $p) { break }
+        $pp = Get-CimInstance Win32_Process -Filter ('ProcessId = {0}' -f [int]$p.ParentProcessId) -ErrorAction SilentlyContinue; if (-not $pp) { break }
+        $out += (Get-SafeText ([string]$pp.Name) 60); $id = $pp.ProcessId } } catch {}
+    return ($out -join ' < ')
+}
+function global:Get-LauncherEnvText {   # v1.4.9 diagnostics: what a child inherits (paths only, never values that could hold secrets)
+    $pathN = @(([string]$env:PATH) -split ';' | Where-Object { $_ }).Count
+    return ('env: TEMP="{0}" APPDATA="{1}" USERPROFILE="{2}" PATH entries={3} __COMPAT_LAYER="{4}" session={5}' -f (Get-SafeText ([string]$env:TEMP) 200), (Get-SafeText ([string]$env:APPDATA) 200), (Get-SafeText ([string]$env:USERPROFILE) 200), $pathN, (Get-SafeText ([string]$env:__COMPAT_LAYER) 80), [Diagnostics.Process]::GetCurrentProcess().SessionId)
+}
+function global:Get-LauncherStartLogText([string]$ver, [bool]$elevated, [bool]$is64, [string]$cwd, [string]$parents) {
+    return ('Launcher {0} started (elevated={1}, 64-bit={2}, cwd="{3}", parents="{4}")' -f $ver, $elevated, $is64, (Get-SafeText $cwd 260), $parents)
+}
+function global:Get-VncElevatedWarning([bool]$elevated) { if ($elevated) { 'Button Launcher is running as administrator; restart it normally for VNC.' } else { '' } }
 function global:New-VncStartInfo([string]$exe, [string]$argLine) {   # never elevated (no runas), inherits the launcher user's context unchanged, nothing but the one argument string
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exe; $psi.Arguments = $argLine; $psi.UseShellExecute = $true
-    $psi.WorkingDirectory = Get-VncViewerDir $exe
+    $psi.WorkingDirectory = Get-VncViewerDir $exe; $psi.WindowStyle = 'Normal'
     return $psi
 }
-function global:Start-VncProcess($psi) { [System.Diagnostics.Process]::Start($psi) }
+function global:Start-VncProcess($psi) {   # v1.4.9 (Charles 10:43 AM): Explorer's Shell.Application ShellExecute first (a Win+R-style start, normal window), else ProcessStartInfo ShellExecute
+    $global:VncStartMethod = 'Shell.Application'
+    try { $sh = New-ShellApplication; [void]$sh.ShellExecute($psi.FileName, $psi.Arguments, $psi.WorkingDirectory, 'open', 1); return $null }   # no process object: the temp .vnc uses the fixed 8 s delete
+    catch { Write-LauncherLog ('VNC viewer start: Shell.Application failed (' + $_.Exception.GetType().Name + '); using ProcessStartInfo'); $global:VncStartMethod = 'ProcessStartInfo' }
+    return [System.Diagnostics.Process]::Start($psi)
+}
+function global:New-ShellApplication { New-Object -ComObject Shell.Application }
 function global:Get-VncStartInfoLogText($psi, [string]$file) {   # 'VNC viewer start: exe="..." args="..." dir="..." shell=True'
     $a = [string]$psi.Arguments; if ($file) { $a = $a.Replace($file, '<temp .vnc>') }
-    return ('VNC viewer start: exe="{0}" args="{1}" dir="{2}" shell={3}' -f $psi.FileName, $a, $psi.WorkingDirectory, $psi.UseShellExecute)
+    return ('VNC viewer start: exe="{0}" args="{1}" dir="{2}" shell={3} elevated={4}' -f $psi.FileName, $a, $psi.WorkingDirectory, $psi.UseShellExecute, [bool]$global:LauncherElevated)
 }
 function global:Get-VncLaunchLogText([bool]$viewOnly, [string]$exe, $vargs, [string]$file, [string]$pw, $vi) {   # 'VNC view only: "<exe>" <args> (viewer ...) view-only password: saved|none'
     $shown = @(foreach ($x in @($vargs)) { if ($file -and ([string]$x).Contains($file)) { '"<temp .vnc>"' } else { [string]$x } }) -join ' '
@@ -4218,7 +4244,8 @@ try {
         }
         if (-not $got) { [void]$global:showEvent.Set(); exit 0 }   # already running: ask it to show its panels, then quit quietly
     }
-    Write-LauncherLog ('Launcher {0} started' -f $global:AppVersion)   # v1.4.3: which copy ran
+    $global:LauncherElevated = Test-LauncherElevated
+    Write-LauncherLog (Get-LauncherStartLogText $global:AppVersion $global:LauncherElevated ([Environment]::Is64BitProcess) ([string](Get-Location).ProviderPath) (Get-LauncherParentChain)); Write-LauncherLog (Get-LauncherEnvText)   # v1.4.3: which copy ran; v1.4.9: how it ran (diagnostics only, no behaviour change)
     try { [void](Initialize-VncViewerScan) } catch {}   # v1.4.3: find vncviewer.exe once (bounded, a few folder reads)
     if (-not (Test-Path -LiteralPath $global:cfgPath) -and (Test-Path -LiteralPath $global:cfgDefault)) { Copy-Item -LiteralPath $global:cfgDefault -Destination $global:cfgPath }
     try { $global:cfg = Get-Content -LiteralPath $global:cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if (-not $global:cfg) { throw 'buttons.json is empty.' } }
