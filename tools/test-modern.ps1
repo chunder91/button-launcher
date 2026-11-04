@@ -192,7 +192,7 @@ $nc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Functi
 $nt = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-Tile' }, $true).Extent.Text
 $mf = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-MaxLines' }, $true).Extent.Text
 Invoke-Expression $mf; $tb = [pscustomobject]@{ TextTrimming = $null; Uid = ''; MaxHeight = 0; LineHeight = 15.6 }; Set-MaxLines $tb 3
-Check 'v1.4.2 / CC L1: fit-to-tile labels, no Viewbox (never below 12 px), 3-line cap with ellipsis, tooltip when 12 px overflows, bigger start sizes' ($nc -notmatch 'Viewbox' -and $nc.Contains('Set-MaxLines $main 3 $custom   # CC L1') -and $nc.Contains('if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs) -and $custom) { $main.ToolTip =') -and $nc.Contains("'hero' { 26 } 'full' { 20 } default { 16 }") -and $src -notmatch 'Controls\.Viewbox' -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
+Check 'v1.4.2 / CC L1: fit-to-tile labels, no Viewbox (never below 12 px), 3-line cap with ellipsis, tooltip when 12 px overflows, bigger start sizes' ($nc -notmatch 'Viewbox' -and $nc.Contains('Set-MaxLines $main 3   # CC L1') -and $nc.Contains('if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs)) { $main.ToolTip =') -and $nc.Contains("'hero' { 26 } 'full' { 20 } default { 16 }") -and $src -notmatch 'Controls\.Viewbox' -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
 Add-Type -AssemblyName WindowsBase -ErrorAction SilentlyContinue
 if (-not ('System.Windows.Size' -as [type])) { Add-Type -TypeDefinition 'namespace System.Windows { public struct Size { public double Width; public double Height; public Size(double w, double h) { Width = w; Height = h; } } }' }
 Invoke-Expression ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-FitFontSize' }, $true).Extent.Text)
@@ -422,19 +422,17 @@ Check 'capture fix 2: badge re-placed whenever its width changes; Email (dark la
 # --- v1.4.9 follow-ups (Kern r3 Minor 2 + 3, CC Low) ---
 Invoke-Expression ([regex]::Match($ms, '(?m)^function global:Get-MailBadgeTop[^\r\n]*').Value)
 Check 'v1.4.9: badges wider than 18 px (42, 99+) sit at Canvas.Top -10; 1 digit stays -6; set with every count' ((Get-MailBadgeTop (Get-MailBadgeWidth '1')) -eq -6 -and (Get-MailBadgeTop (Get-MailBadgeWidth '42')) -eq -10 -and (Get-MailBadgeTop (Get-MailBadgeWidth '99+')) -eq -10 -and $ms.Contains('SetTop($bd, (Get-MailBadgeTop $bd.Width))'))
-Invoke-Expression ([regex]::Match($ms, '(?ms)^function global:Get-DefaultLabels\b.*?^\}|(?m)^function global:Get-DefaultLabels\b[^\r\n]*\}[^\r\n]*$').Value)
-Invoke-Expression ([regex]::Match($ms, '(?ms)^function global:Test-CustomLabel\b.*?^\}|(?m)^function global:Test-CustomLabel\b[^\r\n]*\}[^\r\n]*$').Value)
-Invoke-Expression $mf; $global:cfgDefault = [IO.Path]::Combine($root, 'buttons.default.json'); $global:DefaultLabelSet = $null
-$tb9 = [pscustomobject]@{ TextTrimming = $null; Uid = ''; MaxHeight = 0; LineHeight = 15.6 }; Set-MaxLines $tb9 3 $false
-Check 'v1.4.9: the "..." fallback and tooltip are for custom labels only; default labels get 3 lines, no trimming' ($tb9.TextTrimming -eq 'None' -and [Math]::Abs($tb9.MaxHeight - 46.8) -lt 0.001 -and -not (Test-CustomLabel 'VIEW REGISTER') -and -not (Test-CustomLabel "RESTART`nSCREEN CONNECT") -and (Test-CustomLabel 'My own button') -and $nc.Contains('Set-MaxLines $main 3 $custom') -and $nc.Contains('$availH $fs) -and $custom) { $main.ToolTip'))
 # like New-WordLabel, but hard line breaks in the label (`n) start a new line, as WPF does
-function New-HardLabel([string]$text) { $m = [pscustomobject]@{ FontSize = 0.0; LineHeight = 0.0; Tag = $null; Name = ''; DesiredSize = $null; TextWrapping = 'Wrap' }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; paras = @($text -split "`n") }
+function New-HardLabel([string]$text) { $m = [pscustomobject]@{ TextTrimming = $null; Uid = ''; MaxHeight = 0.0; FontSize = 0.0; LineHeight = 0.0; Tag = $null; Name = ''; DesiredSize = $null; TextWrapping = 'Wrap' }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; paras = @($text -split "`n") }
     $t | Add-Member ScriptMethod Measure { param($sz) $cw = $this.m.FontSize * 0.55; $lines = 0; $widest = 0.0
         foreach ($pa in $this.paras) { $lines++; $cur = 0.0
             foreach ($w in @($pa -split ' ' | Where-Object { $_ })) { $ww = $w.Length * $cw; $add = if ($cur -gt 0) { $cw + $ww } else { $ww }
                 if ($cur -gt 0 -and $cur + $add -gt $sz.Width) { $lines++; $cur = $ww } else { $cur += $add }
                 if ($cur -gt $widest) { $widest = $cur } } }
         $this.m.DesiredSize = [pscustomobject]@{ Height = $lines * $this.m.LineHeight }; $this.DesiredSize = [pscustomobject]@{ Width = $widest; Height = $lines * $this.m.LineHeight } }; return @($m, $t) }
+$fk = New-HardLabel "RESTART`nSCREEN CONNECT"; $ok9 = Set-FitFontSize $fk[0] $fk[1] 40 60 16; Invoke-Expression $mf; Set-MaxLines $fk[0] 3
+$tip9 = $(if (-not $ok9) { "RESTART`nSCREEN CONNECT" -replace "`n", ' ' } else { $null })
+Check 'v1.4.9 CC Low: a default label forced to overflow (40 px) reports no fit, ends in "..." with a 3-line cap, and New-Content gives it the full-name tooltip' (-not $ok9 -and $fk[0].TextTrimming -eq 'CharacterEllipsis' -and $fk[0].Uid -eq 'maxlines=3' -and $tip9 -eq 'RESTART SCREEN CONNECT' -and $nc.Contains('$availH $fs)) { $main.ToolTip = ($lab.main -replace') -and $nc -notmatch 'Test-CustomLabel|\$custom')
 $bad9 = @(); $n9 = 0
 foreach ($pn in $defs.panels) { foreach ($b in $pn.buttons) { if (-not $b.label) { continue }
     foreach ($w9 in 105, 244) { $n9++; $fk = New-HardLabel ([string]$b.label); $ok = Set-FitFontSize $fk[0] $fk[1] $w9 60 16

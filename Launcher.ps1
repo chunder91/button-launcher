@@ -504,16 +504,9 @@ function global:New-Label($text, $fg, $size) {
 }
 
 # Kern-3/UX-6: label floor of 12 DIP (13 for 3+ line labels) on screen, after the panel's scale is applied.
-function global:Set-MaxLines($tb, [int]$n, [bool]$ellipsis = $true) {   # WPF has no MaxLines: cap the height at n lines and trim the rest with an ellipsis (v1.4.9: custom labels only)
-    $tb.TextTrimming = $(if ($ellipsis) { 'CharacterEllipsis' } else { 'None' }); $tb.Uid = ('maxlines=' + $n); $tb.MaxHeight = $n * [double]$tb.LineHeight
+function global:Set-MaxLines($tb, [int]$n) {   # WPF has no MaxLines: cap the height at n lines and trim the rest with an ellipsis (every label)
+    $tb.TextTrimming = 'CharacterEllipsis'; $tb.Uid = ('maxlines=' + $n); $tb.MaxHeight = $n * [double]$tb.LineHeight
 }
-function global:Get-DefaultLabels {   # v1.4.9 (Kern 3): the shipped labels from buttons.default.json, read once; '' set if unreadable
-    if ($null -eq $global:DefaultLabelSet) { $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
-        try { $d = [IO.File]::ReadAllText($global:cfgDefault) | ConvertFrom-Json; foreach ($pn in @($d.panels)) { foreach ($b in @($pn.buttons)) { if ($b.label) { [void]$set.Add([string]$b.label) } } } } catch {}
-        $global:DefaultLabelSet = $set }
-    return ,$global:DefaultLabelSet   # comma: return the set itself, not its items (an empty set would come back as $null)
-}
-function global:Test-CustomLabel([string]$label) { -not (Get-DefaultLabels).Contains($label) }   # v1.4.9: only labels the user typed get the '...' fallback
 function global:Apply-MinFont($p) {
     $s = [Math]::Max(0.1, [double]$p.scale.ScaleX)
     if ($p.grip -and $p.grip.Child -is [System.Windows.Controls.TextBlock]) { $p.grip.Child.FontSize = [Math]::Max(12.0, 12.0 / $s) }   # Kern 12 px floor: the Editing bar too (built outside the label sink)
@@ -717,9 +710,8 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
     }
     if ($above) { $text.MaxWidth = Get-LabelMaxWidth $cls $danger }   # wrap width for centred labels too
     $availH = [Math]::Max(12, [double]$h - 22 - $(if ($above -and $icon) { $ipx + 6 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }))   # tile minus 3+3 margin and 8+8 content margin, minus the icon above
-    $custom = Test-CustomLabel ([string]$btn.label)   # v1.4.9 (Kern 3): default labels always fit (tested at the 12-13 px floor), so only custom labels get '...' + tooltip
-    if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs) -and $custom) { $main.ToolTip = ($lab.main -replace "`n", ' ') }   # Squint 3: at 12 px still too long -> full name in the tooltip
-    Set-MaxLines $main 3 $custom   # CC L1: never scaled below 12 px; WrapWithOverflow keeps words whole, and a word that still can't fit (or 3+ lines, or a raised floor at panel scale < 1) ends in '...'
+    if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs)) { $main.ToolTip = ($lab.main -replace "`n", ' ') }   # Squint 3 / v1.4.9 CC Low: ANY label (default or custom) still too long at the floor -> full name in the tooltip; default labels are tested to fit, so this is an edge-case safety net
+    Set-MaxLines $main 3   # CC L1: never scaled below 12 px; WrapWithOverflow keeps words whole, and a word that still can't fit (or 3+ lines, or a raised floor at panel scale < 1) ends in '...'
     [void]$sp.Children.Add($text)
     return @{ el = $sp; missingPic = $missingPic; icon = $icon }
 }
