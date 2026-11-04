@@ -190,7 +190,7 @@ Check 'M2: delete 3 s after its window shows' ((Get-VncTempAction 5 $false $true
 Check 'M2: delete at 8 s regardless' ((Get-VncTempAction 8 $false $false -1) -eq 'delete')
 Check 'M2: quit within 6 s = early (wrong password), still deleted' ((Get-VncTempAction 3 $true $false -1) -eq 'early' -and (Get-VncTempAction 7 $true $true 2) -eq 'delete')
 $soon = (& { param($n) $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true).Extent.Text } 'Remove-VncTempSoon')
-Check 'M2: no WaitForInputIdle anywhere; polled' ($src -notmatch 'WaitForInputIdle' -and $soon -match 'MainWindowHandle' -and $soon -match 'Get-VncTempAction')
+Check 'M2: no WaitForInputIdle anywhere; polled' ($src -notmatch 'WaitForInputIdle' -and $src -match 'function global:Get-VncProcState[^\n]*\n[^\n]*\n[^\n]*MainWindowHandle' -and $soon -match 'Get-VncProcState' -and $soon -match 'Get-VncTempAction')
 $base = Join-Path ([IO.Path]::GetTempPath()) ('vnct-' + [guid]::NewGuid().ToString('N')); [void](New-Item -ItemType Directory $base)
 $d1 = Join-Path $base ('bl-vnc-' + [guid]::NewGuid().ToString('N')); [void](New-Item -ItemType Directory $d1); Set-Content (Join-Path $d1 'c.vnc') 'x'
 Check 'V13-L1: folder with only c.vnc is removed' ((Remove-VncTempDir $d1) -and -not (Test-Path $d1))
@@ -247,7 +247,7 @@ Check 'status line announced politely' ($pk -match "SetLiveSetting\(\`$status, '
 $vncSrc = [regex]::Match($src, '(?s)# ---------- VNC register picker.*?# =+ MAIN').Value
 Check 'VNC code: no -password switch, no Invoke-Expression, no cmd /c' ($vncSrc -notmatch "'-password'" -and $vncSrc -notmatch 'Invoke-Expression|iex ' -and $vncSrc -notmatch 'cmd(\.exe)?\s*/c')
 Check 'launch: Start-Process with an argument list from Get-VncViewerArgs' ((& $fn 'Start-VncViewer').Contains('$vargs = @(Get-VncViewerArgs $h $p $viewOnly $file)') -and (& $fn 'Start-VncViewer').Contains('$psi = New-VncStartInfo $exe $argLine') -and (& $fn 'Start-VncViewer') -notmatch 'Start-Process')
-Check 'viewer path must be a local fixed path' ((& $fn 'Find-VncViewer') -match 'Test-LocalFixedPath \$f' -and (& $fn 'Find-VncViewer') -match 'App Paths\\vncviewer\.exe')
+Check 'viewer path must be a local fixed path' ((& $fn 'Find-VncViewer') -match 'Test-VncViewerFile \$f \$global:VncViewerProbe\)\) \{   # LJ M42-I1' -and (& $fn 'Find-VncViewer') -match 'App Paths\\vncviewer\.exe')
 Check 'secret: DPAPI CurrentUser + entropy, plaintext zeroed' ($sv -match "ProtectedData\]::Protect\(\`$raw, \`$global:VncEntropy, 'CurrentUser'\)" -and $sv -match 'ZeroFreeBSTR' -and (& $fn 'Get-VncSecretHex') -match 'Array\]::Clear')
 Check 'secret: separate file, not buttons.json' ((& $fn 'Get-VncSecretPath') -match "'vnc-viewonly\.dat'")
 $sv2 = & $fn 'Start-VncViewer'
@@ -634,7 +634,7 @@ Check 'CC D1: scan age: clock moved back or missing = expired; recent = small' (
 Check 'CC I1: chip drop handler uses [0-9] with \A..\z' ($src.Contains("'\Abl-chip:([0-9]{1,9})\z'") -and $src -notmatch "bl-chip:\(\\d")
 Check 'CC I2: viewer version part over int32 -> 0.0, no throw' ((Get-VncFileVersion '99999999999.1') -eq [version]'0.0' -and (Get-VncFileVersion '1.5.0.0') -eq [version]'1.5.0.0')
 # --- v1.4.9: the real View Register handler path (allowed list -> picker rows -> SelectedItem.row -> Start-VncViewer -> Start-Process) ---
-foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'Get-VncAllowedRows', 'Start-VncViewer', 'Get-VncRowHost', 'Get-VncRowPort', 'Get-VncArgLine', 'Get-VncArgLogText', 'Show-VncNotice', 'New-VncStartInfo', 'Get-VncStartInfoLogText') { Invoke-Expression (& $fn $n) }
+foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'Get-VncAllowedRows', 'Start-VncViewer', 'Get-VncRowHost', 'Get-VncRowPort', 'Get-VncArgLine', 'Show-VncNotice', 'Get-VncViewerDir', 'Get-VncProcState', 'New-VncStartInfo', 'Get-VncStartInfoLogText') { Invoke-Expression (& $fn $n) }
 $global:VncAllowedMax = 50
 $global:t9 = @{ sp = @(); log = @(); box = @() }
 function global:Find-VncViewer($b) { 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe' }
@@ -666,9 +666,33 @@ foreach ($rw in @(@{ host = ''; port = 5900 }, ([pscustomobject]@{ name = 'POS1'
 foreach ($rw in @(@{ host = 'reg1 -password x'; port = 5900 }, @{ host = '[::1]'; port = 5900 }, @{ host = 'fe80::1'; port = 5900 }, @{ host = '192.168.20.51'; port = 0 })) {
     $global:t9.sp = @(); $ok9 = Start-VncViewer @{} $rw $false $null $null
     Check ('v1.4.9 guard: invalid host/port refused: ' + $rw.host) ($ok9 -eq $false -and $global:t9.sp.Count -eq 0) }
-Check 'v1.4.9: arg log redacts the temp .vnc, shows the exact string' ((Get-VncArgLogText 'C:\v\vncviewer.exe' '192.168.20.51:5900 -config "C:\T\bl-vnc-1\c.vnc" -viewonly' 'C:\T\bl-vnc-1\c.vnc') -ceq 'VNC viewer start: exe="C:\v\vncviewer.exe" args="192.168.20.51:5900 -config "<temp .vnc>" -viewonly"')
 Check 'v1.4.9: no assignment to the automatic $host anywhere' (-not $ast.Find({ param($x) $x -is [System.Management.Automation.Language.AssignmentStatementAst] -and $x.Left.Extent.Text -match '^\[?[^\]]*\]?\$host$' }, $true) -and $src -notmatch '(?i)foreach\s*\(\s*\$host\s+in|param\([^)]*\$host\b')
 Check 'v1.4.9: -autoscaling is never sent (Interact = exactly host:port, View only = host:port -viewonly)' (((Get-VncViewerArgs '192.168.20.51' 5900 $false $null) -join ' ') -ceq '192.168.20.51:5900' -and ((Get-VncViewerArgs '192.168.20.51' 5900 $true $null) -join ' ') -ceq '192.168.20.51:5900 -viewonly' -and (& $fn 'Get-VncViewerArgs') -notmatch "'-autoscaling'")
 $psi9 = New-VncStartInfo 'C:\v\vncviewer.exe' '192.168.20.51:5900 -config "C:\T\bl-vnc-1\c.vnc" -viewonly'
 Check 'v1.4.9: ProcessStartInfo log reads the object, redacts the temp .vnc; no Verb, no env changes in the VNC launch' ((Get-VncStartInfoLogText $psi9 'C:\T\bl-vnc-1\c.vnc') -ceq 'VNC viewer start: exe="C:\v\vncviewer.exe" args="192.168.20.51:5900 -config "<temp .vnc>" -viewonly" dir="C:\v" shell=True' -and (& $fn 'New-VncStartInfo') -notmatch 'Verb|Environment' -and (& $fn 'Start-VncViewer') -notmatch 'RunAs|Verb|EnvironmentVariables')
+# --- v1.4.9 review follow-ups (CC Low/Minors, LJ M42-I1) ---
+$ps9 = Get-VncProcState $null
+$acts9 = @(foreach ($t in 0..12) { Get-VncTempAction $t $ps9.exited $ps9.window -1 })
+Check 'CC Low: no process object -> not exited, no window; never "early", deleted at the fixed 8 s' ($ps9.exited -eq $false -and $ps9.window -eq $false -and $acts9 -notcontains 'early' -and $acts9[7] -eq 'wait' -and $acts9[8] -eq 'delete' -and (& $fn 'Remove-VncTempSoon').Contains('$ps = Get-VncProcState $proc'))
+$global:t9.sp = @(); $global:t9.log = @(); function global:Start-VncProcess($psi) { $global:t9.sp += ,@($psi.FileName, $psi.Arguments); $null }
+$global:t9.box = @(); $ok9 = Start-VncViewer @{} $rows9[0] $false $null $null
+Check 'CC Low: Start returns no process -> logged, no "viewer closed" message, launch still reported' ($ok9 -eq $true -and (@($global:t9.log) -join '|') -like '*no process object returned*' -and @($global:t9.box).Count -eq 0)
+Check 'CC Minor: viewer in a drive root -> working folder "C:\", in a folder -> that folder' ((Get-VncViewerDir 'C:\vncviewer.exe') -ceq 'C:\' -and (Get-VncViewerDir 'D:\vncviewer.exe') -ceq 'D:\' -and (Get-VncViewerDir 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe') -ceq 'C:\Program Files\uvnc bvba\UltraVNC' -and (New-VncStartInfo 'C:\vncviewer.exe' 'a:5900').WorkingDirectory -ceq 'C:\')
+Check 'CC Minor: Get-VncArgLogText removed; stale host::port / "-config unused" header gone' ($src -notmatch 'Get-VncArgLogText' -and $src -notmatch "so we always use '::'" -and $src -notmatch '-config file \(unused' -and $src.Contains("('host:port -config ""<file>"" -viewonly')"))
+$fp9 = @{ File = { param($f) if ($f -like '*link*') { @{ link = $true; version = '1.5' } } elseif ($f -like '*missing*') { $null } else { @{ link = $false; version = '1.5' } } }; Local = { param($p) $p -match '^[A-Za-z]:\\' -and $p -notlike 'Z:*' } }
+Check 'LJ M42-I1: Test-VncViewerFile: only exactly vncviewer.exe, a plain file, absolute, local fixed disk' ([bool](Test-VncViewerFile 'C:\Tools\vncviewer.exe' $fp9) -and -not (Test-VncViewerFile 'C:\Tools\vncviewer.exe.lnk' $fp9) -and -not (Test-VncViewerFile 'C:\Tools\calc.exe' $fp9) -and -not (Test-VncViewerFile 'C:\link\vncviewer.exe' $fp9) -and -not (Test-VncViewerFile 'C:\missing\vncviewer.exe' $fp9) -and -not (Test-VncViewerFile 'vncviewer.exe' $fp9) -and -not (Test-VncViewerFile 'Tools\vncviewer.exe' $fp9) -and -not (Test-VncViewerFile '\\server\share\vncviewer.exe' $fp9) -and -not (Test-VncViewerFile 'Z:\vncviewer.exe' $fp9))
+Invoke-Expression (& $fn 'Find-VncViewer')
+$global:VncViewerProbe = $fp9; $global:t9.saved = 0
+function global:Expand($x) { [string]$x }; function global:Is-Todo($x) { -not $x -or $x -eq 'TODO' }; function global:Initialize-VncViewerScan { @{ path = ''; how = ''; others = @() } }
+function global:Get-ItemProperty { throw 'no registry' }; function global:Set-Prop($b, $k, $v) { $b[$k] = $v }; function global:Save-Config { $global:t9.saved++ }
+function global:Get-VncViewerLogText { 'x' }; function global:Get-VncViewerInfo($e) { @{ product = 'UltraVNC'; version = '1.5'; ultra = $true } }
+if ([System.Windows.MessageBox].GetField('Answer')) {
+    [System.Windows.MessageBox]::Answer = 'Yes'
+    foreach ($bad in 'C:\Tools\calc.exe', '\\server\share\vncviewer.exe', 'C:\link\vncviewer.exe', 'Tools\vncviewer.exe') {
+        function global:Ask-ForPath($b, $k) { $script:pick9 }; $script:pick9 = $bad; $global:t9.box = @(); $global:t9.log = @(); $b9 = @{ target = 'TODO' }
+        $r9 = Find-VncViewer $b9
+        Check ('LJ M42-I1: hand-picked viewer refused with a message, not saved: ' + $bad) ($null -eq $r9 -and $b9.target -eq 'TODO' -and (@($global:t9.box) -join '|') -like "*can't be used*vncviewer.exe*") }
+    $script:pick9 = 'C:\Tools\vncviewer.exe'; $b9 = @{ target = 'TODO' }; $r9 = Find-VncViewer $b9
+    Check 'LJ M42-I1: a good hand-picked vncviewer.exe is used and saved' ($r9 -eq 'C:\Tools\vncviewer.exe' -and $b9.target -eq 'C:\Tools\vncviewer.exe')
+} else { 'SKIP  hand-picked viewer (real WPF MessageBox loaded)' }
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

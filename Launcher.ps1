@@ -2018,9 +2018,9 @@ function global:Stop-TrayAndHotkey {
 # View Register opens a picker of UltraVNC hosts found on this PC's own private subnets.
 # UltraVNC viewer switches, checked against https://uvnc.com/docs/ultravnc-viewer/52-ultravnc-viewer-commandline-parameters.html
 # and the viewer source (github.com/ultravnc/UltraVNC vncviewer/VNCOptions.cpp, ClientConnectionFile.cpp):
-#   host::port   two colons = a TCP port (host:N with one colon is display N = port 5900+N), so we always use '::'
-#   -viewonly    do not send keyboard or mouse events   (v1.4.9: -autoscaling is not sent)
-#   -config file (unused since v1.4.2: View only and Interact always pass host::port and no password)
+#   host:port    first, one colon (v1.4.7; Charles's Win+R form). Ports below 100 are refused, since host:N with N < 100 means display N (port 5900+N)
+#   -config file only for View only with a saved view-only password: a short-lived owner-only temp .vnc, after host:port ('host:port -config "<file>" -viewonly')
+#   -viewonly    do not send keyboard or mouse events. -autoscaling is not sent (v1.4.9). -connect is not sent (v1.4.7).
 # The -password switch is never used: a password must never be on a command line.
 $global:VncDefaultPort = 5900
 $global:VncTimeoutMs   = 300
@@ -2376,13 +2376,18 @@ function global:Get-VncTempAction([double]$sec, [bool]$exited, [bool]$hasWindow,
     if ($sec -ge 8 -or ($hasWindow -and ($sec - $windowSec) -ge 3)) { return 'delete' }
     return 'wait'
 }
+function global:Get-VncProcState($proc) {   # v1.4.9 (CC Low): no process object -> never 'exited' (no false 'early'/'viewer closed'), never a window: the fixed 8 s delete applies
+    if ($null -eq $proc) { return @{ exited = $false; window = $false } }
+    $ex = $true; $hw = $false; try { $proc.Refresh(); $ex = $proc.HasExited; $hw = (-not $ex) -and $proc.MainWindowHandle -ne [IntPtr]::Zero } catch {}
+    return @{ exited = $ex; window = $hw }
+}
 function global:Remove-VncTempSoon([string]$file, $proc, [scriptblock]$OnEarlyExit) {   # 1 s poll; delete 3 s after the viewer shows a window, or at 8 s; up to 5 more tries
     $dir = Split-Path -Parent $file; $state = @{ start = [DateTime]::UtcNow; win = -1.0; act = 'wait'; tries = 0 }
     $t = New-Object System.Windows.Threading.DispatcherTimer; $t.Interval = [TimeSpan]::FromSeconds(1)
     $t.Add_Tick({
         $sec = ([DateTime]::UtcNow - $state.start).TotalSeconds
         if ($state.act -eq 'wait') {
-            $ex = $true; $hw = $false; try { $proc.Refresh(); $ex = $proc.HasExited; $hw = (-not $ex) -and $proc.MainWindowHandle -ne [IntPtr]::Zero } catch {}
+            $ps = Get-VncProcState $proc; $ex = $ps.exited; $hw = $ps.window
             if ($hw -and $state.win -lt 0) { $state.win = $sec }
             $state.act = Get-VncTempAction $sec $ex ($state.win -ge 0) $state.win
             if ($state.act -eq 'wait') { return }
@@ -2612,8 +2617,9 @@ function global:Find-VncViewer($btn) {   # local fixed path to vncviewer.exe, or
         $f = Ask-ForPath $btn 'program'; $how = 'picked'
         if (-not $f) { return $null }
         if ($f -like '*.lnk') { try { $f = (New-Object -ComObject WScript.Shell).CreateShortcut($f).TargetPath } catch { $f = $null } }
-        if (-not $f -or -not (Test-LocalFixedPath $f) -or -not (Test-Path -LiteralPath $f -PathType Leaf)) {
-            [System.Windows.MessageBox]::Show("The viewer has to be on this PC's own drive (not a network share).", 'View Register') | Out-Null; return $null }
+        if (-not $f -or -not (Test-VncViewerFile $f $global:VncViewerProbe)) {   # LJ M42-I1: a hand-picked viewer passes the same check as a found one
+            if ($f) { Write-LauncherLog ('VNC viewer: picked file "{0}" refused (not a plain vncviewer.exe on this PC''s own drive)' -f (Get-SafeText $f 260)) }
+            Show-VncNotice "That file can't be used. Pick UltraVNC's vncviewer.exe on this PC's own drive (not a shortcut, a link or a network share)."; return $null }
         Set-Prop $btn 'target' $f; Save-Config }   # only a user pick is saved; it is the override next time
     if ($global:VncViewerUsed -ne "$how|$f") { $global:VncViewerUsed = "$how|$f"; Write-LauncherLog (Get-VncViewerLogText $f $how $others (Get-VncViewerInfo $f)) }
     return $f
@@ -2847,6 +2853,7 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         $psi = New-VncStartInfo $exe $argLine   # v1.4.9: like a Win+R / manual start: ShellExecute, the viewer's own folder, one exact argument string
         Write-LauncherLog (Get-VncStartInfoLogText $psi $file)   # read back from the ProcessStartInfo right before Start(); temp .vnc redacted, never a password
         $proc = Start-VncProcess $psi
+        if ($null -eq $proc) { Write-LauncherLog ('VNC viewer start: no process object returned' + $(if ($file) { '; temp .vnc deleted at 8 s' } else { '' })) }   # CC Low: not 'early', no 'viewer closed'
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit; $file = $null }   # deleted 3 s after the viewer shows a window, or at 8 s
         return $true
     } catch {
@@ -2870,20 +2877,19 @@ function global:Get-VncRowPort($row) {
     return $null
 }
 function global:Get-VncArgLine($vargs) { (@($vargs) | ForEach-Object { [string]$_ }) -join ' ' }   # the exact string handed to the viewer
+function global:Get-VncViewerDir([string]$exe) {   # the viewer's own folder; a drive root stays 'C:\' (never 'C:', which means that drive's current folder)
+    $d = $exe -replace '[\\/][^\\/]*$', ''; if ($d -match '^[A-Za-z]:$') { $d += '\' }; return $d
+}
 function global:New-VncStartInfo([string]$exe, [string]$argLine) {   # never elevated (no runas), inherits the launcher user's context unchanged, nothing but the one argument string
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $exe; $psi.Arguments = $argLine; $psi.UseShellExecute = $true
-    $psi.WorkingDirectory = ($exe -replace '[\\/][^\\/]*$', '')   # the viewer's own folder (string form: same result on Windows, testable elsewhere)
+    $psi.WorkingDirectory = Get-VncViewerDir $exe
     return $psi
 }
 function global:Start-VncProcess($psi) { [System.Diagnostics.Process]::Start($psi) }
 function global:Get-VncStartInfoLogText($psi, [string]$file) {   # 'VNC viewer start: exe="..." args="..." dir="..." shell=True'
     $a = [string]$psi.Arguments; if ($file) { $a = $a.Replace($file, '<temp .vnc>') }
     return ('VNC viewer start: exe="{0}" args="{1}" dir="{2}" shell={3}' -f $psi.FileName, $a, $psi.WorkingDirectory, $psi.UseShellExecute)
-}
-function global:Get-VncArgLogText([string]$exe, [string]$argLine, [string]$file) {   # 'VNC viewer start: exe="<path>" args="<exact args>"'; a temp .vnc shows as <temp .vnc>; never a password (none is ever on the command line)
-    $shown = if ($file) { $argLine.Replace($file, '<temp .vnc>') } else { $argLine }
-    return ('VNC viewer start: exe="{0}" args="{1}"' -f $exe, $shown)
 }
 function global:Get-VncLaunchLogText([bool]$viewOnly, [string]$exe, $vargs, [string]$file, [string]$pw, $vi) {   # 'VNC view only: "<exe>" <args> (viewer ...) view-only password: saved|none'
     $shown = @(foreach ($x in @($vargs)) { if ($file -and ([string]$x).Contains($file)) { '"<temp .vnc>"' } else { [string]$x } }) -join ' '
