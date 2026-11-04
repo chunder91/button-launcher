@@ -1,5 +1,13 @@
 # Button Launcher release notes
 
+## v1.4.9: View Register always hands the viewer its address; launch log shows the exact arguments
+
+Pending review (build of 2026-11-04). Includes everything in v1.4.8.
+
+- View Register: Interact and View only build ONE argument string (`<host>:<port> [-config "<temp .vnc>"] [-viewonly] -autoscaling`) and pass exactly that string to the viewer, instead of a list Windows PowerShell re-joins. The launcher refuses to start the viewer, with a plain message, if the computer's address is empty or not valid, or if the arguments don't start with `<host>:`.
+- The host and port are read the same way whether the picker row is an object or a table (`Get-VncRowHost` / `Get-VncRowPort`).
+- launcher-error.log gets one more line per launch: `VNC viewer start: exe="<path to vncviewer.exe>" args="<exact argument string>"`. A saved-password file shows as `<temp .vnc>`; no password is ever on the command line or in the log.
+
 ## v1.4.8: glossy buttons (style C, "rounder candy gloss")
 
 Review status (build of 2026-11-04): 164bf87 passed ClaudeCode (code) and Lockjaw (security: C0 H0 M0 L0); Kern and Squint said ship with fixes, applied in 2871b6b. The first real Windows captures of 2871b6b (100%, and a 144 DPI render) showed the glossy style is right but found two bugs, fixed in this build: "Restart ScreenConnect" split mid-word, and the "99+" email badge covered the Email label. This build goes back to ClaudeCode, Lockjaw, Kern and Squint and needs a fresh Windows look-check (a true 150% capture is still outstanding). Includes everything in v1.4.7.

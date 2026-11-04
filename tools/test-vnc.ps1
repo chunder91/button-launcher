@@ -246,7 +246,7 @@ Check 'D2: hover lift 1 px, press 0.97, focus ring, disabled #2A2A2A/#8A8A8A, 2 
 Check 'status line announced politely' ($pk -match "SetLiveSetting\(\`$status, 'Polite'\)")
 $vncSrc = [regex]::Match($src, '(?s)# ---------- VNC register picker.*?# =+ MAIN').Value
 Check 'VNC code: no -password switch, no Invoke-Expression, no cmd /c' ($vncSrc -notmatch "'-password'" -and $vncSrc -notmatch 'Invoke-Expression|iex ' -and $vncSrc -notmatch 'cmd(\.exe)?\s*/c')
-Check 'launch: Start-Process with an argument list from Get-VncViewerArgs' ((& $fn 'Start-VncViewer').Contains('$vargs = @(Get-VncViewerArgs $h $p $viewOnly $file)') -and (& $fn 'Start-VncViewer').Contains('Start-Process -FilePath $exe -ArgumentList $vargs '))
+Check 'launch: Start-Process with an argument list from Get-VncViewerArgs' ((& $fn 'Start-VncViewer').Contains('$vargs = @(Get-VncViewerArgs $h $p $viewOnly $file)') -and (& $fn 'Start-VncViewer').Contains('Start-Process -FilePath $exe -ArgumentList $argLine '))
 Check 'viewer path must be a local fixed path' ((& $fn 'Find-VncViewer') -match 'Test-LocalFixedPath \$f' -and (& $fn 'Find-VncViewer') -match 'App Paths\\vncviewer\.exe')
 Check 'secret: DPAPI CurrentUser + entropy, plaintext zeroed' ($sv -match "ProtectedData\]::Protect\(\`$raw, \`$global:VncEntropy, 'CurrentUser'\)" -and $sv -match 'ZeroFreeBSTR' -and (& $fn 'Get-VncSecretHex') -match 'Array\]::Clear')
 Check 'secret: separate file, not buttons.json' ((& $fn 'Get-VncSecretPath') -match "'vnc-viewonly\.dat'")
@@ -602,9 +602,9 @@ Check 'v1.4.6 Kern: Remove password visible only when saved' ((Get-VncRemoveButt
 $pd = & $fn 'Show-VncPasswordDialog'
 Check 'v1.4.6 Kern: dialog has Password label 14 px #FFFFFF (0,0,0,8), field 0,0,0,8, 12 px #B4B4BC note, #B4B4BC Assertive status 0,0,0,16, Remove password hidden unless saved' ($pd.Contains("New-D2Label 'Password' '#FFFFFF' 14; `$lb.Margin = '0,0,0,8'") -and $pd.Contains("`$pf.Margin = '0,0,0,8'") -and $pd.Contains("Only used for computers listed by IP address. UltraVNC uses only the first 8 characters.' '#B4B4BC' 12") -and $pd.Contains("`$st = New-D2Label '' '#B4B4BC' 12; `$st.Margin = '0,0,0,16'") -and $pd.Contains("SetLiveSetting(`$st, 'Assertive')") -and $pd.Contains("New-D2Button 'Remove password' 'Chip'") -and $pd.Contains('$bNone.Visibility = Get-VncRemoveButtonVisibility $has') -and $pd -notmatch "'No password'|#A0A0A0" -and $pd.Contains('Saved password removed. View only will ask for one.'))
 Check 'LJ M46-I2: Get-VncPort/ConvertTo-VncEndpoint use [0-9] and \A..\z' ((& $fn 'Get-VncPort').Contains("'\A[0-9]{1,5}\z'") -and (& $fn 'ConvertTo-VncEndpoint').Contains("'\A([^:]+)::?([0-9]+)\z'") -and -not (Get-VncPort ([string][char]0x0661 + '5900')) -and (Get-VncPort '5900') -eq 5900)
-$global:AppVersion = '1.4.8'; Invoke-Expression (& $fn 'Get-LauncherVersionText')
+$global:AppVersion = '1.4.9'; Invoke-Expression (& $fn 'Get-LauncherVersionText')
 $mv = $src.IndexOf('$ver.IsEnabled = $false; [void]$setup.Items.Add($ver)'); $ms = $src.IndexOf("Add-MenuItem `$setup 'Set up this PC...'")
-Check 'v1.4.6: Setup menu first item is a disabled "Button Launcher <AppVersion>" (no click handler)' ((Get-LauncherVersionText) -eq 'Button Launcher 1.4.8' -and $src.Contains("`$global:AppVersion   = '1.4.8'") -and $src.Contains('$ver.Header = Get-LauncherVersionText; $ver.IsEnabled = $false') -and $mv -gt 0 -and $mv -lt $ms -and $src.IndexOf('$setup.Items.Add') -eq $mv + '$ver.IsEnabled = $false; [void]'.Length -and $src -notmatch '\$ver\.Add_Click')
+Check 'v1.4.6: Setup menu first item is a disabled "Button Launcher <AppVersion>" (no click handler)' ((Get-LauncherVersionText) -eq 'Button Launcher 1.4.9' -and $src.Contains("`$global:AppVersion   = '1.4.9'") -and $src.Contains('$ver.Header = Get-LauncherVersionText; $ver.IsEnabled = $false') -and $mv -gt 0 -and $mv -lt $ms -and $src.IndexOf('$setup.Items.Add') -eq $mv + '$ver.IsEnabled = $false; [void]'.Length -and $src -notmatch '\$ver\.Add_Click')
 $global:VncViewerScan = $null; $global:scanCalls = 0; $global:VncViewerRetrySec = 30; $global:scanLogs = 0
 function global:Get-VncViewerLogText { $global:scanLogs++; 'x' }
 $b1 = Initialize-VncViewerScan; $b2 = Initialize-VncViewerScan -Retry; $c1 = $global:scanCalls
@@ -633,4 +633,39 @@ Check 'v1.4.7: launch log still redacts the temp .vnc path' ($lt7 -ceq 'VNC view
 Check 'CC D1: scan age: clock moved back or missing = expired; recent = small' ((Get-VncScanAge ([DateTime]::UtcNow.AddSeconds(60))) -eq [double]::MaxValue -and (Get-VncScanAge $null) -eq [double]::MaxValue -and (Get-VncScanAge ([DateTime]::UtcNow.AddSeconds(-5))) -lt 10)
 Check 'CC I1: chip drop handler uses [0-9] with \A..\z' ($src.Contains("'\Abl-chip:([0-9]{1,9})\z'") -and $src -notmatch "bl-chip:\(\\d")
 Check 'CC I2: viewer version part over int32 -> 0.0, no throw' ((Get-VncFileVersion '99999999999.1') -eq [version]'0.0' -and (Get-VncFileVersion '1.5.0.0') -eq [version]'1.5.0.0')
+# --- v1.4.9: the real View Register handler path (allowed list -> picker rows -> SelectedItem.row -> Start-VncViewer -> Start-Process) ---
+foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'Get-VncAllowedRows', 'Start-VncViewer', 'Get-VncRowHost', 'Get-VncRowPort', 'Get-VncArgLine', 'Get-VncArgLogText', 'Show-VncNotice') { Invoke-Expression (& $fn $n) }
+$global:VncAllowedMax = 50
+$global:t9 = @{ sp = @(); log = @(); box = @() }
+function global:Find-VncViewer($b) { 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe' }
+function global:Get-VncViewerInfo($e) { @{ product = 'UltraVNC'; version = '1.5.0.0'; ultra = $true } }
+function global:Write-LauncherLog($t) { $global:t9.log += [string]$t }
+function global:Test-VncSecret { $false }
+function global:Start-Process { param($FilePath, $ArgumentList, $WorkingDirectory, [switch]$PassThru) $global:t9.sp += ,@($FilePath, $ArgumentList); 1 }
+function global:Show-VncNotice([string]$t) { $global:t9.box += $t }
+$goSrc = [regex]::Match($src, '\$ui\.go = \[Action\[bool\]\]\{[^\n]*').Value
+Check 'v1.4.9: Interact/View only click handlers call $ui.go, which passes SelectedItem.row to Start-VncViewer' ($goSrc.Contains('$s = $lv.SelectedItem') -and $goSrc.Contains('Start-VncViewer $ui.btn $s.row $vo') -and $src.Contains('$bInt.Add_Click({ $ui.go.Invoke($false) }') -and $src.Contains('$bView.Add_Click({ $ui.go.Invoke($true) }'))
+$al9 = ConvertFrom-VncAllowedJson '{"version":1,"computers":[{"name":"POS1","host":"192.168.20.51","port":5900}]}'
+$rows9 = @(Get-VncAllowedRows $al9.list @{ '192.168.20.51:5900' = 'RFB 003.008' } $false)
+$lv9 = [pscustomobject]@{ SelectedItem = $rows9[0] }
+# the closure body of $ui.go, run with the same names it captures
+$ui9 = @{ btn = @{ label = 'View Register' }; win = $null }
+$go9 = { param($vo) $s = $lv9.SelectedItem; if (-not $s) { return }; [void](Start-VncViewer $ui9.btn $s.row $vo $ui9.win $null) }
+$global:t9.sp = @(); & $go9 $false
+$a9 = [string]$global:t9.sp[0][1]
+Check 'v1.4.9: View Register > POS1 > Interact: one argument string starting "192.168.20.51:5900"' ($global:t9.sp.Count -eq 1 -and $global:t9.sp[0][1] -is [string] -and $a9.StartsWith('192.168.20.51:5900') -and $a9 -ceq '192.168.20.51:5900 -autoscaling')
+Check 'v1.4.9: Interact log line shows the exact exe and argument string' (@($global:t9.log) -contains 'VNC viewer start: exe="C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe" args="192.168.20.51:5900 -autoscaling"')
+$global:t9.sp = @(); & $go9 $true
+Check 'v1.4.9: View Register > POS1 > View only: "192.168.20.51:5900 -viewonly -autoscaling"' ($global:t9.sp.Count -eq 1 -and [string]$global:t9.sp[0][1] -ceq '192.168.20.51:5900 -viewonly -autoscaling')
+foreach ($rw in @(@{ host = '192.168.20.51'; port = 5900 }, ([pscustomobject]@{ host = '192.168.20.51'; port = 5900 }), $rows9[0], @{ row = @{ host = '192.168.20.51'; port = '5900' } })) {
+    $global:t9.sp = @(); [void](Start-VncViewer @{} $rw $false $null $null)
+    Check ('v1.4.9: row shape ' + $rw.GetType().Name + ' -> 192.168.20.51:5900') ($global:t9.sp.Count -eq 1 -and ([string]$global:t9.sp[0][1]).StartsWith('192.168.20.51:5900 ')) }
+foreach ($rw in @(@{ host = ''; port = 5900 }, ([pscustomobject]@{ name = 'POS1'; port = 5900 }), @{ Host = $null; port = 5900 }, ([pscustomobject]@{ host = '  '; port = 5900 }), $null)) {
+    $global:t9.sp = @(); $global:t9.log = @(); $global:t9.box = @(); $ok9 = Start-VncViewer @{} $rw $false $null $null
+    Check 'v1.4.9 guard: empty host refuses to launch, with a message and a log line' ($ok9 -eq $false -and $global:t9.sp.Count -eq 0 -and (@($global:t9.box) -join '|') -like '*no address*' -and (@($global:t9.log) -join '|') -like '*refused: empty host*') }
+foreach ($rw in @(@{ host = 'reg1 -password x'; port = 5900 }, @{ host = '[::1]'; port = 5900 }, @{ host = 'fe80::1'; port = 5900 }, @{ host = '192.168.20.51'; port = 0 })) {
+    $global:t9.sp = @(); $ok9 = Start-VncViewer @{} $rw $false $null $null
+    Check ('v1.4.9 guard: invalid host/port refused: ' + $rw.host) ($ok9 -eq $false -and $global:t9.sp.Count -eq 0) }
+Check 'v1.4.9: arg log redacts the temp .vnc, shows the exact string' ((Get-VncArgLogText 'C:\v\vncviewer.exe' '192.168.20.51:5900 -config "C:\T\bl-vnc-1\c.vnc" -viewonly -autoscaling' 'C:\T\bl-vnc-1\c.vnc') -ceq 'VNC viewer start: exe="C:\v\vncviewer.exe" args="192.168.20.51:5900 -config "<temp .vnc>" -viewonly -autoscaling"')
+Check 'v1.4.9: no assignment to the automatic $host anywhere' (-not $ast.Find({ param($x) $x -is [System.Management.Automation.Language.AssignmentStatementAst] -and $x.Left.Extent.Text -match '^\[?[^\]]*\]?\$host$' }, $true) -and $src -notmatch '(?i)foreach\s*\(\s*\$host\s+in|param\([^)]*\$host\b')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

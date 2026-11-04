@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.8'
+$global:AppVersion   = '1.4.9'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -2825,8 +2825,9 @@ function global:Get-VncViewerInfo([string]$exe) {   # 'UltraVNC 1.5.0.0 (64-bit)
     return @{ product = (Get-SafeText $prod 60); version = (Get-SafeText $ver 30); ultra = ($prod -match 'Ultr@?VNC|UltraVNC') }
 }
 function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptblock]$OnEarlyExit) {
-    $h = [string]$row.host; $p = Get-VncPort $row.port
-    if (-not (Test-VncHost $h) -or -not $p) { [System.Windows.MessageBox]::Show("That address isn't valid.", 'View Register') | Out-Null; return $false }
+    $h = ([string](Get-VncRowHost $row)).Trim(); $p = Get-VncPort (Get-VncRowPort $row)   # v1.4.9: host/port read from the row whether it is a PSCustomObject, a hashtable or a picker view (.row)
+    if (-not $h) { Write-LauncherLog 'VNC launch refused: empty host (nothing passed to the viewer)'; Show-VncNotice "This computer has no address, so the viewer wasn't started. Ask your administrator to check Setup > Allowed computers."; return $false }
+    if (-not (Test-VncHost $h) -or -not $p) { Write-LauncherLog ('VNC launch refused: invalid host or port "{0}"' -f (Get-SafeText ('{0}:{1}' -f $h, (Get-SafeText ([string](Get-VncRowPort $row)) 10)) 80)); Show-VncNotice "That address isn't valid, so the viewer wasn't started."; return $false }
     if ($p -lt 100) { [System.Windows.MessageBox]::Show("Ports below 100 aren't supported. Use the computer's VNC port (usually 5900).", 'View Register') | Out-Null; return $false }   # L6/M43-I2
     $exe = Find-VncViewer $btn; if (-not $exe) { return $false }
     $file = $null; $hex = $null
@@ -2837,16 +2838,39 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         if ($viewOnly -and (Test-VncUsePassword $row (Test-VncSecret))) { $hex = Get-VncSecretHex; if ($hex) { $file = New-VncTempConfig $h $p $hex; $pw = 'saved' } }
         $why = if ($viewOnly -and $pw -ne 'saved') { Get-VncPasswordFallbackText $row (Test-VncSecret) } else { '' }   # v1.4.6 (Squint 1)
         $vargs = @(Get-VncViewerArgs $h $p $viewOnly $file); $vi = Get-VncViewerInfo $exe
+        $argLine = Get-VncArgLine $vargs   # v1.4.9: ONE string, built here and logged byte-for-byte as passed (no PS 5.1 array re-joining)
+        if (-not $argLine.StartsWith($h + ':')) { throw 'the viewer arguments do not start with the host' }   # v1.4.9 guard: never start the viewer without host:port first
         Write-LauncherLog (Get-VncLaunchLogText $viewOnly $exe $vargs $file $pw $vi)   # never the password or the .vnc contents; the temp path is redacted
+        Write-LauncherLog (Get-VncArgLogText $exe $argLine $file)
         if ($why) { Write-LauncherLog ('VNC view only: viewer will ask: ' + $why); if ($global:vncPicker) { $global:vncPicker.setStatus.Invoke($why) } }
         if (-not $vi.ultra -and $owner -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke(('The picked viewer is "{0}", not UltraVNC. Pick UltraVNC''s vncviewer.exe if it can''t connect.' -f $vi.product)) }
-        $proc = Start-Process -FilePath $exe -ArgumentList $vargs -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+        $proc = Start-Process -FilePath $exe -ArgumentList $argLine -WorkingDirectory (Split-Path -Parent $exe) -PassThru
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit; $file = $null }   # deleted 3 s after the viewer shows a window, or at 8 s
         return $true
     } catch {
         if ($file) { [void](Remove-VncTempDir (Split-Path -Parent $file)) }
         [System.Windows.MessageBox]::Show("Couldn't start the viewer.`n`n" + $_.Exception.Message, 'View Register') | Out-Null; return $false
     } finally { $hex = $null; if ($file) { [void](Remove-VncTempDir (Split-Path -Parent $file)) } }
+}
+function global:Show-VncNotice([string]$t) { [System.Windows.MessageBox]::Show($t, 'View Register') | Out-Null }
+function global:Get-VncRowHost($row) {   # v1.4.9: the host of a picker row: PSCustomObject or hashtable, or a picker view whose .row holds it
+    if ($null -eq $row) { return '' }
+    if ($row -is [System.Collections.IDictionary]) { if ($row.Contains('host')) { return [string]$row['host'] }; if ($row.Contains('row')) { return (Get-VncRowHost $row['row']) }; return '' }
+    if ($row.PSObject.Properties['host']) { return [string]$row.host }
+    if ($row.PSObject.Properties['row']) { return (Get-VncRowHost $row.row) }
+    return ''
+}
+function global:Get-VncRowPort($row) {
+    if ($null -eq $row) { return $null }
+    if ($row -is [System.Collections.IDictionary]) { if ($row.Contains('port')) { return $row['port'] }; if ($row.Contains('row')) { return (Get-VncRowPort $row['row']) }; return $null }
+    if ($row.PSObject.Properties['port']) { return $row.port }
+    if ($row.PSObject.Properties['row']) { return (Get-VncRowPort $row.row) }
+    return $null
+}
+function global:Get-VncArgLine($vargs) { (@($vargs) | ForEach-Object { [string]$_ }) -join ' ' }   # the exact string handed to the viewer
+function global:Get-VncArgLogText([string]$exe, [string]$argLine, [string]$file) {   # 'VNC viewer start: exe="<path>" args="<exact args>"'; a temp .vnc shows as <temp .vnc>; never a password (none is ever on the command line)
+    $shown = if ($file) { $argLine.Replace($file, '<temp .vnc>') } else { $argLine }
+    return ('VNC viewer start: exe="{0}" args="{1}"' -f $exe, $shown)
 }
 function global:Get-VncLaunchLogText([bool]$viewOnly, [string]$exe, $vargs, [string]$file, [string]$pw, $vi) {   # 'VNC view only: "<exe>" <args> (viewer ...) view-only password: saved|none'
     $shown = @(foreach ($x in @($vargs)) { if ($file -and ([string]$x).Contains($file)) { '"<temp .vnc>"' } else { [string]$x } }) -join ' '
