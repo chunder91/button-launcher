@@ -17,7 +17,7 @@ Pending review (build of 2026-11-04). Includes everything in v1.4.8.
 
 
 Review follow-ups (Kern, ClaudeCode, Lockjaw):
-- View only and Interact icons now sit visibly 8 px from their labels, and both tiles' gloss band ends 4.5 px above the icon (18.5 px).
+- View only and Interact icons now sit visibly 8 px from their labels, and both tiles' gloss band ends 4.5 px above the top of the icon (20 px).
 - View Register can't be made narrower than 616 px, so the tiles never clip; its height floor matches the 402 px minimum.
 - The tiles' pressed-state watcher is removed when View Register closes.
 - The start-up diagnostics (parent chain, environment) are written just after the panels show, and the parent-chain lookup stops after about 2 s.

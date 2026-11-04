@@ -3239,9 +3239,9 @@ $global:VncTiles = @{
     interact = @{ label = 'Interact'; iconGap = 4.5; fill = '#095F84'; disabled = '#253339'; icon = 'M18,11 V6 A2,2 0 0 0 16,4 A2,2 0 0 0 14,6 M14,10 V4 A2,2 0 0 0 12,2 A2,2 0 0 0 10,4 V6 M10,10.5 V6 A2,2 0 0 0 8,4 A2,2 0 0 0 6,6 V14 M18,8 A2,2 0 1 1 22,8 V14 A8,8 0 0 1 14,22 H12 C9.2,22 7.5,21.14 6.01,19.66 L2.41,16.06 A2,2 0 0 1 5.24,13.24 L7,15' }
 }
 $global:VncTileSize = @{ w = 271; h = 72; gap = 16; icon = 26; iconGap = 8; font = 24; outline = 3.2; disabledLabel = '#C4C4C8'; reason = 'Pick a computer to view or control it.' }
-function global:Get-VncTileBandHeight {   # Kern Minor 2: band ends 4.5 px above the higher of cap top and icon top; same on both tiles
-    $S = $global:VncTileSize; $capTop = ($S.h - $S.font * 1.2) / 2 + $S.font * 0.2; $iconTop = ($S.h - $S.icon) / 2
-    return [Math]::Min($capTop, $iconTop) - 4.5
+function global:Get-VncTileBandHeight {   # Kern Minor 2: band ends 4.5 px above the higher of cap top and icon ink top (20 px); same on both tiles
+    $S = $global:VncTileSize; $capTop = ($S.h - $S.font * 1.2) / 2 + $S.font * 0.2; $inkTop = ($S.h - $S.icon) / 2 + 1.5   # Kern: top of the visible ink, not the icon box
+    return [Math]::Min($capTop, $inkTop) - 4.5
 }
 function global:Get-VncPickerReason([bool]$hasSelection) { if ($hasSelection) { '' } else { $global:VncTileSize.reason } }
 function global:Get-VncPickerHeight([double]$want, [double]$workH, [double]$chrome = 236, [double]$rowH = 32, [int]$minRows = 4) {   # the window grows; only past the work area do list rows go, never below $minRows
