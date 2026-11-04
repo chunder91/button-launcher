@@ -1924,7 +1924,7 @@ function global:Test-Rfc1918([string]$ip) {
 function global:ConvertTo-VncUInt([string]$ip) { $o = $ip.Split('.'); return ([uint32]$o[0] * 16777216 + [uint32]$o[1] * 65536 + [uint32]$o[2] * 256 + [uint32]$o[3]) }
 function global:ConvertFrom-VncUInt([uint32]$n) { return ('{0}.{1}.{2}.{3}' -f (($n -shr 24) -band 255), (($n -shr 16) -band 255), (($n -shr 8) -band 255), ($n -band 255)) }
 function global:Get-VncPrefix($cfgPrefix) {   # setting: default /24; never wider than /22; at most /30
-    $p = 24; $s = ([string]$cfgPrefix).Trim(); if ($s -match '^\d{1,2}$') { $p = [int]$s }
+    $p = 24; $s = ([string]$cfgPrefix).Trim(); if ($s -match '\A[0-9]{1,2}\z') { $p = [int]$s }   # CC N3
     if ($p -lt 22) { $p = 22 }; if ($p -gt 30) { $p = 30 }
     return $p
 }
@@ -2299,7 +2299,7 @@ function global:Show-VncPasswordDialog($owner) {   # v1.4.4: set, change or clea
         $res.saved = $true; Write-LauncherLog 'view-only password: saved'; $pb.Clear(); $d.Close() }.GetNewClosure())
     $bNone.Add_Click({ try { Remove-VncViewOnlySecret } catch {}; $pb.Clear()
         $left = $true; try { $left = [bool](Test-VncSecret) } catch {}   # LJ M47-I1: recheck, don't assume it worked
-        if ($left) { Write-LauncherLog 'view-only password: remove failed'; & $say "Couldn't remove the saved password. It's still saved; try again." '#F59E0B'; return }
+        if ($left) { Write-LauncherLog 'view-only password: remove failed (still saved)'; & $say "Couldn't remove it. The password is still saved; try again." '#F59E0B'; return }   # CC N1
         Write-LauncherLog 'view-only password: none'; $res.saved = $false
         $bNone.Visibility = Get-VncRemoveButtonVisibility $false; & $say 'Saved password removed. View only will ask for one.' '#B4B4BC'; [void]$pb.Focus() }.GetNewClosure())
     $bCancel.Add_Click({ $pb.Clear(); $d.Close() }.GetNewClosure())
@@ -2382,7 +2382,7 @@ function global:Show-VncAddDialog($owner) {   # Squint 4 + Kern 6: one dialog, A
 # Known folders first (uvnc bvba\UltraVNC, UltraVNC); only if none hold the viewer, folders named *uvnc* / *UltraVNC* at depth 1,
 # and their *uvnc* / *UltraVNC* subfolders at depth 2. Links (reparse points) are never entered or accepted. Only a plain file
 # named vncviewer.exe counts. Several: the newest file version wins, ties by path (ordinal); the others are logged.
-$global:VncViewerRetrySec = 10   # LJ M47-I2
+$global:VncViewerRetrySec = 30   # LJ M47-I2 / CC N2: a not-found search (and its log line) at most once per 30 s
 $global:VncViewerScan = $null   # @{ path; how = 'known'|'scan'|''; others = @(); ms } after the first look
 $global:VncViewerProbe = @{
     Env  = { @{ ProgramW6432 = [string]$env:ProgramW6432; ProgramFiles = [Environment]::GetFolderPath('ProgramFiles'); ProgramFilesX86 = [Environment]::GetFolderPath('ProgramFilesX86') } }
@@ -2402,7 +2402,7 @@ function global:Get-VncProgramRoots($probe) {   # distinct trusted Program Files
     return $out
 }
 function global:Get-VncFileVersion([string]$v) {   # '1.5.0.0' / '1, 2, 4, 0' -> [version]; unknown = 0.0
-    $m = [regex]::Match([string]$v, '^\s*(\d+)[.,]\s*(\d+)(?:[.,]\s*(\d+))?(?:[.,]\s*(\d+))?')
+    $m = [regex]::Match([string]$v, '^\s*([0-9]+)[.,]\s*([0-9]+)(?:[.,]\s*([0-9]+))?(?:[.,]\s*([0-9]+))?')
     if (-not $m.Success) { return [version]'0.0' }
     $p = @(foreach ($g in 1..4) { if ($m.Groups[$g].Success) { [int]$m.Groups[$g].Value } else { 0 } })
     try { return New-Object version $p[0], $p[1], $p[2], $p[3] } catch { return [version]'0.0' }
@@ -2445,7 +2445,7 @@ function global:Get-VncViewerLogText([string]$path, [string]$how, $others, $vi) 
     return $t
 }
 function global:Initialize-VncViewerScan([switch]$Retry) {   # once per session (again with -Retry while not found); logs what it found
-    if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry -or ([DateTime]::UtcNow - $global:VncViewerScan.at).TotalSeconds -lt $global:VncViewerRetrySec)) { return $global:VncViewerScan }   # v1.4.6 (Squint 2): a cached 'not found' is searched again on Retry; LJ M47-I2: at most every 10 s
+    if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry -or ([DateTime]::UtcNow - $global:VncViewerScan.at).TotalSeconds -lt $global:VncViewerRetrySec)) { return $global:VncViewerScan }   # v1.4.6 (Squint 2): a cached 'not found' is searched again on Retry; LJ M47-I2/CC N2: at most every 30 s, so it logs at most once per window
     $sw = [Diagnostics.Stopwatch]::StartNew()
     try { $r = Find-VncViewerInProgramFiles } catch { $r = @{ path = ''; how = ''; others = @() } }
     $r.ms = $sw.ElapsedMilliseconds; $r.at = [DateTime]::UtcNow; $global:VncViewerScan = $r
@@ -3162,7 +3162,7 @@ function global:Get-ImapTagged([string]$line, [string]$tag) {   # 'OK' / 'NO' / 
 }
 function global:Get-ImapStatusUnseen([string]$line) {   # '* STATUS INBOX (MESSAGES 9 UNSEEN 3)' -> 3; anything else -> -1
     if ($line -notmatch '(?i)^\*\s+STATUS\s+.*\(([^()]*)\)\s*$') { return -1 }
-    if ($Matches[1] -notmatch '(?i)(?:^|\s)UNSEEN\s+(\d{1,9})(?:\s|$)') { return -1 }
+    if ($Matches[1] -notmatch '(?i)(?:^|\s)UNSEEN\s+([0-9]{1,9})(?:\s|$)') { return -1 }   # CC N3
     return [int]$Matches[1]
 }
 function global:Invoke-ImapSession([scriptblock]$ReadLine, [scriptblock]$Write, [string]$user, [char[]]$pass, $Flags = $null) {   # Flags.loginSent: M15-I1; Flags.step: the step a drop happened in

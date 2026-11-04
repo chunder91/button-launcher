@@ -675,4 +675,5 @@ $mt = $msd.Extent.Text
 Check 'v1.4.2: placeholder variables are assigned once only (no reuse that leaves the address placeholder showing)' ($phAssign.Count -eq 1 -and $pphAssign.Count -eq 1 -and $mt.Contains("`$ph.Text = 'name@" + 'jartrek.net' + "'"))
 Check 'v1.4.2: placeholders hide whenever the box has a value (typed, pasted, prefilled, loaded) via TextChanged + initial sync' ($mt.Contains("`$ph.Visibility = if (`$ta.Text) { 'Collapsed' } else { 'Visible' }") -and $mt.Contains("`$pph.Visibility = if (`$pb.SecurePassword.Length -gt 0)") -and $mt.Contains('$ta.Add_TextChanged({ $ds.tested = $false; & $refresh }') -and $mt.Contains('$pb.Add_PasswordChanged(') -and ([regex]::Matches($mt, '(?m)^\s*& \$refresh\s*$')).Count -ge 1)
 ""
+Check 'CC N3: UNSEEN count uses [0-9] (non-ASCII digits refused)' ((Get-ImapStatusUnseen ('* STATUS INBOX (UNSEEN ' + [char]0x0663 + ')')) -eq -1 -and (Get-ImapStatusUnseen '* STATUS INBOX (MESSAGES 9 UNSEEN 3)') -eq 3)
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

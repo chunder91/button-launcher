@@ -605,10 +605,12 @@ Check 'LJ M46-I2: Get-VncPort/ConvertTo-VncEndpoint use [0-9] and \A..\z' ((& $f
 $global:AppVersion = '1.4.6'; Invoke-Expression (& $fn 'Get-LauncherVersionText')
 $mv = $src.IndexOf('$ver.IsEnabled = $false; [void]$setup.Items.Add($ver)'); $ms = $src.IndexOf("Add-MenuItem `$setup 'Set up this PC...'")
 Check 'v1.4.6: Setup menu first item is a disabled "Button Launcher <AppVersion>" (no click handler)' ((Get-LauncherVersionText) -eq 'Button Launcher 1.4.6' -and $src.Contains("`$global:AppVersion   = '1.4.6'") -and $src.Contains('$ver.Header = Get-LauncherVersionText; $ver.IsEnabled = $false') -and $mv -gt 0 -and $mv -lt $ms -and $src.IndexOf('$setup.Items.Add') -eq $mv + '$ver.IsEnabled = $false; [void]'.Length -and $src -notmatch '\$ver\.Add_Click')
-$global:VncViewerScan = $null; $global:scanCalls = 0; $global:VncViewerRetrySec = 10
+$global:VncViewerScan = $null; $global:scanCalls = 0; $global:VncViewerRetrySec = 30; $global:scanLogs = 0
+function global:Get-VncViewerLogText { $global:scanLogs++; 'x' }
 $b1 = Initialize-VncViewerScan; $b2 = Initialize-VncViewerScan -Retry; $c1 = $global:scanCalls
-$global:VncViewerScan.at = [DateTime]::UtcNow.AddSeconds(-11); $b3 = Initialize-VncViewerScan -Retry
-Check 'LJ M47-I2: a not-found re-search is skipped under 10 s, runs after; default 10 s' ($c1 -eq 1 -and -not $b2.path -and $global:scanCalls -eq 2 -and $b3.path -like '*vncviewer.exe' -and $src.Contains('$global:VncViewerRetrySec = 10'))
+$global:VncViewerScan.at = [DateTime]::UtcNow.AddSeconds(-20); $b2b = Initialize-VncViewerScan -Retry; $c2 = $global:scanCalls
+$global:VncViewerScan.at = [DateTime]::UtcNow.AddSeconds(-31); $b3 = Initialize-VncViewerScan -Retry
+Check 'LJ M47-I2/CC N2: a not-found re-search (and its log line) is skipped under 30 s, runs after; default 30 s' ($c1 -eq 1 -and $c2 -eq 1 -and -not $b2b.path -and $global:scanLogs -eq 2 -and -not $b2.path -and $global:scanCalls -eq 2 -and $b3.path -like '*vncviewer.exe' -and $src.Contains('$global:VncViewerRetrySec = 30'))
 $global:secretLeft = $true; $global:logs = @(); $global:said = $null
 function global:Remove-VncViewOnlySecret { }; function global:Test-VncSecret { $global:secretLeft }; function global:Write-LauncherLog($m) { $global:logs += $m }
 $rmSrc = [regex]::Match($pd, '\$bNone\.Add_Click\(\{(.*?)\}\.GetNewClosure\(\)\)', 'Singleline').Groups[1].Value
@@ -618,6 +620,7 @@ $rmRun = { param($left) $global:secretLeft = $left; $global:logs = @(); $global:
     & ([scriptblock]::Create($rmSrc)); @{ vis = $bNone.Visibility; saved = $res.saved } }
 $rf = & $rmRun $true; $rfSaid = $global:said; $rfLog = $global:logs
 $ro = & $rmRun $false; $roSaid = $global:said; $roLog = $global:logs
-Check 'LJ M47-I1: Remove password rechecks; still saved -> failure message, button stays, log "remove failed"' ($rfSaid -like "Couldn't remove the saved password*" -and $rf.vis -eq 'Visible' -and $rf.saved -and $rfLog -contains 'view-only password: remove failed')
+Check 'LJ M47-I1: Remove password rechecks; still saved -> failure message, button stays, log "remove failed"' ($rfSaid -like "Couldn't remove it.*still saved*" -and $rf.vis -eq 'Visible' -and $rf.saved -and $rfLog -contains 'view-only password: remove failed (still saved)' -and ($rfLog -join ' ') -notmatch 'hex|Secure')
 Check 'LJ M47-I1: removed -> success message, button hidden, log "none"' ($roSaid -eq 'Saved password removed. View only will ask for one.' -and $ro.vis -eq 'Collapsed' -and -not $ro.saved -and $roLog -contains 'view-only password: none')
+Check 'CC N3: Get-VncPrefix / Get-VncFileVersion use [0-9] (non-ASCII digits refused)' ((& $fn 'Get-VncPrefix') -notmatch '\\d' -and (& $fn 'Get-VncFileVersion') -notmatch '\\d' -and (Get-VncPrefix ([string][char]0x0662 + '4')) -eq 24 -and (Get-VncPrefix '23') -eq 23 -and (Get-VncFileVersion ([string][char]0x0661 + '.2')) -eq [version]'0.0' -and (Get-VncFileVersion '1.4.4.0') -eq [version]'1.4.4.0')
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
