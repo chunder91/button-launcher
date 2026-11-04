@@ -2,7 +2,8 @@
 
 ## v1.4.11: Interact closes View Register
 - Charles: "when they click interact and connect to VNC i want the View register screen to close". After Interact starts the viewer, View Register closes; the log says "View Register closed after Interact start". If the viewer can't be started (no address, viewer missing, the start fails), View Register stays open and shows the problem as before. View only is unchanged, and so are the viewer arguments and how it's started.
-- The start-up diagnostics (parent chain, environment) are now gathered in the background, so they never hold up the panels.
+- The start-up diagnostics (parent chain, environment) are now gathered in the background, so they never hold up the panels; the launcher writes them itself when they're ready, and stops the lookup if it hangs or the launcher exits.
+- While a viewer start is in progress, View only and Interact are briefly disabled, so a double click can't start two viewers.
 
 ## v1.4.10: View Register fits the remote screen again
 - The viewer gets -autoscaling again, last on the line: Interact `host:port -autoscaling`, View only `host:port -viewonly -autoscaling`, saved password `host:port -config "<temp .vnc>" -viewonly -autoscaling`. The address is still always first, and the 1.4.9 Windows shell start (which fixed Interact) is unchanged.

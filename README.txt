@@ -27,6 +27,7 @@ WHAT EACH BUTTON DOES
                        only for computers listed by IP address; otherwise
                        the viewer asks. Interact uses UltraVNC's own
                        password box.
+                       v1.4.11: Interact closes View Register once the viewer starts.
                        To connect straight to a register, edit the button and
                        put e.g. 192.168.1.50:5900 in Arguments.
   INTERNET             Opens Google in your browser.
