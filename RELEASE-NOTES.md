@@ -15,6 +15,15 @@ Pending review (build of 2026-11-04). Includes everything in v1.4.8.
 - The viewer is started like a Win+R or manual start: ProcessStartInfo with UseShellExecute, the viewer's own folder as working directory, one exact argument string, never elevated, no environment changes.
 - launcher-error.log gets one more line per launch, read back from the ProcessStartInfo just before Start(): `VNC viewer start: exe="<path to vncviewer.exe>" args="<exact argument string>" dir="<viewer folder>" shell=True`. A saved-password file shows as `<temp .vnc>`; no password is ever on the command line or in the log.
 
+
+Review follow-ups (Kern, ClaudeCode, Lockjaw):
+- View only and Interact icons now sit visibly 8 px from their labels, and both tiles' gloss band ends 4.5 px above the icon (18.5 px).
+- View Register can't be made narrower than 616 px, so the tiles never clip; its height floor matches the 402 px minimum.
+- The tiles' pressed-state watcher is removed when View Register closes.
+- The start-up diagnostics (parent chain, environment) are written just after the panels show, and the parent-chain lookup stops after about 2 s.
+- launcher-error.log is moved to launcher-error.log.old at start-up once it's past 1 MB.
+- Known trade-off: because the viewer is now started through the Windows shell, the launcher no longer gets a process for it, so the hint after a saved view-only password fails can't show.
+
 ## v1.4.8: glossy buttons (style C, "rounder candy gloss")
 
 Review status (build of 2026-11-04): 164bf87 passed ClaudeCode (code) and Lockjaw (security: C0 H0 M0 L0); Kern and Squint said ship with fixes, applied in 2871b6b. The first real Windows captures of 2871b6b (100%, and a 144 DPI render) showed the glossy style is right but found two bugs, fixed in this build: "Restart ScreenConnect" split mid-word, and the "99+" email badge covered the Email label. This build goes back to ClaudeCode, Lockjaw, Kern and Squint and needs a fresh Windows look-check (a true 150% capture is still outstanding). Includes everything in v1.4.7.

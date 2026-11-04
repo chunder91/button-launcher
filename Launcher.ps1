@@ -33,6 +33,11 @@ $global:here         = Split-Path -Parent $MyInvocation.MyCommand.Path
 $global:cfgPath      = Join-Path $global:here 'buttons.json'
 $global:cfgDefault   = Join-Path $global:here 'buttons.default.json'   # R-M2: shipped default, copied once when buttons.json is missing
 $global:logPath      = Join-Path $global:here 'launcher-error.log'
+function global:Step-LauncherLog([string]$path, [long]$max = 1MB) {   # Lockjaw M56-I1: past ~1 MB, keep one .old copy and start fresh
+    try { $f = Get-Item -LiteralPath $path -ErrorAction Stop; if ($f.Length -gt $max) { Move-Item -LiteralPath $path -Destination ($path + '.old') -Force -ErrorAction Stop; return $true } } catch {}
+    return $false
+}
+[void](Step-LauncherLog $global:logPath)
 $global:cfg          = $null
 $global:panels       = New-Object System.Collections.ArrayList   # each: @{ cfg; items; win; stack; ... }
 $global:BaseWidth    = 290                                        # design width; heights/fonts in buttons.json use these units
@@ -2376,6 +2381,8 @@ function global:Get-VncTempAction([double]$sec, [bool]$exited, [bool]$hasWindow,
     if ($sec -ge 8 -or ($hasWindow -and ($sec - $windowSec) -ge 3)) { return 'delete' }
     return 'wait'
 }
+# v1.4.9 (CC Low, accepted): with the Shell.Application start there is no process object, so the viewer never counts as 'exited early'
+# and the saved view-only password failure hint (OnEarlyExit) no longer shows. Known trade-off; we don't hunt for the viewer's process.
 function global:Get-VncProcState($proc) {   # v1.4.9 (CC Low): no process object -> never 'exited' (no false 'early'/'viewer closed'), never a window: the fixed 8 s delete applies
     if ($null -eq $proc) { return @{ exited = $false; window = $false } }
     $ex = $true; $hw = $false; try { $proc.Refresh(); $ex = $proc.HasExited; $hw = (-not $ex) -and $proc.MainWindowHandle -ne [IntPtr]::Zero } catch {}
@@ -2885,10 +2892,10 @@ function global:Get-VncViewerDir([string]$exe) {   # the viewer's own folder; a 
 function global:Test-LauncherElevated {   # v1.4.9 diagnostics: running with the Administrators token? $false if it can't be read
     try { return ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) } catch { return $false }
 }
-function global:Get-LauncherParentChain([int]$max = 5) {   # 'ButtonLauncher.exe < explorer.exe' : exe names only, nearest first; '' if unknown
-    $out = @(); try { $id = $PID; for ($i = 0; $i -lt $max; $i++) {
-        $p = Get-CimInstance Win32_Process -Filter ('ProcessId = {0}' -f [int]$id) -ErrorAction Stop; if (-not $p) { break }
-        $pp = Get-CimInstance Win32_Process -Filter ('ProcessId = {0}' -f [int]$p.ParentProcessId) -ErrorAction SilentlyContinue; if (-not $pp) { break }
+function global:Get-LauncherParentChain([int]$max = 5, [int]$budgetMs = 2000) {   # 'ButtonLauncher.exe < explorer.exe' : exe names only, nearest first; '' if unknown
+    $out = @(); $sw = [Diagnostics.Stopwatch]::StartNew(); try { $id = $PID; for ($i = 0; $i -lt $max -and $sw.ElapsedMilliseconds -lt $budgetMs; $i++) {   # CC Low: ~2 s total budget
+        $p = Get-CimInstance Win32_Process -Property Name, ProcessId, ParentProcessId -OperationTimeoutSec 1 -Filter ('ProcessId = {0}' -f [int]$id) -ErrorAction Stop; if (-not $p) { break }
+        $pp = Get-CimInstance Win32_Process -Property Name, ProcessId, ParentProcessId -OperationTimeoutSec 1 -Filter ('ProcessId = {0}' -f [int]$p.ParentProcessId) -ErrorAction SilentlyContinue; if (-not $pp) { break }
         $out += (Get-SafeText ([string]$pp.Name) 60); $id = $pp.ProcessId } } catch {}
     return ($out -join ' < ')
 }
@@ -2908,8 +2915,9 @@ function global:New-VncStartInfo([string]$exe, [string]$argLine) {   # never ele
 }
 function global:Start-VncProcess($psi) {   # v1.4.9 (Charles 10:43 AM): Explorer's Shell.Application ShellExecute first (a Win+R-style start, normal window), else ProcessStartInfo ShellExecute
     $global:VncStartMethod = 'Shell.Application'
-    try { $sh = New-ShellApplication; [void]$sh.ShellExecute($psi.FileName, $psi.Arguments, $psi.WorkingDirectory, 'open', 1); return $null }   # no process object: the temp .vnc uses the fixed 8 s delete
+    $sh = $null; try { $sh = New-ShellApplication; [void]$sh.ShellExecute($psi.FileName, $psi.Arguments, $psi.WorkingDirectory, 'open', 1); return $null }   # no process object: the temp .vnc uses the fixed 8 s delete
     catch { Write-LauncherLog ('VNC viewer start: Shell.Application failed (' + $_.Exception.GetType().Name + '); using ProcessStartInfo'); $global:VncStartMethod = 'ProcessStartInfo' }
+    finally { if ($sh -and [Runtime.InteropServices.Marshal]::IsComObject($sh)) { try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($sh) } catch {} } }   # release the COM object either way
     return [System.Diagnostics.Process]::Start($psi)
 }
 function global:New-ShellApplication { New-Object -ComObject Shell.Application }
@@ -3054,7 +3062,7 @@ function global:Step-VncScan($ui) {   # UI thread, every 200 ms while a scan run
 # Picker window (Kern D2 + Squint). Standard window chrome stays, so the title shows once there; the client area is D2.
 $global:VncPickerXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="View Register" Width="620" Height="522" MinWidth="560" MinHeight="402" WindowStartupLocation="CenterScreen"
+        Title="View Register" Width="620" Height="522" MinWidth="616" MinHeight="402" WindowStartupLocation="CenterScreen"
         UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
   <Window.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#26262C" Offset="0"/><GradientStop Color="#16161A" Offset="1"/></LinearGradientBrush></Window.Background>
   <Window.Resources>
@@ -3225,16 +3233,20 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
     return $m
 }
 # ---------- v1.4.9 View Register tiles, option B "with icons" (Charles 10:34 AM; Smudge v2 + Kern review). Look only.
-# Two glossy style C tiles 271x72, 16 px apart; Lucide eye / hand (ISC) drawn as constant path geometry, 8 px from a 24 px label with a 3.2 px outline.
+# Two glossy style C tiles 271x72, 16 px apart; Lucide eye / hand (ISC) drawn as constant path geometry, visibly 8 px from a 24 px label with a 3.2 px outline.
 $global:VncTiles = @{
-    view     = @{ label = 'View only'; fill = '#0C6941'; disabled = '#25352E'; icon = 'M2.062,12.348 A1,1 0 0 1 2.062,11.652 A10.75,10.75 0 0 1 21.938,11.652 A1,1 0 0 1 21.938,12.348 A10.75,10.75 0 0 1 2.062,12.348 M15,12 A3,3 0 1 1 9,12 A3,3 0 1 1 15,12' }
-    interact = @{ label = 'Interact'; fill = '#095F84'; disabled = '#253339'; icon = 'M18,11 V6 A2,2 0 0 0 16,4 A2,2 0 0 0 14,6 M14,10 V4 A2,2 0 0 0 12,2 A2,2 0 0 0 10,4 V6 M10,10.5 V6 A2,2 0 0 0 8,4 A2,2 0 0 0 6,6 V14 M18,8 A2,2 0 1 1 22,8 V14 A8,8 0 0 1 14,22 H12 C9.2,22 7.5,21.14 6.01,19.66 L2.41,16.06 A2,2 0 0 1 5.24,13.24 L7,15' }
+    view     = @{ label = 'View only'; iconGap = 6.0; fill = '#0C6941'; disabled = '#25352E'; icon = 'M2.062,12.348 A1,1 0 0 1 2.062,11.652 A10.75,10.75 0 0 1 21.938,11.652 A1,1 0 0 1 21.938,12.348 A10.75,10.75 0 0 1 2.062,12.348 M15,12 A3,3 0 1 1 9,12 A3,3 0 1 1 15,12' }
+    interact = @{ label = 'Interact'; iconGap = 4.5; fill = '#095F84'; disabled = '#253339'; icon = 'M18,11 V6 A2,2 0 0 0 16,4 A2,2 0 0 0 14,6 M14,10 V4 A2,2 0 0 0 12,2 A2,2 0 0 0 10,4 V6 M10,10.5 V6 A2,2 0 0 0 8,4 A2,2 0 0 0 6,6 V14 M18,8 A2,2 0 1 1 22,8 V14 A8,8 0 0 1 14,22 H12 C9.2,22 7.5,21.14 6.01,19.66 L2.41,16.06 A2,2 0 0 1 5.24,13.24 L7,15' }
 }
 $global:VncTileSize = @{ w = 271; h = 72; gap = 16; icon = 26; iconGap = 8; font = 24; outline = 3.2; disabledLabel = '#C4C4C8'; reason = 'Pick a computer to view or control it.' }
+function global:Get-VncTileBandHeight {   # Kern Minor 2: band ends 4.5 px above the higher of cap top and icon top; same on both tiles
+    $S = $global:VncTileSize; $capTop = ($S.h - $S.font * 1.2) / 2 + $S.font * 0.2; $iconTop = ($S.h - $S.icon) / 2
+    return [Math]::Min($capTop, $iconTop) - 4.5
+}
 function global:Get-VncPickerReason([bool]$hasSelection) { if ($hasSelection) { '' } else { $global:VncTileSize.reason } }
 function global:Get-VncPickerHeight([double]$want, [double]$workH, [double]$chrome = 236, [double]$rowH = 32, [int]$minRows = 4) {   # the window grows; only past the work area do list rows go, never below $minRows
     if (-not ($workH -gt 0) -or $want -le $workH) { return $want }
-    return [Math]::Max([Math]::Floor($workH), $chrome + $minRows * $rowH + 8)
+    return [Math]::Max([Math]::Floor($workH), [Math]::Max(402, $chrome + $minRows * $rowH + 8))   # CC Low: never under the XAML MinHeight (402)
 }
 function global:Get-VncPickerRows([double]$winH, [double]$chrome = 236, [double]$rowH = 32) { [Math]::Floor(($winH - $chrome - 8) / $rowH) }   # visible list rows at a window height
 function global:Get-VncTileLook([string]$kind, [string]$state) {   # rest | hover | pressed | disabled -> fill stops, gloss, sparkle, label colour (pure; tested)
@@ -3249,12 +3261,12 @@ function global:New-VncTileFace($b, [string]$kind) {   # the tile drawn inside t
     $g = New-Object System.Windows.Controls.Grid; $g.Width = $S.w; $g.Height = $S.h; $g.IsHitTestVisible = $true
     $bg = New-Object System.Windows.Controls.Border; $bg.CornerRadius = New-Object System.Windows.CornerRadius $rad; $bg.BorderThickness = New-Object System.Windows.Thickness 1; $bg.BorderBrush = Get-GlossBrush 'vncRim' { New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromArgb(40, 255, 255, 255)) }
     $glow = New-Object System.Windows.Controls.Border; $glow.CornerRadius = $bg.CornerRadius; $glow.Background = New-GlossInnerGlow; $glow.IsHitTestVisible = $false
-    $capTop = ($S.h - $S.font * 1.2) / 2 + $S.font * 0.2; $bandH = Get-GlossBandHeight $capTop $S.h; $bc = Get-GlossBandCorner $rad $bandH
+    $bandH = Get-VncTileBandHeight; $bc = Get-GlossBandCorner $rad $bandH
     $band = New-Object System.Windows.Controls.Border; $band.VerticalAlignment = 'Top'; $band.Height = $bandH; $band.Margin = New-Object System.Windows.Thickness 3.7, 0.5, 3.7, 0
     $band.CornerRadius = New-Object System.Windows.CornerRadius $bc[0], $bc[0], $bc[1], $bc[1]; $band.Background = New-GlossBand; $band.IsHitTestVisible = $false
     $spark = New-GlossSparkle
     $sp = New-Object System.Windows.Controls.StackPanel; $sp.Orientation = 'Horizontal'; $sp.HorizontalAlignment = 'Center'; $sp.VerticalAlignment = 'Center'; $sp.IsHitTestVisible = $false
-    $ig = New-Object System.Windows.Controls.Grid; $ig.Width = $S.icon; $ig.Height = $S.icon; $ig.Margin = New-Object System.Windows.Thickness 0, 0, $S.iconGap, 0; $ig.VerticalAlignment = 'Center'
+    $ig = New-Object System.Windows.Controls.Grid; $ig.Width = $S.icon; $ig.Height = $S.icon; $ig.Margin = New-Object System.Windows.Thickness 0, 0, ([double]$t.iconGap), 0; $ig.VerticalAlignment = 'Center'
     $geo = Get-GlossBrush ('vncIcon|' + $kind) { [System.Windows.Media.Geometry]::Parse($t.icon) }.GetNewClosure()   # constant Lucide path data; nothing loaded from disk or the network
     $paths = foreach ($wd in @((2 + $S.outline), 2)) { $pa = New-Object System.Windows.Shapes.Path; $pa.Data = $geo; $pa.Stretch = 'Uniform'; $pa.StrokeThickness = $wd; $pa.StrokeLineJoin = 'Round'; $pa.StrokeStartLineCap = 'Round'; $pa.StrokeEndLineCap = 'Round'; $pa.Margin = New-Object System.Windows.Thickness 1; [void]$ig.Children.Add($pa); $pa }
     $lab = New-Object System.Windows.Controls.TextBlock; $lab.Text = $t.label; $lab.FontSize = $S.font; $lab.FontWeight = [System.Windows.FontWeights]::Bold; $lab.VerticalAlignment = 'Center'; $lab.TextWrapping = 'NoWrap'
@@ -3277,8 +3289,11 @@ function global:New-VncTileFace($b, [string]$kind) {   # the tile drawn inside t
         $f.ring.Visibility = $(if ($f.b.IsKeyboardFocused -and $f.b.IsEnabled) { 'Visible' } else { 'Hidden' }) }.GetNewClosure()
     $b.Add_MouseEnter($upd); $b.Add_MouseLeave($upd); $b.Add_IsEnabledChanged($upd); $b.Add_IsKeyboardFocusedChanged($upd)
     try { [System.ComponentModel.DependencyPropertyDescriptor]::FromProperty([System.Windows.Controls.Primitives.ButtonBase]::IsPressedProperty, [System.Windows.Controls.Button]).AddValueChanged($b, [EventHandler]$upd) } catch {}
-    & $upd
+    $g.Tag = [EventHandler]$upd; & $upd
     return $g
+}
+function global:Remove-VncTileWatch($b) {   # CC Low: drop the IsPressed watcher when the picker closes, so tiles don't leak
+    try { if ($b -and $b.Content -and $b.Content.Tag -is [EventHandler]) { [System.ComponentModel.DependencyPropertyDescriptor]::FromProperty([System.Windows.Controls.Primitives.ButtonBase]::IsPressedProperty, [System.Windows.Controls.Button]).RemoveValueChanged($b, $b.Content.Tag); $b.Content.Tag = $null } } catch {}
 }
 function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed computers; no network scan, no Add/Remove/Rescan
     if ($global:vncPicker -and $global:vncPicker.win.IsVisible) { $global:vncPicker.win.Activate() | Out-Null; return }
@@ -3342,7 +3357,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         elseif ($k -eq 'System' -and $_.SystemKey -eq 'I' -and $bInt.IsEnabled) { $_.Handled = $true; $ui.go.Invoke($false) }   # Alt+I = Interact
         elseif ($k -eq 'F5') { $_.Handled = $true; $ui.startCheck.Invoke() }
         elseif ($k -eq 'Escape') { $_.Handled = $true; $w.Close() } }.GetNewClosure())
-    $w.Add_Closed({ $ui.stopCheck.Invoke(); $global:vncPicker = $null
+    $w.Add_Closed({ $ui.stopCheck.Invoke(); $global:vncPicker = $null; Remove-VncTileWatch $bView; Remove-VncTileWatch $bInt
         $ct = New-Object System.Windows.Threading.DispatcherTimer; $ct.Interval = [TimeSpan]::FromSeconds(3)
         $ct.Add_Tick({ $ct.Stop(); if (-not $global:vncPicker) { Clear-VncDeadWorkers -All } }.GetNewClosure()); $ct.Start() }.GetNewClosure())
     $global:vncPicker = $ui
@@ -4245,7 +4260,8 @@ try {
         if (-not $got) { [void]$global:showEvent.Set(); exit 0 }   # already running: ask it to show its panels, then quit quietly
     }
     $global:LauncherElevated = Test-LauncherElevated
-    Write-LauncherLog (Get-LauncherStartLogText $global:AppVersion $global:LauncherElevated ([Environment]::Is64BitProcess) ([string](Get-Location).ProviderPath) (Get-LauncherParentChain)); Write-LauncherLog (Get-LauncherEnvText)   # v1.4.3: which copy ran; v1.4.9: how it ran (diagnostics only, no behaviour change)
+    $global:LauncherStartCwd = [string](Get-Location).ProviderPath
+    [void][System.Windows.Threading.Dispatcher]::CurrentDispatcher.BeginInvoke([System.Windows.Threading.DispatcherPriority]::Background, [Action]{ try { Write-LauncherLog (Get-LauncherStartLogText $global:AppVersion $global:LauncherElevated ([Environment]::Is64BitProcess) $global:LauncherStartCwd (Get-LauncherParentChain)); Write-LauncherLog (Get-LauncherEnvText) } catch {} })   # CC Low: after the panels show   # v1.4.3: which copy ran; v1.4.9: how it ran (diagnostics only, no behaviour change)
     try { [void](Initialize-VncViewerScan) } catch {}   # v1.4.3: find vncviewer.exe once (bounded, a few folder reads)
     if (-not (Test-Path -LiteralPath $global:cfgPath) -and (Test-Path -LiteralPath $global:cfgDefault)) { Copy-Item -LiteralPath $global:cfgDefault -Destination $global:cfgPath }
     try { $global:cfg = Get-Content -LiteralPath $global:cfgPath -Raw -Encoding UTF8 | ConvertFrom-Json; if (-not $global:cfg) { throw 'buttons.json is empty.' } }
