@@ -192,7 +192,7 @@ $nc = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.Functi
 $nt = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:New-Tile' }, $true).Extent.Text
 $mf = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-MaxLines' }, $true).Extent.Text
 Invoke-Expression $mf; $tb = [pscustomobject]@{ TextTrimming = $null; Uid = ''; MaxHeight = 0; LineHeight = 15.6 }; Set-MaxLines $tb 3
-Check 'v1.4.2 / CC L1: fit-to-tile labels, no Viewbox (never below 12 px), 3-line cap with ellipsis, tooltip when 12 px overflows, bigger start sizes' ($nc -notmatch 'Viewbox' -and $nc.Contains('Set-MaxLines $main 3   # CC L1') -and $nc.Contains('if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs)) { $main.ToolTip =') -and $nc.Contains("'hero' { 26 } 'full' { 20 } default { 16 }") -and $src -notmatch 'Controls\.Viewbox' -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
+Check 'v1.4.2 / CC L1: fit-to-tile labels, no Viewbox (never below 12 px), 3-line cap with ellipsis, tooltip when 12 px overflows, bigger start sizes' ($nc -notmatch 'Viewbox' -and $nc.Contains('Set-MaxLines $main 3 $custom   # CC L1') -and $nc.Contains('if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs) -and $custom) { $main.ToolTip =') -and $nc.Contains("'hero' { 26 } 'full' { 20 } default { 16 }") -and $src -notmatch 'Controls\.Viewbox' -and $nt.Contains('(Get-CustomFullName $btn) + "`n"'))
 Add-Type -AssemblyName WindowsBase -ErrorAction SilentlyContinue
 if (-not ('System.Windows.Size' -as [type])) { Add-Type -TypeDefinition 'namespace System.Windows { public struct Size { public double Width; public double Height; public Size(double w, double h) { Width = w; Height = h; } } }' }
 Invoke-Expression ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-FitFontSize' }, $true).Extent.Text)
@@ -390,7 +390,7 @@ finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $ci }
 
 # --- v1.4.8 Windows capture fixes (2871b6b at 100% / 144 DPI) ---
 Invoke-Expression ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-LabelMaxWidth' }, $true).Extent.Text)
-Check 'capture fix 1: label width = tile content minus the restart tiles'' 2 px red border each side (half 109 / restart half 105, full 248 / restart full 244)' ((Get-LabelMaxWidth 'half' $false) -eq 109 -and (Get-LabelMaxWidth 'half' $true) -eq 105 -and (Get-LabelMaxWidth 'full' $false) -eq 248 -and (Get-LabelMaxWidth 'full' $true) -eq 244)
+Check 'v1.4.9 (CC Low): label width = tile content minus the 1 px edge (normal) or 2 px red border (restart) each side (half 107 / restart 105, full 246 / restart 244)' ((Get-LabelMaxWidth 'half' $false) -eq 107 -and (Get-LabelMaxWidth 'half' $true) -eq 105 -and (Get-LabelMaxWidth 'full' $false) -eq 246 -and (Get-LabelMaxWidth 'full' $true) -eq 244)
 Check 'capture fix 1: both icon-left and icon-above labels use Get-LabelMaxWidth $cls $danger' ($nc.Contains('$text.MaxWidth = (Get-LabelMaxWidth $cls $danger) - $iconW') -and $nc.Contains('if ($above) { $text.MaxWidth = Get-LabelMaxWidth $cls $danger }') -and $nc -notmatch '109 - \$iconW')
 # word-aware fake: WrapWithOverflow keeps words whole, so an over-wide word widens DesiredSize (WPF behaviour); Wrap would split it by character
 function New-WordLabel([string]$text) { $m = [pscustomobject]@{ FontSize = 0.0; LineHeight = 0.0; Tag = $null; Name = ''; DesiredSize = $null; TextWrapping = 'Wrap' }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; words = @($text -split ' ') }
@@ -419,4 +419,25 @@ $ov = foreach ($t in '1', '42', '99+') { $w = Get-MailBadgeWidth $t; (Get-MailBa
 Check ('capture fix 2: badge right edge stays >= 4 px short of the Email label (label at icon 24 + gap 10 = 34): right edges ' + ($ov -join ', ')) (@($ov | Where-Object { $_ -gt 30 }).Count -eq 0)
 Check 'capture fix 2: same badge sizes (18/24/30) and colours; 1-digit stays near icon right - 8 (moved 4 px at most); label below the icon keeps icon right - 8' ((Get-MailBadgeWidth '99+') -eq 30 -and (Get-MailBadgeLeft 24 18 10) -ge 12 -and (Get-MailBadgeLeft 24 30 ([double]::PositiveInfinity)) -eq 16 -and $ms.Contains("`$bd.Background = Brush '#111111'") -and $ms.Contains("`$tx.Foreground = Brush '#FACC15'"))
 Check 'capture fix 2: badge re-placed whenever its width changes; Email (dark label) keeps no outline' ($ms.Contains('$bd.Width = Get-MailBadgeWidth $txt; [System.Windows.Controls.Canvas]::SetLeft($bd, (Get-MailBadgeLeft $e.ipx $bd.Width $e.iconGap))') -and (Test-GlossDarkLabel '#111111'))
+# --- v1.4.9 follow-ups (Kern r3 Minor 2 + 3, CC Low) ---
+Invoke-Expression ([regex]::Match($ms, '(?m)^function global:Get-MailBadgeTop[^\r\n]*').Value)
+Check 'v1.4.9: badges wider than 18 px (42, 99+) sit at Canvas.Top -10; 1 digit stays -6; set with every count' ((Get-MailBadgeTop (Get-MailBadgeWidth '1')) -eq -6 -and (Get-MailBadgeTop (Get-MailBadgeWidth '42')) -eq -10 -and (Get-MailBadgeTop (Get-MailBadgeWidth '99+')) -eq -10 -and $ms.Contains('SetTop($bd, (Get-MailBadgeTop $bd.Width))'))
+Invoke-Expression ([regex]::Match($ms, '(?ms)^function global:Get-DefaultLabels\b.*?^\}|(?m)^function global:Get-DefaultLabels\b[^\r\n]*\}[^\r\n]*$').Value)
+Invoke-Expression ([regex]::Match($ms, '(?ms)^function global:Test-CustomLabel\b.*?^\}|(?m)^function global:Test-CustomLabel\b[^\r\n]*\}[^\r\n]*$').Value)
+Invoke-Expression $mf; $global:cfgDefault = [IO.Path]::Combine($root, 'buttons.default.json'); $global:DefaultLabelSet = $null
+$tb9 = [pscustomobject]@{ TextTrimming = $null; Uid = ''; MaxHeight = 0; LineHeight = 15.6 }; Set-MaxLines $tb9 3 $false
+Check 'v1.4.9: the "..." fallback and tooltip are for custom labels only; default labels get 3 lines, no trimming' ($tb9.TextTrimming -eq 'None' -and [Math]::Abs($tb9.MaxHeight - 46.8) -lt 0.001 -and -not (Test-CustomLabel 'VIEW REGISTER') -and -not (Test-CustomLabel "RESTART`nSCREEN CONNECT") -and (Test-CustomLabel 'My own button') -and $nc.Contains('Set-MaxLines $main 3 $custom') -and $nc.Contains('$availH $fs) -and $custom) { $main.ToolTip'))
+# like New-WordLabel, but hard line breaks in the label (`n) start a new line, as WPF does
+function New-HardLabel([string]$text) { $m = [pscustomobject]@{ FontSize = 0.0; LineHeight = 0.0; Tag = $null; Name = ''; DesiredSize = $null; TextWrapping = 'Wrap' }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; paras = @($text -split "`n") }
+    $t | Add-Member ScriptMethod Measure { param($sz) $cw = $this.m.FontSize * 0.55; $lines = 0; $widest = 0.0
+        foreach ($pa in $this.paras) { $lines++; $cur = 0.0
+            foreach ($w in @($pa -split ' ' | Where-Object { $_ })) { $ww = $w.Length * $cw; $add = if ($cur -gt 0) { $cw + $ww } else { $ww }
+                if ($cur -gt 0 -and $cur + $add -gt $sz.Width) { $lines++; $cur = $ww } else { $cur += $add }
+                if ($cur -gt $widest) { $widest = $cur } } }
+        $this.m.DesiredSize = [pscustomobject]@{ Height = $lines * $this.m.LineHeight }; $this.DesiredSize = [pscustomobject]@{ Width = $widest; Height = $lines * $this.m.LineHeight } }; return @($m, $t) }
+$bad9 = @(); $n9 = 0
+foreach ($pn in $defs.panels) { foreach ($b in $pn.buttons) { if (-not $b.label) { continue }
+    foreach ($w9 in 105, 244) { $n9++; $fk = New-HardLabel ([string]$b.label); $ok = Set-FitFontSize $fk[0] $fk[1] $w9 60 16
+        if (-not $ok -or $fk[0].FontSize -lt 12 -or $fk[1].DesiredSize.Width -gt $w9) { $bad9 += ('{0}@{1}' -f $b.label, $w9) } } } }
+Check ('v1.4.9 (Kern 3): every default label fits whole-word at 105 and 244 px with the 12-13 px floor (' + $n9 + ' checks); over: ' + ($bad9 -join ' | ')) ($n9 -gt 0 -and $bad9.Count -eq 0)
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

@@ -504,9 +504,16 @@ function global:New-Label($text, $fg, $size) {
 }
 
 # Kern-3/UX-6: label floor of 12 DIP (13 for 3+ line labels) on screen, after the panel's scale is applied.
-function global:Set-MaxLines($tb, [int]$n) {   # WPF has no MaxLines: cap the height at n lines and trim the rest with an ellipsis
-    $tb.TextTrimming = 'CharacterEllipsis'; $tb.Uid = ('maxlines=' + $n); $tb.MaxHeight = $n * [double]$tb.LineHeight
+function global:Set-MaxLines($tb, [int]$n, [bool]$ellipsis = $true) {   # WPF has no MaxLines: cap the height at n lines and trim the rest with an ellipsis (v1.4.9: custom labels only)
+    $tb.TextTrimming = $(if ($ellipsis) { 'CharacterEllipsis' } else { 'None' }); $tb.Uid = ('maxlines=' + $n); $tb.MaxHeight = $n * [double]$tb.LineHeight
 }
+function global:Get-DefaultLabels {   # v1.4.9 (Kern 3): the shipped labels from buttons.default.json, read once; '' set if unreadable
+    if ($null -eq $global:DefaultLabelSet) { $set = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::Ordinal)
+        try { $d = [IO.File]::ReadAllText($global:cfgDefault) | ConvertFrom-Json; foreach ($pn in @($d.panels)) { foreach ($b in @($pn.buttons)) { if ($b.label) { [void]$set.Add([string]$b.label) } } } } catch {}
+        $global:DefaultLabelSet = $set }
+    return ,$global:DefaultLabelSet   # comma: return the set itself, not its items (an empty set would come back as $null)
+}
+function global:Test-CustomLabel([string]$label) { -not (Get-DefaultLabels).Contains($label) }   # v1.4.9: only labels the user typed get the '...' fallback
 function global:Apply-MinFont($p) {
     $s = [Math]::Max(0.1, [double]$p.scale.ScaleX)
     if ($p.grip -and $p.grip.Child -is [System.Windows.Controls.TextBlock]) { $p.grip.Child.FontSize = [Math]::Max(12.0, 12.0 / $s) }   # Kern 12 px floor: the Editing bar too (built outside the label sink)
@@ -640,7 +647,7 @@ function global:New-MissingDot($tip) {
 }
 
 function global:Get-LabelMaxWidth([string]$cls, [bool]$danger) {   # 290 panel - 12 padding - 6 gap - 24 tile padding; restart tiles also lose their 2 px red border on each side (the root cause of 'ScreenConnec' + 't')
-    $w = if ($cls -eq 'half') { 109 } else { 248 }; if ($danger) { $w -= 4 }; return $w
+    $w = if ($cls -eq 'half') { 109 } else { 248 }; $w -= $(if ($danger) { 4 } else { 2 }); return $w   # v1.4.9 (CC Low): normal tiles' 1 px edge each side -> 107/246; restart tiles' 2 px border -> 105/244
 }
 function global:Set-FitFontSize($main, $text, [double]$maxW, [double]$maxH, [double]$fs) {   # v1.4.2 (Kern/Squint): wrap first (up to 3 lines), then shrink to 12; returns $true when it fits
     if (-not ($maxW -gt 0)) { $maxW = [double]::PositiveInfinity }
@@ -710,8 +717,9 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
     }
     if ($above) { $text.MaxWidth = Get-LabelMaxWidth $cls $danger }   # wrap width for centred labels too
     $availH = [Math]::Max(12, [double]$h - 22 - $(if ($above -and $icon) { $ipx + 6 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }))   # tile minus 3+3 margin and 8+8 content margin, minus the icon above
-    if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs)) { $main.ToolTip = ($lab.main -replace "`n", ' ') }   # Squint 3: at 12 px still too long -> full name in the tooltip
-    Set-MaxLines $main 3   # CC L1: never scaled below 12 px; WrapWithOverflow keeps words whole, and a word that still can't fit (or 3+ lines, or a raised floor at panel scale < 1) ends in '...'
+    $custom = Test-CustomLabel ([string]$btn.label)   # v1.4.9 (Kern 3): default labels always fit (tested at the 12-13 px floor), so only custom labels get '...' + tooltip
+    if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs) -and $custom) { $main.ToolTip = ($lab.main -replace "`n", ' ') }   # Squint 3: at 12 px still too long -> full name in the tooltip
+    Set-MaxLines $main 3 $custom   # CC L1: never scaled below 12 px; WrapWithOverflow keeps words whole, and a word that still can't fit (or 3+ lines, or a raised floor at panel scale < 1) ends in '...'
     [void]$sp.Children.Add($text)
     return @{ el = $sp; missingPic = $missingPic; icon = $icon }
 }
@@ -3481,6 +3489,7 @@ function global:Get-MailBadgeWidth([string]$t) { switch ($t.Length) { 0 { 18 } 1
 function global:Get-MailBadgeLeft([double]$ipx, [double]$w, [double]$iconGap) {   # Windows capture fix: '99+' (30 px at icon right - 8) ran 12 px into the label. Keep icon right - 8 when it fits, else pin the right edge 4 px short of the label
     return [Math]::Min($ipx - 8, $ipx + $iconGap - 4 - $w)
 }
+function global:Get-MailBadgeTop([double]$w) { if ($w -gt 18) { -10 } else { -6 } }   # v1.4.9 (Kern r3 Minor 2): wider badges (42, 99+) sit 4 px higher so more of the envelope shows
 function global:Test-MailShowBadge($s) { ($s.phase -eq 'ok' -or $s.phase -eq 'retry') -and [int]$s.count -gt 0 }
 function global:Test-MailShowRing($s) { $s.phase -eq 'authfail' -or $s.phase -eq 'methodfail' -or $s.phase -eq 'offline' }   # the count is hidden whenever the ring shows
 function global:Get-MailMotion([string]$style, [bool]$animOn) { if (-not $animOn) { return 'badge' }; if ($style -ceq 'badge') { return 'badge' }; return 'pulse' }   # Charles 1:58 PM: Pulse (default) or Just show the number
@@ -3841,7 +3850,7 @@ function global:Set-MailEntry($e, [bool]$grew) {
     $e.ring.Visibility = if (Test-MailShowRing $s) { 'Visible' } else { 'Collapsed' }
     $motion = Get-MailMotion ([string]$m.set.style) (Test-MailAnimOn)
     if (Test-MailShowBadge $s) {
-        $txt = Get-MailBadgeText ([int]$s.count); $e.text.Text = $txt; $bd.Width = Get-MailBadgeWidth $txt; [System.Windows.Controls.Canvas]::SetLeft($bd, (Get-MailBadgeLeft $e.ipx $bd.Width $e.iconGap))   # wider '99+' grows left, over the icon, not onto the label
+        $txt = Get-MailBadgeText ([int]$s.count); $e.text.Text = $txt; $bd.Width = Get-MailBadgeWidth $txt; [System.Windows.Controls.Canvas]::SetLeft($bd, (Get-MailBadgeLeft $e.ipx $bd.Width $e.iconGap)); [System.Windows.Controls.Canvas]::SetTop($bd, (Get-MailBadgeTop $bd.Width))   # wider '99+' grows left, over the icon, not onto the label
         $appear = $bd.Visibility -ne 'Visible'
         $bd.Visibility = 'Visible'
         $sx = [System.Windows.Media.ScaleTransform]::ScaleXProperty; $sy = [System.Windows.Media.ScaleTransform]::ScaleYProperty
