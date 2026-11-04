@@ -2,7 +2,9 @@
 
 ## v1.4.8: glossy buttons (style C, "rounder candy gloss")
 
-Pending review (build of 2026-11-04). Includes everything in v1.4.7.
+Review status (build of 2026-11-04): the first build (164bf87) passed ClaudeCode (code) and Lockjaw (security: C0 H0 M0 L0). Kern and Squint (look and feel) said ship with fixes; this build applies those fixes and ClaudeCode's notes and goes back to all four for review. Not yet run on a real Windows PC: a Windows look-check at 100% and 150% is still needed. Includes everything in v1.4.7.
+
+- Follow-up fixes: the small grey second lines (such as "Version 11") are now full strength with a thin dark outline so they are easy to read; the outline thickness and gloss are worked out after the text has its final size; buttons in the same row get the same gloss height; margins no longer depend on the PC's language settings; the sparkle check knows about centred labels.
 
 - Charles picked style C (8:44 AM Nov 4). Every button keeps its own colours, size, gaps, fonts, auto-fit and layout. Only the finish changes:
   - 18 px corners (never more than half the button's height)

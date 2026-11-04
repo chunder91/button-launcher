@@ -517,6 +517,7 @@ function global:Apply-MinFont($p) {
         $tb.LineHeight = [Math]::Round($tb.FontSize * 1.2, 1)
         if ([string]$tb.Uid -match '^maxlines=(\d)$') { $tb.MaxHeight = [int]$Matches[1] * $tb.LineHeight }   # keep the 3-line cap after scaling
     }
+    if ($p.gloss) { Update-GlossFinish $p.gloss }   # v1.4.8 Kern fixes 3+4: after the final label sizes
 }
 
 function global:Play-Click {
@@ -670,7 +671,7 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
     $lab = Get-DisplayLabel $btn
     $text = New-Object System.Windows.Controls.StackPanel; $text.VerticalAlignment = 'Center'
     $main = New-Label $lab.main $fg $fs; [void]$text.Children.Add($main)
-    if ($lab.sub) { $sl = New-Label $lab.sub $fg 12; $sl.FontWeight = [System.Windows.FontWeights]::Normal; $sl.LineHeight = 14; $sl.Opacity = 0.85; [void]$text.Children.Add($sl) }   # Kern: 12 px Regular
+    if ($lab.sub) { $sl = New-Label $lab.sub $fg 12; $sl.FontWeight = [System.Windows.FontWeights]::Normal; $sl.LineHeight = 14; $sl.Opacity = 1; $sl.Name = 'subLabel'; [void]$text.Children.Add($sl) }   # Kern: 12 px Regular; v1.4.8 fix: full opacity, outlined in New-Tile when light
     $isRedDog = ([string]$btn.image) -match '(?i)reddog'
     if ($isRedDog -and $cls -eq 'hero') { $ipx = 64 }
     $src = Get-PicSource $btn $ipx
@@ -723,6 +724,20 @@ function global:Test-GlossDarkLabel([string]$fg) {   # dark label (e.g. #111111 
     $c = Get-Color $fg; return ((0.299 * $c.R + 0.587 * $c.G + 0.114 * $c.B) -le 150)
 }
 function global:Get-GlossOutlineWidth([double]$fontSize) { if ($fontSize -ge 16) { 3.2 } else { 2.4 } }   # Kern fix 2/5
+function global:Get-GlossOutlineOffsets([double]$width) {   # 8 copies: sides at w/2, diagonals at w/2 x 0.7071 (round outline, no scallops)
+    $d = $width / 2; $dd = [Math]::Round($d * 0.7071, 2)
+    return @(@($d, 0), @(-$d, 0), @(0, $d), @(0, -$d), @($dd, $dd), @(-$dd, $dd), @($dd, -$dd), @(-$dd, -$dd))
+}
+function global:Get-GlossRowBand($bands) {   # Kern fix 4: one band per row = the row's smallest; a 0 (under 4 px of room) drops the gloss for the whole row
+    $b = @($bands); if ($b.Count -eq 0) { return 0 }
+    $m = ($b | ForEach-Object { [double]$_ } | Measure-Object -Minimum).Minimum; if ($m -lt 4) { return 0 }; return $m
+}
+function global:Get-GlossLabelRight([double]$tileW, [double]$inkW, [bool]$centred) {   # ClaudeCode: right edge of the label ink; centred labels sit in the middle of the 12 px-margined content box
+    if ($centred) { return 12 + ((($tileW - 24) + [Math]::Min($inkW, $tileW - 24)) / 2) }; return 12 + $inkW
+}
+function global:Get-GlossBandCorner([double]$rad, [double]$bandH) {   # ClaudeCode: band corners never more than half the band's height; returns @(top, bottom)
+    $half = [Math]::Floor($bandH / 2); return @([double][Math]::Max(0.0, [Math]::Min($rad - 2, $half)), [double][Math]::Max(0.0, [Math]::Min(4.0, $half)))
+}
 function global:Get-GlossOutlineHex([string]$fill) { ConvertTo-Hex (Mix-Color (Get-Color $fill) (Get-Color '#000000') 0.72) }   # dark tone of the button's own fill
 function global:Get-GlossFillStops([string]$fill, [string]$state = 'rest') {   # 3 stops (top, 0.55 = the configured colour, bottom); hover +10% toward white, pressed 12% darker
     $c = Get-Color $fill; $w = Get-Color '#FFFFFF'; $b = Get-Color '#000000'; $G = $global:Gloss
@@ -773,7 +788,7 @@ function global:New-GlossSparkle {   # static 4-point star, 2.6 px radius; never
     $pth.Data = Get-GlossBrush 'sparkleGeo' { [System.Windows.Media.Geometry]::Parse('M2.6,0 L3.2,2 5.2,2.6 3.2,3.2 2.6,5.2 2,3.2 0,2.6 2,2 Z') }
     $pth.Fill = Get-GlossBrush 'sparkleFill' { New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromArgb(230, 255, 255, 255)) }
     $pth.HorizontalAlignment = 'Right'; $pth.VerticalAlignment = 'Top'
-    $o = $global:Gloss.sparkleIn - $global:Gloss.sparkleR; $pth.Margin = ('0,{0},{0},0' -f ($o - 1))   # inside the 1 px rim
+    $o = $global:Gloss.sparkleIn - $global:Gloss.sparkleR; $pth.Margin = New-Object System.Windows.Thickness 0, ($o - 1), ($o - 1), 0   # inside the 1 px rim; built directly so a comma-decimal PC still gets 8.4 (ClaudeCode)
     return $pth
 }
 function global:Add-GlossOutline($main, [string]$hex, [double]$width) {   # no Effect (D2 rule): 8 dark copies offset by width/2 behind the label, bound to it so fit/row sizing follow
@@ -781,8 +796,7 @@ function global:Add-GlossOutline($main, [string]$hex, [double]$width) {   # no E
     $i = $par.Children.IndexOf($main); $par.Children.RemoveAt($i)
     $gr = New-Object System.Windows.Controls.Grid; $gr.HorizontalAlignment = $main.HorizontalAlignment; $gr.VerticalAlignment = $main.VerticalAlignment
     $br = Get-GlossBrush ('ol|' + $hex) { New-Object System.Windows.Media.SolidColorBrush (Get-Color $hex) }.GetNewClosure()
-    $d = $width / 2; $dd = [Math]::Round($d * 0.7071, 2)
-    foreach ($o in @(@($d, 0), @(-$d, 0), @(0, $d), @(0, -$d), @($dd, $dd), @(-$dd, $dd), @($dd, -$dd), @(-$dd, -$dd), @(0, 0.96))) {
+    foreach ($o in @((Get-GlossOutlineOffsets $width) + ,@(0, 0.96))) {
         $t = New-Object System.Windows.Controls.TextBlock; $t.IsHitTestVisible = $false; $t.Foreground = $br
         foreach ($pr in 'Text', 'FontSize', 'LineHeight', 'FontFamily', 'FontWeight', 'TextAlignment', 'TextTrimming', 'MaxHeight', 'TextWrapping', 'LineStackingStrategy', 'HorizontalAlignment') {
             $bd = New-Object System.Windows.Data.Binding $pr; $bd.Source = $main; $bd.Mode = 'OneWay'
@@ -790,10 +804,34 @@ function global:Add-GlossOutline($main, [string]$hex, [double]$width) {   # no E
             [void]$t.SetBinding($dp, $bd) }
         $t.RenderTransform = New-Object System.Windows.Media.TranslateTransform $o[0], $o[1]
         [void]$gr.Children.Add($t) }
-    [void]$gr.Children.Add($main); $par.Children.Insert($i, $gr)
+    [void]$gr.Children.Add($main); $par.Children.Insert($i, $gr); $gr.Tag = [double]$width
+    return $gr
 }
-# One tile (D2 Fluent 3D): 12 px gradient fill, gradient rim, top sheen, pre-built glow, hover lift + glow, press 0.97, launch flash, 2 px focus ring,
-# dashed outline while editing, amber dot when not set up.
+function global:Set-GlossOutlineWidth($gr, [double]$width) {   # re-place the 8 copies (the 9th is the 0.96 px drop) for a new width
+    if (-not $gr -or [double]$gr.Tag -eq $width) { return }
+    $off = Get-GlossOutlineOffsets $width
+    for ($k = 0; $k -lt 8; $k++) { $t = $gr.Children[$k].RenderTransform; $t.X = $off[$k][0]; $t.Y = $off[$k][1] }
+    $gr.Tag = [double]$width
+}
+# Kern fixes 3+4: the outline width, the gloss band and the sparkle are picked after row sync and Apply-MinFont, from the final label size, one band per row.
+function global:Update-GlossFinish($entries) {
+    if (-not $entries) { return }
+    foreach ($e in $entries) {
+        $fsz = if ($e.lab) { [double]$e.lab.FontSize } else { 0 }
+        if ($e.ol) { Set-GlossOutlineWidth $e.ol (Get-GlossOutlineWidth $fsz) }
+        $e.el.Measure((New-Object System.Windows.Size([double]::PositiveInfinity, [double]::PositiveInfinity))); $ds = $e.el.DesiredSize
+        $e.capTop = 8 + [Math]::Max(0, ($e.h - 16 - $ds.Height) / 2) + $fsz * 0.2
+        $e.band = Get-GlossBandHeight $e.capTop $e.h
+        $centred = ([string]$e.el.HorizontalAlignment -eq 'Center') -or ($e.lab -and [string]$e.lab.TextAlignment -eq 'Center')
+        $e.labelRight = Get-GlossLabelRight $e.tileW $ds.Width $centred }
+    foreach ($grp in @($entries | Group-Object { $_.row })) {
+        $bandH = Get-GlossRowBand @($grp.Group | ForEach-Object { $_.band })
+        foreach ($e in $grp.Group) {
+            if ($bandH -gt 0) { $e.sheen.Height = $bandH; $e.sheen.Margin = New-Object System.Windows.Thickness 3.7, 0.5, 3.7, 0; $bc = Get-GlossBandCorner $e.rad $bandH; $e.sheen.CornerRadius = New-Object System.Windows.CornerRadius $bc[0], $bc[0], $bc[1], $bc[1]; $e.sheen.Visibility = 'Visible' } else { $e.sheen.Visibility = 'Collapsed' }
+            $e.spark.Visibility = $(if (Test-GlossSparkle $e.tileW $e.capTop $e.labelRight $e.rad) { 'Visible' } else { 'Collapsed' }) } }
+}
+# One tile (v1.4.8 glossy style C): 18 px clamped corners, gradient fill (+4%/-6%), white gloss band (one height per row), inner glow, dark outline copies on light labels,
+# static sparkle, hover +10% lift + glow, pressed 12% darker with no gloss, inset 18/14 focus ring, launch flash, dashed outline while editing, amber dot when not set up.
 function global:New-Tile($p, $btn) {
     $h = if ($btn.height) { [double]$btn.height } else { 80 }
     $h = [Math]::Max(44, $h)                                  # 44 px minimum tile
@@ -828,20 +866,23 @@ function global:New-Tile($p, $btn) {
     $hov = New-Object System.Windows.Controls.Border; $hov.IsHitTestVisible = $false; $hov.Opacity = 0; $hov.CornerRadius = $ir; $hov.Background = New-GlossFill $fillHex 'hover'
     $prs = New-Object System.Windows.Controls.Border; $prs.IsHitTestVisible = $false; $prs.Opacity = 0; $prs.CornerRadius = $ir; $prs.Background = New-GlossFill $fillHex 'pressed'
     $shade = New-Object System.Windows.Controls.Border; $shade.IsHitTestVisible = $false; $shade.BorderThickness = '0,0,0,1'
-    $shade.BorderBrush = Brush '#40000000'; $shade.CornerRadius = ('0,0,{0},{0}' -f $ir)
+    $shade.BorderBrush = Brush '#40000000'; $shade.CornerRadius = New-Object System.Windows.CornerRadius 0, 0, ([double]$ir), ([double]$ir)
     $iglow = New-Object System.Windows.Controls.Border; $iglow.IsHitTestVisible = $false; $iglow.CornerRadius = $ir; $iglow.Background = New-GlossInnerGlow
     [void]$g.Children.Add($hov); [void]$g.Children.Add($prs); [void]$g.Children.Add($iglow); [void]$g.Children.Add($sheen); [void]$g.Children.Add($shade)
     $c = New-Content $btn $h $cls $danger $fgHex
     $c.el.Margin = '12,8'; [void]$g.Children.Add($c.el)
     # v1.4.8: gloss band height from where the caps start (label centred in the 8 px content margin), sparkle only where it clears the label
     $mainLab = $null; try { $mainLab = [System.Windows.LogicalTreeHelper]::FindLogicalNode($c.el, 'fitLabel') } catch {}
-    $c.el.Measure((New-Object System.Windows.Size([double]::PositiveInfinity, [double]::PositiveInfinity))); $ds = $c.el.DesiredSize
-    $capTop = 8 + [Math]::Max(0, ($h - 16 - $ds.Height) / 2) + $(if ($mainLab) { [double]$mainLab.FontSize * 0.2 } else { 0 })
-    $bandH = Get-GlossBandHeight $capTop $h
-    if ($bandH -gt 0) { $sheen.Height = $bandH; $sheen.Margin = '3.7,0.5,3.7,0'; $sheen.CornerRadius = ('{0},{0},4,4' -f [Math]::Max(0, $rad - 2)) } else { $sheen.Visibility = 'Collapsed' }
+    $subLab = $null; try { $subLab = [System.Windows.LogicalTreeHelper]::FindLogicalNode($c.el, 'subLabel') } catch {}
     $tileW = if ($cls -eq 'half') { 133 } else { 272 }   # 290 panel - 12 padding - 6 gap; halves split it
-    if ($mainLab -and -not (Test-GlossDarkLabel $fgHex)) { Add-GlossOutline $mainLab (Get-GlossOutlineHex $fillHex) (Get-GlossOutlineWidth ([double]$mainLab.FontSize)) }   # Kern fix 1: dark labels unchanged
-    if (Test-GlossSparkle $tileW $capTop (12 + $ds.Width) $rad) { [void]$g.Children.Add((New-GlossSparkle)) }
+    $ol = $null
+    if (-not (Test-GlossDarkLabel $fgHex)) {   # Kern fix 1: dark labels unchanged; light labels and their 12 px sub-labels outlined
+        $olHex = Get-GlossOutlineHex $fillHex
+        if ($mainLab) { $ol = Add-GlossOutline $mainLab $olHex (Get-GlossOutlineWidth ([double]$mainLab.FontSize)) }   # width re-picked in Update-GlossFinish
+        if ($subLab) { [void](Add-GlossOutline $subLab $olHex 2.4) } }   # v1.4.8 fix 1: 12 px sub-label, 2.4 px, Opacity 1
+    $spark = New-GlossSparkle; $spark.Visibility = 'Collapsed'; [void]$g.Children.Add($spark)
+    $sheen.Visibility = 'Collapsed'   # band height, outline width and sparkle are set by Update-GlossFinish after row sync + Apply-MinFont
+    if ($null -ne $global:glossSink) { [void]$global:glossSink.Add(@{ row = $global:glossRow; el = $c.el; lab = $mainLab; ol = $ol; sheen = $sheen; spark = $spark; h = $h; rad = $rad; tileW = $tileW; capTop = 0; band = 0; labelRight = 0 }) }
     $iscale = New-Object System.Windows.Media.ScaleTransform 1, 1
     if ($c.icon) { $c.icon.RenderTransform = $iscale; $c.icon.RenderTransformOrigin = '0.5,0.5' }
     $flash = New-Object System.Windows.Controls.Border; $flash.IsHitTestVisible = $false; $flash.Opacity = 0
@@ -1395,6 +1436,7 @@ function global:Add-TileRows($p, $target, $list) {
     $locked = [bool]$global:cfg.locked
     foreach ($btn in $list) {
         if ((Test-SlotEmpty $btn) -and (Get-SlotView $p.items $btn $locked) -eq 'hidden') { continue }   # locked, both empty: no row, no gap
+        if (-not ($btn.width -eq 'half' -and $pendingHalf)) { $global:glossRow++ }   # one row id per full tile or half pair (one gloss band per row)
         $el = if (Test-SlotEmpty $btn) { New-AddSlot $p $btn } else { New-Tile $p $btn }
         if ($btn.width -eq 'half') {
             if ($pendingHalf) { [System.Windows.Controls.Grid]::SetColumn($el, 1); [void]$pendingHalf.Children.Add($el); Sync-RowFontSize @($pendingHalf.Children); $pendingHalf = $null }
@@ -1410,7 +1452,7 @@ function global:Add-TileRows($p, $target, $list) {
 
 function global:Build-Panel($p) {
     $stack = $p.stack; $stack.Children.Clear()
-    $global:labelSink = New-Object System.Collections.ArrayList
+    $global:labelSink = New-Object System.Collections.ArrayList; $global:glossSink = New-Object System.Collections.ArrayList; $global:glossRow = 0
     $normal = @($p.items | Where-Object { -not (Test-DangerButton $_) })
     $danger = @($p.items | Where-Object { Test-DangerButton $_ })
     Add-TileRows $p $stack $normal
@@ -1428,7 +1470,7 @@ function global:Build-Panel($p) {
         $e = New-Object System.Windows.Controls.TextBlock; $e.Text = 'Empty panel - right-click to add a button'; $e.Foreground = Brush '#AAAAAA'
         $e.FontFamily = $global:UiFont; $e.Margin = '10,20'; $e.TextWrapping = 'Wrap'; [void]$stack.Children.Add($e)
     }
-    $p.labels = $global:labelSink; $global:labelSink = $null; Apply-MinFont $p
+    $p.labels = $global:labelSink; $global:labelSink = $null; $p.gloss = $global:glossSink; $global:glossSink = $null; Apply-MinFont $p
     $pm = New-Object System.Windows.Controls.ContextMenu; Panel-Menu $p $pm
     if ($p.menuHost) { $p.menuHost.ContextMenu = $pm } else { $p.win.ContextMenu = $pm }
 }
