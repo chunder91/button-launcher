@@ -3028,7 +3028,7 @@ function global:Step-VncScan($ui) {   # UI thread, every 200 ms while a scan run
 # Picker window (Kern D2 + Squint). Standard window chrome stays, so the title shows once there; the client area is D2.
 $global:VncPickerXaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="View Register" Width="620" Height="480" MinWidth="560" MinHeight="360" WindowStartupLocation="CenterScreen"
+        Title="View Register" Width="620" Height="522" MinWidth="560" MinHeight="402" WindowStartupLocation="CenterScreen"
         UseLayoutRounding="True" SnapsToDevicePixels="True" TextOptions.TextFormattingMode="Display">
   <Window.Background><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#26262C" Offset="0"/><GradientStop Color="#16161A" Offset="1"/></LinearGradientBrush></Window.Background>
   <Window.Resources>
@@ -3059,6 +3059,10 @@ $global:VncPickerXaml = @'
         <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background"><Setter.Value><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#333333" Offset="0"/><GradientStop Color="#242424" Offset="1"/></LinearGradientBrush></Setter.Value></Setter></Trigger>
         <Trigger Property="IsPressed" Value="True"><Setter Property="Background"><Setter.Value><LinearGradientBrush StartPoint="0,0" EndPoint="0,1"><GradientStop Color="#242424" Offset="0"/><GradientStop Color="#1A1A1A" Offset="1"/></LinearGradientBrush></Setter.Value></Setter></Trigger>
       </Style.Triggers>
+    </Style>
+    <Style x:Key="Tile" TargetType="Button">
+      <Setter Property="FocusVisualStyle" Value="{x:Null}"/><Setter Property="Cursor" Value="Hand"/><Setter Property="Background" Value="Transparent"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button"><ContentPresenter RecognizesAccessKey="True"/></ControlTemplate></Setter.Value></Setter>
     </Style>
     <Style x:Key="Green" TargetType="Button" BasedOn="{StaticResource Chip}">
       <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Tag"><Setter.Value><SolidColorBrush Color="#22C55E"/></Setter.Value></Setter>
@@ -3125,7 +3129,7 @@ $global:VncPickerXaml = @'
           <TextBlock Grid.Column="1" Text="Name" VerticalAlignment="Center" Margin="4,0"/><TextBlock Grid.Column="2" Text="Address" VerticalAlignment="Center"/><TextBlock Grid.Column="3" Text="Seen" VerticalAlignment="Center"/>
         </Grid>
         <Rectangle Grid.Row="0" Height="1" VerticalAlignment="Bottom" Fill="#14FFFFFF"/>
-        <ListBox x:Name="List" Grid.Row="1" Background="Transparent" BorderThickness="0" Foreground="#FFFFFF" FontSize="14" Padding="0,4"
+        <ListBox x:Name="List" Grid.Row="1" TabIndex="0" Background="Transparent" BorderThickness="0" Foreground="#FFFFFF" FontSize="14" Padding="0,4"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch" AutomationProperties.Name="Computers">
           <ListBox.ItemTemplate><DataTemplate>
             <Grid ToolTip="{Binding tip}">
@@ -3157,10 +3161,13 @@ $global:VncPickerXaml = @'
       </Grid>
     </Border>
     <ProgressBar x:Name="Busy" Grid.Row="2" IsIndeterminate="False" Height="2" Margin="10,0" Foreground="#0E7A4B" Background="Transparent" BorderThickness="0" Visibility="Hidden"/>
-    <Grid Grid.Row="3" Margin="0,12,0,0">
+    <Grid Grid.Row="3" Margin="0,14,0,0">
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <Button x:Name="View" Grid.Column="0" Style="{StaticResource Green}" Content="View only" MinWidth="104" IsDefault="True" ToolTip="Watch this computer. Nothing you do reaches it. (Enter)"/>
-      <Button x:Name="Interact" Grid.Column="1" Style="{StaticResource Blue}" Content="Interact" MinWidth="92" Margin="8,0,0,0" ToolTip="Take control of this computer's mouse and keyboard. Asks for the full password. (Ctrl+Enter)"/>
+      <Grid Grid.Column="0" Grid.ColumnSpan="6" HorizontalAlignment="Center">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="271"/><ColumnDefinition Width="16"/><ColumnDefinition Width="271"/></Grid.ColumnDefinitions>
+        <Button x:Name="View" Grid.Column="0" Style="{StaticResource Tile}" Height="72" TabIndex="1" IsDefault="True" AutomationProperties.Name="View only" AutomationProperties.AcceleratorKey="Enter" AutomationProperties.AccessKey="Alt+V" ToolTip="Watch this computer. Nothing you do reaches it. (Enter, Alt+V)"/>
+        <Button x:Name="Interact" Grid.Column="2" Style="{StaticResource Tile}" Height="72" TabIndex="2" AutomationProperties.Name="Interact" AutomationProperties.AcceleratorKey="Ctrl+Enter" AutomationProperties.AccessKey="Alt+I" ToolTip="Take control of this computer's mouse and keyboard. Asks for the full password. (Ctrl+Enter, Alt+I)"/>
+      </Grid>
       <Button x:Name="Rescan" Grid.Column="3" Style="{StaticResource Chip}" Content="Rescan" MinWidth="84" ToolTip="Look for computers you can view on this network again (F5)"/>
       <Button x:Name="Add" Grid.Column="4" Style="{StaticResource Chip}" Content="Add..." MinWidth="72" Margin="8,0,0,0" ToolTip="Type a computer's address"/>
       <Button x:Name="More" Grid.Column="5" Style="{StaticResource Chip}" Width="36" Padding="0" Margin="8,0,0,0" ToolTip="More actions" AutomationProperties.Name="More actions">
@@ -3191,6 +3198,62 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
     $m.Foreground = Brush '#FFFFFF'; $m.FontFamily = $global:UiFont; $m.FontSize = 14   # Kern Blocker: a popup doesn't inherit the window's text colour or font
     return $m
 }
+# ---------- v1.4.9 View Register tiles, option B "with icons" (Charles 10:34 AM; Smudge v2 + Kern review). Look only.
+# Two glossy style C tiles 271x72, 16 px apart; Lucide eye / hand (ISC) drawn as constant path geometry, 8 px from a 24 px label with a 3.2 px outline.
+$global:VncTiles = @{
+    view     = @{ label = 'View only'; fill = '#0C6941'; disabled = '#25352E'; icon = 'M2.062,12.348 A1,1 0 0 1 2.062,11.652 A10.75,10.75 0 0 1 21.938,11.652 A1,1 0 0 1 21.938,12.348 A10.75,10.75 0 0 1 2.062,12.348 M15,12 A3,3 0 1 1 9,12 A3,3 0 1 1 15,12' }
+    interact = @{ label = 'Interact'; fill = '#095F84'; disabled = '#253339'; icon = 'M18,11 V6 A2,2 0 0 0 16,4 A2,2 0 0 0 14,6 M14,10 V4 A2,2 0 0 0 12,2 A2,2 0 0 0 10,4 V6 M10,10.5 V6 A2,2 0 0 0 8,4 A2,2 0 0 0 6,6 V14 M18,8 A2,2 0 1 1 22,8 V14 A8,8 0 0 1 14,22 H12 C9.2,22 7.5,21.14 6.01,19.66 L2.41,16.06 A2,2 0 0 1 5.24,13.24 L7,15' }
+}
+$global:VncTileSize = @{ w = 271; h = 72; gap = 16; icon = 26; iconGap = 8; font = 24; outline = 3.2; disabledLabel = '#C4C4C8'; reason = 'Pick a computer to view or control it.' }
+function global:Get-VncPickerReason([bool]$hasSelection) { if ($hasSelection) { '' } else { $global:VncTileSize.reason } }
+function global:Get-VncPickerHeight([double]$want, [double]$workH, [double]$chrome = 236, [double]$rowH = 32, [int]$minRows = 4) {   # the window grows; only past the work area do list rows go, never below $minRows
+    if (-not ($workH -gt 0) -or $want -le $workH) { return $want }
+    return [Math]::Max([Math]::Floor($workH), $chrome + $minRows * $rowH + 8)
+}
+function global:Get-VncPickerRows([double]$winH, [double]$chrome = 236, [double]$rowH = 32) { [Math]::Floor(($winH - $chrome - 8) / $rowH) }   # visible list rows at a window height
+function global:Get-VncTileLook([string]$kind, [string]$state) {   # rest | hover | pressed | disabled -> fill stops, gloss, sparkle, label colour (pure; tested)
+    $t = $global:VncTiles[$kind]
+    if ($state -eq 'disabled') { return @{ stops = @($t.disabled, $t.disabled, $t.disabled); band = $false; sparkle = $false; label = $global:VncTileSize.disabledLabel; outline = (Get-GlossOutlineHex $t.disabled) } }
+    $st = Get-GlossFillStops $t.fill $(if ($state -in 'hover', 'pressed') { $state } else { 'rest' })
+    return @{ stops = $st; band = ($state -ne 'pressed'); sparkle = ($state -ne 'pressed'); label = '#FFFFFF'; outline = (Get-GlossOutlineHex $t.fill) }
+}
+function global:Get-VncTileState($b) { if (-not $b.IsEnabled) { 'disabled' } elseif ($b.IsPressed) { 'pressed' } elseif ($b.IsMouseOver) { 'hover' } else { 'rest' } }
+function global:New-VncTileFace($b, [string]$kind) {   # the tile drawn inside the Button (the Button keeps focus, clicks, IsDefault and access keys)
+    $t = $global:VncTiles[$kind]; $S = $global:VncTileSize; $rad = Get-GlossRadius $S.h $S.w
+    $g = New-Object System.Windows.Controls.Grid; $g.Width = $S.w; $g.Height = $S.h; $g.IsHitTestVisible = $true
+    $bg = New-Object System.Windows.Controls.Border; $bg.CornerRadius = New-Object System.Windows.CornerRadius $rad; $bg.BorderThickness = New-Object System.Windows.Thickness 1; $bg.BorderBrush = Get-GlossBrush 'vncRim' { New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromArgb(40, 255, 255, 255)) }
+    $glow = New-Object System.Windows.Controls.Border; $glow.CornerRadius = $bg.CornerRadius; $glow.Background = New-GlossInnerGlow; $glow.IsHitTestVisible = $false
+    $capTop = ($S.h - $S.font * 1.2) / 2 + $S.font * 0.2; $bandH = Get-GlossBandHeight $capTop $S.h; $bc = Get-GlossBandCorner $rad $bandH
+    $band = New-Object System.Windows.Controls.Border; $band.VerticalAlignment = 'Top'; $band.Height = $bandH; $band.Margin = New-Object System.Windows.Thickness 3.7, 0.5, 3.7, 0
+    $band.CornerRadius = New-Object System.Windows.CornerRadius $bc[0], $bc[0], $bc[1], $bc[1]; $band.Background = New-GlossBand; $band.IsHitTestVisible = $false
+    $spark = New-GlossSparkle
+    $sp = New-Object System.Windows.Controls.StackPanel; $sp.Orientation = 'Horizontal'; $sp.HorizontalAlignment = 'Center'; $sp.VerticalAlignment = 'Center'; $sp.IsHitTestVisible = $false
+    $ig = New-Object System.Windows.Controls.Grid; $ig.Width = $S.icon; $ig.Height = $S.icon; $ig.Margin = New-Object System.Windows.Thickness 0, 0, $S.iconGap, 0; $ig.VerticalAlignment = 'Center'
+    $geo = Get-GlossBrush ('vncIcon|' + $kind) { [System.Windows.Media.Geometry]::Parse($t.icon) }.GetNewClosure()   # constant Lucide path data; nothing loaded from disk or the network
+    $paths = foreach ($wd in @((2 + $S.outline), 2)) { $pa = New-Object System.Windows.Shapes.Path; $pa.Data = $geo; $pa.Stretch = 'Uniform'; $pa.StrokeThickness = $wd; $pa.StrokeLineJoin = 'Round'; $pa.StrokeStartLineCap = 'Round'; $pa.StrokeEndLineCap = 'Round'; $pa.Margin = New-Object System.Windows.Thickness 1; [void]$ig.Children.Add($pa); $pa }
+    $lab = New-Object System.Windows.Controls.TextBlock; $lab.Text = $t.label; $lab.FontSize = $S.font; $lab.FontWeight = [System.Windows.FontWeights]::Bold; $lab.VerticalAlignment = 'Center'; $lab.TextWrapping = 'NoWrap'
+    $lg = New-Object System.Windows.Controls.Grid; [void]$lg.Children.Add($lab)
+    [void]$sp.Children.Add($ig); [void]$sp.Children.Add($lg)
+    $ring = New-Object System.Windows.Controls.Grid; $ring.IsHitTestVisible = $false; $ring.Visibility = 'Hidden'   # 2 px white + 2 px dark inside, edges 18/14 (panel rule)
+    $rw = New-Object System.Windows.Controls.Border; $rw.BorderThickness = New-Object System.Windows.Thickness 2; $rw.BorderBrush = [System.Windows.Media.Brushes]::White; $rw.CornerRadius = New-Object System.Windows.CornerRadius $rad
+    $rk = New-Object System.Windows.Controls.Border; $rk.Margin = New-Object System.Windows.Thickness 2; $rk.BorderThickness = New-Object System.Windows.Thickness 2; $rk.BorderBrush = Brush '#111111'; $rk.CornerRadius = New-Object System.Windows.CornerRadius ([Math]::Max(0, $rad - 2))
+    [void]$ring.Children.Add($rw); [void]$ring.Children.Add($rk)
+    foreach ($x in $bg, $glow, $band, $spark, $sp, $ring) { [void]$g.Children.Add($x) }
+    $ol = Add-GlossOutline $lab '#000000' $S.outline
+    $f = @{ b = $b; kind = $kind; bg = $bg; band = $band; spark = $spark; lab = $lab; ol = $ol; paths = @($paths); ring = $ring }
+    $upd = { $st = Get-VncTileState $f.b; $lk = Get-VncTileLook $f.kind $st
+        $br = New-Object System.Windows.Media.LinearGradientBrush; $br.StartPoint = '0,0'; $br.EndPoint = '0,1'
+        foreach ($i in 0..2) { [void]$br.GradientStops.Add((New-Object System.Windows.Media.GradientStop (Get-Color $lk.stops[$i]), (@(0.0, 0.55, 1.0)[$i]))) }; $br.Freeze(); $f.bg.Background = $br
+        $f.band.Visibility = $(if ($lk.band) { 'Visible' } else { 'Hidden' }); $f.spark.Visibility = $(if ($lk.sparkle) { 'Visible' } else { 'Hidden' })
+        $fg = Brush $lk.label; $ok = Brush $lk.outline; $f.lab.Foreground = $fg
+        if ($f.ol) { for ($k = 0; $k -lt $f.ol.Children.Count - 1; $k++) { $f.ol.Children[$k].Foreground = $ok } }
+        $f.paths[0].Stroke = $ok; $f.paths[1].Stroke = $fg
+        $f.ring.Visibility = $(if ($f.b.IsKeyboardFocused -and $f.b.IsEnabled) { 'Visible' } else { 'Hidden' }) }.GetNewClosure()
+    $b.Add_MouseEnter($upd); $b.Add_MouseLeave($upd); $b.Add_IsEnabledChanged($upd); $b.Add_IsKeyboardFocusedChanged($upd)
+    try { [System.ComponentModel.DependencyPropertyDescriptor]::FromProperty([System.Windows.Controls.Primitives.ButtonBase]::IsPressedProperty, [System.Windows.Controls.Button]).AddValueChanged($b, [EventHandler]$upd) } catch {}
+    & $upd
+    return $g
+}
 function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed computers; no network scan, no Add/Remove/Rescan
     if ($global:vncPicker -and $global:vncPicker.win.IsVisible) { $global:vncPicker.win.Activate() | Out-Null; return }
     Remove-VncTempLeftovers
@@ -3204,6 +3267,8 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
     $ui.win = $w
     $lv = $w.FindName('List'); $status = $w.FindName('Status'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
     $bView = $w.FindName('View'); $bInt = $w.FindName('Interact')
+    $w.Height = Get-VncPickerHeight 522 ([System.Windows.SystemParameters]::WorkArea.Height)   # v1.4.9 option B: +42 px for the tiles; shrink the list only past the work area, never under 4 rows
+    $bView.Content = New-VncTileFace $bView 'view'; $bInt.Content = New-VncTileFace $bInt 'interact'   # look only: clicks, Enter and Ctrl+Enter below are unchanged
     foreach ($n in 'Rescan', 'Add', 'More') { $w.FindName($n).Visibility = 'Collapsed' }
     $ui.list = $lv
     try { [System.Windows.Automation.AutomationProperties]::SetLiveSetting($status, 'Polite') } catch {}
@@ -3213,7 +3278,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         $sel = $lv.SelectedItem; $lv.Items.Clear()
         foreach ($v in (Get-VncAllowedRows $ui.allowed $ui.online ([bool]$ui.checking))) { [void]$lv.Items.Add($v); if ($sel -and $sel.row.host -eq $v.row.host -and $sel.row.port -eq $v.row.port) { $lv.SelectedItem = $v } }
         if (-not $lv.SelectedItem -and $lv.Items.Count) { $lv.SelectedIndex = 0 }
-        $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has
+        $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $r = Get-VncPickerReason $has; if ($r -and $lv.Items.Count -gt 0) { $ui.setStatus.Invoke($r) }
         if ($lv.Items.Count -gt 0) { $empty.Visibility = 'Collapsed' }
         else { $eT.Text = 'No computers have been allowed yet. Ask your administrator.'
                $eB.Text = $(if ($al.state -eq 'unsafe') { "The allowed list on this PC isn't protected, so it is ignored. An administrator can save it again in Setup > Allowed computers (admin)..." } else { 'An administrator adds them in Setup > Allowed computers (admin)...' })
@@ -3238,7 +3303,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
     $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; [void](Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw) }.GetNewClosure()
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure())
     $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
-    $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has }.GetNewClosure())
+    $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $r = Get-VncPickerReason $has; if ($r) { $ui.setStatus.Invoke($r) } }.GetNewClosure())
     $lv.Add_MouseDoubleClick({ if ($lv.SelectedItem) { $ui.go.Invoke($true) } }.GetNewClosure())
     $lv.Add_PreviewMouseRightButtonUp({
         $o = $_.OriginalSource; while ($o -and -not ($o -is [System.Windows.Controls.ListBoxItem])) { if ($o -is [System.Windows.Media.Visual]) { $o = [System.Windows.Media.VisualTreeHelper]::GetParent($o) } else { $o = $null } }
@@ -3247,6 +3312,8 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         $k = $_.Key; $ctrl = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0
         if ($k -eq 'Return' -and $ctrl) { $_.Handled = $true; $ui.go.Invoke($false) }
         elseif ($k -eq 'Return' -and $lv.IsKeyboardFocusWithin) { $_.Handled = $true; $ui.go.Invoke($true) }
+        elseif ($k -eq 'System' -and $_.SystemKey -eq 'V' -and $bView.IsEnabled) { $_.Handled = $true; $ui.go.Invoke($true) }   # v1.4.9: Alt+V = View only (same as its click)
+        elseif ($k -eq 'System' -and $_.SystemKey -eq 'I' -and $bInt.IsEnabled) { $_.Handled = $true; $ui.go.Invoke($false) }   # Alt+I = Interact
         elseif ($k -eq 'F5') { $_.Handled = $true; $ui.startCheck.Invoke() }
         elseif ($k -eq 'Escape') { $_.Handled = $true; $w.Close() } }.GetNewClosure())
     $w.Add_Closed({ $ui.stopCheck.Invoke(); $global:vncPicker = $null
