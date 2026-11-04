@@ -2019,7 +2019,7 @@ function global:Stop-TrayAndHotkey {
 # UltraVNC viewer switches, checked against https://uvnc.com/docs/ultravnc-viewer/52-ultravnc-viewer-commandline-parameters.html
 # and the viewer source (github.com/ultravnc/UltraVNC vncviewer/VNCOptions.cpp, ClientConnectionFile.cpp):
 #   host::port   two colons = a TCP port (host:N with one colon is display N = port 5900+N), so we always use '::'
-#   -viewonly    do not send keyboard or mouse events;   -autoscaling   scale the remote screen to fit
+#   -viewonly    do not send keyboard or mouse events   (v1.4.9: -autoscaling is not sent)
 #   -config file (unused since v1.4.2: View only and Interact always pass host::port and no password)
 # The -password switch is never used: a password must never be on a command line.
 $global:VncDefaultPort = 5900
@@ -2187,7 +2187,7 @@ function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$c
         $a += @('-config', ('"' + $configFile + '"'))
     }
     if ($viewOnly) { $a += '-viewonly' }
-    $a += '-autoscaling'   # no-argument switch; can't consume the host
+    # v1.4.9 (Charles 10:05 AM, log on 1.4.8): '<host>:<port> -autoscaling' still left VNC Server blank on his UltraVNC 1.5.0.0-dev, while Win+R '<host>:<port>' (no -autoscaling) works. -autoscaling is no longer sent.
     return $a
 }
 function global:ConvertTo-VncObfuscated([byte[]]$pw) {   # VNC password file form: first 8 bytes, zero padded, DES with the fixed key, as 16 hex digits
@@ -2841,10 +2841,12 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         $argLine = Get-VncArgLine $vargs   # v1.4.9: ONE string, built here and logged byte-for-byte as passed (no PS 5.1 array re-joining)
         if (-not $argLine.StartsWith($h + ':')) { throw 'the viewer arguments do not start with the host' }   # v1.4.9 guard: never start the viewer without host:port first
         Write-LauncherLog (Get-VncLaunchLogText $viewOnly $exe $vargs $file $pw $vi)   # never the password or the .vnc contents; the temp path is redacted
-        Write-LauncherLog (Get-VncArgLogText $exe $argLine $file)
+
         if ($why) { Write-LauncherLog ('VNC view only: viewer will ask: ' + $why); if ($global:vncPicker) { $global:vncPicker.setStatus.Invoke($why) } }
         if (-not $vi.ultra -and $owner -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke(('The picked viewer is "{0}", not UltraVNC. Pick UltraVNC''s vncviewer.exe if it can''t connect.' -f $vi.product)) }
-        $proc = Start-Process -FilePath $exe -ArgumentList $argLine -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+        $psi = New-VncStartInfo $exe $argLine   # v1.4.9: like a Win+R / manual start: ShellExecute, the viewer's own folder, one exact argument string
+        Write-LauncherLog (Get-VncStartInfoLogText $psi $file)   # read back from the ProcessStartInfo right before Start(); temp .vnc redacted, never a password
+        $proc = Start-VncProcess $psi
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit; $file = $null }   # deleted 3 s after the viewer shows a window, or at 8 s
         return $true
     } catch {
@@ -2868,6 +2870,17 @@ function global:Get-VncRowPort($row) {
     return $null
 }
 function global:Get-VncArgLine($vargs) { (@($vargs) | ForEach-Object { [string]$_ }) -join ' ' }   # the exact string handed to the viewer
+function global:New-VncStartInfo([string]$exe, [string]$argLine) {   # never elevated (no runas), inherits the launcher user's context unchanged, nothing but the one argument string
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $exe; $psi.Arguments = $argLine; $psi.UseShellExecute = $true
+    $psi.WorkingDirectory = ($exe -replace '[\\/][^\\/]*$', '')   # the viewer's own folder (string form: same result on Windows, testable elsewhere)
+    return $psi
+}
+function global:Start-VncProcess($psi) { [System.Diagnostics.Process]::Start($psi) }
+function global:Get-VncStartInfoLogText($psi, [string]$file) {   # 'VNC viewer start: exe="..." args="..." dir="..." shell=True'
+    $a = [string]$psi.Arguments; if ($file) { $a = $a.Replace($file, '<temp .vnc>') }
+    return ('VNC viewer start: exe="{0}" args="{1}" dir="{2}" shell={3}' -f $psi.FileName, $a, $psi.WorkingDirectory, $psi.UseShellExecute)
+}
 function global:Get-VncArgLogText([string]$exe, [string]$argLine, [string]$file) {   # 'VNC viewer start: exe="<path>" args="<exact args>"'; a temp .vnc shows as <temp .vnc>; never a password (none is ever on the command line)
     $shown = if ($file) { $argLine.Replace($file, '<temp .vnc>') } else { $argLine }
     return ('VNC viewer start: exe="{0}" args="{1}"' -f $exe, $shown)

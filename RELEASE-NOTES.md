@@ -4,10 +4,12 @@
 
 Pending review (build of 2026-11-04). Includes everything in v1.4.8.
 
-- View Register: Interact and View only build ONE argument string (`<host>:<port> [-config "<temp .vnc>"] [-viewonly] -autoscaling`) and pass exactly that string to the viewer, instead of a list Windows PowerShell re-joins. The launcher refuses to start the viewer, with a plain message, if the computer's address is empty or not valid, or if the arguments don't start with `<host>:`.
+- View Register: `-autoscaling` is no longer sent. Charles's log on 1.4.8 showed `192.168.20.51:5900 -autoscaling` still left VNC Server blank, while Win+R `vncviewer.exe 192.168.20.51:5900` works. Interact now sends exactly `<host>:<port>`, View only `<host>:<port> -viewonly` (`-config "<temp .vnc>"` after host:port only with a saved view-only password; that form is not yet proven on his viewer).
+- Interact and View only build ONE argument string (`<host>:<port> [-config "<temp .vnc>"] [-viewonly]`) and pass exactly that string to the viewer, instead of a list Windows PowerShell re-joins. The launcher refuses to start the viewer, with a plain message, if the computer's address is empty or not valid, or if the arguments don't start with `<host>:`.
 - The host and port are read the same way whether the picker row is an object or a table (`Get-VncRowHost` / `Get-VncRowPort`).
 - v1.4.8 follow-ups: the email badge for 42 or 99+ sits 4 px higher so more of the envelope shows; every shipped button name is tested to fit whole at 105 and 244 px; any name that still doesn't fit (for example on a panel scaled down) ends in "..." with the full name in a tooltip; label width allows for the 1 px edge on every button (2 px border on restart buttons).
-- launcher-error.log gets one more line per launch: `VNC viewer start: exe="<path to vncviewer.exe>" args="<exact argument string>"`. A saved-password file shows as `<temp .vnc>`; no password is ever on the command line or in the log.
+- The viewer is started like a Win+R or manual start: ProcessStartInfo with UseShellExecute, the viewer's own folder as working directory, one exact argument string, never elevated, no environment changes.
+- launcher-error.log gets one more line per launch, read back from the ProcessStartInfo just before Start(): `VNC viewer start: exe="<path to vncviewer.exe>" args="<exact argument string>" dir="<viewer folder>" shell=True`. A saved-password file shows as `<temp .vnc>`; no password is ever on the command line or in the log.
 
 ## v1.4.8: glossy buttons (style C, "rounder candy gloss")
 
