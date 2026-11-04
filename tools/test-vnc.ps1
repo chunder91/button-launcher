@@ -10,7 +10,7 @@ $fns = 'Set-Prop', 'Get-VncLaunchLogText', 'Get-ButtonType', 'Test-VncIPv4', 'Te
        'Get-VncPrefix', 'Get-VncScanTargets', 'Get-SafeText', 'Get-RfbBanner', 'Get-VncViewerArgs', 'ConvertTo-VncObfuscated', 'New-VncConfigText', 'Get-VncState',
        'Save-VncFavorites', 'Set-VncFavorite', 'Read-VncCache', 'Save-VncCache', 'Test-VncCacheStale', 'Merge-VncRows', 'Test-VncPickerButton',
        'Test-VncAdapter', 'Get-VncRangeText', 'Get-VncNewRanges', 'Test-VncAutoScan', 'Test-VncBannerText', 'Get-VncDisplayName', 'Get-VncInvalidText',
-       'Get-VncRowView', 'Get-VncShortName', 'Get-VncFoundText', 'Test-VncUsePassword', 'Get-VncWorkerFault', 'Get-VncTempAction', 'Remove-VncTempDir',
+       'Get-VncRowView', 'Get-VncShortName', 'Get-VncFoundText', 'Test-VncUsePassword', 'Get-VncPasswordFallbackText', 'Get-VncRemoveButtonVisibility', 'Get-VncWorkerFault', 'Get-VncTempAction', 'Remove-VncTempDir',
        'Get-VncSubnetGateway', 'Get-VncRangeKey', 'Get-VncRangeState', 'Get-VncAgeText', 'Test-VncRangeKeyCurrent', 'ConvertTo-VncGatewayId', 'Select-VncGatewayMac', 'ConvertTo-VncNicId'
 foreach ($n in $fns) {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
@@ -550,8 +550,8 @@ Check 'v1.4.3: log line (found)' ((Get-VncViewerLogText 'C:\Program Files\UltraV
 Check 'v1.4.3: log line (none)' ((Get-VncViewerLogText '' '' @() $null) -ceq 'VNC viewer: not found in Program Files')
 Check 'v1.4.3: log line strips control characters' ((Get-VncViewerLogText ("C:\a`r`nb\vncviewer.exe") 'override' @() $vi) -notmatch "[`r`n]")
 $fv = (& $fn 'Find-VncViewer')
-Check 'v1.4.3: Find-VncViewer order: valid saved path (override) > Program Files scan > HKLM App Paths > plain message + optional pick' ($fv.IndexOf("`$how = 'override'") -lt $fv.IndexOf('Initialize-VncViewerScan') -and $fv.IndexOf('Initialize-VncViewerScan') -lt $fv.IndexOf('HKLM:\Software') -and $fv.IndexOf('HKLM:\Software') -lt $fv.IndexOf("wasn't found in Program Files") -and $fv -notmatch 'HKCU:' -and $fv -notmatch 'Find-Detected')
-Check 'v1.4.3: start-up logs the version and runs the scan once (cached)' ($src.Contains("Write-LauncherLog ('Launcher {0} started' -f `$global:AppVersion)") -and $src.Contains('try { [void](Initialize-VncViewerScan) } catch {}') -and (& $fn 'Initialize-VncViewerScan').Contains('if ($global:VncViewerScan) { return $global:VncViewerScan }'))
+Check 'v1.4.3: Find-VncViewer order: valid saved path (override) > Program Files scan > HKLM App Paths > plain message + optional pick' ($fv.IndexOf("`$how = 'override'") -lt $fv.IndexOf('Initialize-VncViewerScan') -and $fv.IndexOf('Initialize-VncViewerScan') -lt $fv.IndexOf('HKLM:\Software') -and $fv.IndexOf('HKLM:\Software') -lt $fv.IndexOf("isn't installed on this PC") -and $fv -notmatch 'HKCU:' -and $fv -notmatch 'Find-Detected')
+Check 'v1.4.3: start-up logs the version and runs the scan once (cached)' ($src.Contains("Write-LauncherLog ('Launcher {0} started' -f `$global:AppVersion)") -and $src.Contains('try { [void](Initialize-VncViewerScan) } catch {}') -and (& $fn 'Initialize-VncViewerScan').Contains('if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry)) { return $global:VncViewerScan }'))
 Check 'v1.4.4: no -password switch anywhere; store owner-only ACL from creation; DPAPI CurrentUser v2 entropy' ($src -notmatch "'-password'" -and (& $fn 'Save-VncSecret').Contains('New-VncOwnerOnlySecurity $false') -and (& $fn 'Save-VncSecret').Contains('[IO.Directory]::CreateDirectory($dir, (New-VncOwnerOnlySecurity $true))') -and (& $fn 'Save-VncSecret').Contains('[IO.File]::SetAccessControl($p, (New-VncOwnerOnlySecurity $false))') -and (& $fn 'New-VncOwnerOnlySecurity').Contains('SetAccessRuleProtection($true, $false)') -and (& $fn 'New-VncOwnerOnlySecurity').Contains("'S-1-5-18'") -and $src.Contains("GetBytes('ButtonLauncher.VNC.ViewOnly.v2')") -and (& $fn 'Save-VncSecret').Contains("'CurrentUser'"))
 $td9 = Join-Path ([IO.Path]::GetTempPath()) ('bl-vnc-' + [guid]::NewGuid().ToString('N')); [void](New-Item -ItemType Directory -Path $td9); Set-Content -LiteralPath (Join-Path $td9 'c.vnc') -Value '[connection]'
 $td8 = Join-Path ([IO.Path]::GetTempPath()) ('bl-vnc-' + [guid]::NewGuid().ToString('N')); [void](New-Item -ItemType Directory -Path $td8); Set-Content -LiteralPath (Join-Path $td8 'other.txt') -Value 'k'
@@ -581,4 +581,25 @@ $slow = New-FakeFs @{ 'C:\Program Files\UltraVNC2\vncviewer.exe' = @{ version = 
 $slow.Dirs = { param($d) Start-Sleep -Milliseconds 20; & $d0 $d }.GetNewClosure()
 Check 'CC L2: time cap stops the search' ((Find-VncViewerInProgramFiles $slow).capped)
 Check 'CC L2: default caps 5000 folders / 2000 ms and the cap is logged' ((& $fn 'Find-VncViewerInProgramFiles').Contains('else { 5000 }') -and (& $fn 'Find-VncViewerInProgramFiles').Contains('else { 2000 }') -and (& $fn 'Initialize-VncViewerScan').Contains('search stopped early'))
+# --- v1.4.6 ---
+$ipRow = [pscustomobject]@{ name = 'POS1'; host = '192.168.20.51'; port = 5900; banner = 'RFB 003.008'; session = $true }
+$nmRow = [pscustomobject]@{ name = 'POS1'; host = 'POS1'; port = 5900; banner = 'RFB 003.008'; session = $true }
+$offRow = [pscustomobject]@{ name = 'POS2'; host = '192.168.20.52'; port = 5900; banner = ''; session = $false }
+Check 'v1.4.6 Squint 1: saved password + IP row that answered -> no fallback message' ((Get-VncPasswordFallbackText $ipRow $true) -eq '')
+Check 'v1.4.6 Squint 1: nothing saved -> says none is saved and where to set it' ((Get-VncPasswordFallbackText $ipRow $false) -like 'No view-only password is saved*Setup > View-only password*')
+Check 'v1.4.6 Squint 1: hostname row -> says listed by name, list it by IP' ((Get-VncPasswordFallbackText $nmRow $true) -like "POS1 is listed by name, so the saved view-only password isn't sent*by IP address in Allowed computers.")
+Check 'v1.4.6 Squint 1: no answer this session -> says press F5' ((Get-VncPasswordFallbackText $offRow $true) -like "POS2 didn't answer the quick check*F5*")
+$sv6 = & $fn 'Start-VncViewer'
+Check 'v1.4.6 Squint 1: Start-VncViewer logs and shows the reason only for View only without a sent password; never $hex/$pb in it' ($sv6.Contains("`$why = if (`$viewOnly -and `$pw -ne 'saved') { Get-VncPasswordFallbackText `$row (Test-VncSecret) }") -and $sv6.Contains("Write-LauncherLog ('VNC view only: viewer will ask: ' + `$why)") -and $sv6.Contains('$global:vncPicker.setStatus.Invoke($why)') -and (& $fn 'Get-VncPasswordFallbackText') -notmatch '\$hex|Get-VncSecretHex|SecurePassword')
+Check 'v1.4.6 Squint 2: Find-VncViewer and picker open re-search while not found' ((& $fn 'Find-VncViewer').Contains('Initialize-VncViewerScan -Retry') -and (& $fn 'Show-VncPicker').Contains('if ($global:VncViewerScan -and -not $global:VncViewerScan.path) { [void](Initialize-VncViewerScan -Retry) }'))
+$global:VncViewerScan = $null; $global:scanCalls = 0
+function global:Find-VncViewerInProgramFiles { $global:scanCalls++; if ($global:scanCalls -ge 2) { @{ path = 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe'; how = 'known'; others = @() } } else { @{ path = ''; how = ''; others = @() } } }
+function global:Get-VncViewerInfo { $null }; function global:Get-VncViewerLogText { 'x' }; function global:Write-LauncherLog { }
+Invoke-Expression (& $fn 'Initialize-VncViewerScan')
+$a1 = Initialize-VncViewerScan; $a2 = Initialize-VncViewerScan; $a3 = Initialize-VncViewerScan -Retry; $a4 = Initialize-VncViewerScan -Retry
+Check 'v1.4.6 Squint 2: cached not-found is reused without -Retry, searched again with -Retry, and a found result is cached' (-not $a1.path -and -not $a2.path -and $a3.path -like '*vncviewer.exe' -and $a4.path -like '*vncviewer.exe' -and $global:scanCalls -eq 2)
+Check 'v1.4.6 Kern: Remove password visible only when saved' ((Get-VncRemoveButtonVisibility $true) -eq 'Visible' -and (Get-VncRemoveButtonVisibility $false) -eq 'Collapsed')
+$pd = & $fn 'Show-VncPasswordDialog'
+Check 'v1.4.6 Kern: dialog has Password label 14 px #FFFFFF (0,0,0,8), field 0,0,0,8, 12 px #B4B4BC note, #B4B4BC Assertive status 0,0,0,16, Remove password hidden unless saved' ($pd.Contains("New-D2Label 'Password' '#FFFFFF' 14; `$lb.Margin = '0,0,0,8'") -and $pd.Contains("`$pf.Margin = '0,0,0,8'") -and $pd.Contains("Only used for computers listed by IP address. UltraVNC uses only the first 8 characters.' '#B4B4BC' 12") -and $pd.Contains("`$st = New-D2Label '' '#B4B4BC' 12; `$st.Margin = '0,0,0,16'") -and $pd.Contains("SetLiveSetting(`$st, 'Assertive')") -and $pd.Contains("New-D2Button 'Remove password' 'Chip'") -and $pd.Contains('$bNone.Visibility = Get-VncRemoveButtonVisibility $has') -and $pd -notmatch "'No password'|#A0A0A0" -and $pd.Contains('Saved password removed. View only will ask for one.'))
+Check 'LJ M46-I2: Get-VncPort/ConvertTo-VncEndpoint use [0-9] and \A..\z' ((& $fn 'Get-VncPort').Contains("'\A[0-9]{1,5}\z'") -and (& $fn 'ConvertTo-VncEndpoint').Contains("'\A([^:]+)::?([0-9]+)\z'") -and -not (Get-VncPort ([string][char]0x0661 + '5900')) -and (Get-VncPort '5900') -eq 5900)
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

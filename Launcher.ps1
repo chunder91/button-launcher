@@ -65,7 +65,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.5'
+$global:AppVersion   = '1.4.6'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -1903,13 +1903,13 @@ function global:Test-VncHost([string]$s) {   # untrusted: an IPv4 dotted quad, o
 }
 function global:Get-VncPort($p) {   # an integer 1-65535, else $null
     $s = ([string]$p).Trim()
-    if ($s -notmatch '^\d{1,5}$') { return $null }
+    if ($s -notmatch '\A[0-9]{1,5}\z') { return $null }   # LJ M46-I2
     $n = [int]$s; if ($n -lt 1 -or $n -gt 65535) { return $null }
     return $n
 }
 function global:ConvertTo-VncEndpoint([string]$text, [int]$defaultPort = 5900) {   # 'host' or 'host:port' -> @{ host; port } or $null
     $t = ([string]$text).Trim(); $port = $defaultPort
-    if ($t -match '^([^:]+)::?(\d+)$') { $t = $matches[1]; $port = Get-VncPort $matches[2]; if (-not $port -or $port -lt 100) { return $null } }   # LJ M44-I2: ports below 100 refused
+    if ($t -match '\A([^:]+)::?([0-9]+)\z') { $t = $matches[1]; $port = Get-VncPort $matches[2]; if (-not $port -or $port -lt 100) { return $null } }   # LJ M44-I2: ports below 100 refused
     elseif ($t.Contains(':')) { return $null }
     if (-not (Test-VncHost $t)) { return $null }
     return @{ host = $t; port = [int]$port }
@@ -2267,33 +2267,50 @@ function global:New-VncTempConfig([string]$h, [int]$port, [string]$hex) {   # %T
         return $f
     } finally { if (-not $ok) { [void](Remove-VncTempDir $dir) } }
 }
-function global:Show-VncPasswordDialog($owner) {   # v1.4.4: set, change or clear this Windows user's view-only password; $true when one is saved
+function global:Show-VncPasswordDialog($owner) {   # v1.4.4: set, change or clear this Windows user's view-only password; $true when one is saved. v1.4.6 (Squint 5, Kern): Password label, 12 px note, #B4B4BC live status, Remove password only when saved
     $dlg = New-D2Dialog 'View-only password' $owner 380; $d = $dlg.win; $sp = $dlg.body
-    $t = New-D2Label "If the computers you view have a view-only password, type it here. It's saved for this Windows user on this PC only and used for View only. Interact always asks for its own password. It's only used for computers listed by IP address; for a computer listed by name the viewer asks.`n`nUltraVNC uses the first 8 characters (standard letters, numbers and symbols)."
-    [void]$sp.Children.Add($t)
-    $st = New-D2Label '' '#A0A0A0' 12
-    $st.Text = if (Test-VncSecret) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only asks for one.' }
-    [void]$sp.Children.Add($st)
+    $t = New-D2Label "Type the view-only password of the computers you view. It's saved for you on this PC only and used by View only. Interact always asks."
+    $t.Margin = '0,0,0,16'; [void]$sp.Children.Add($t)
+    $lb = New-D2Label 'Password' '#FFFFFF' 14; $lb.Margin = '0,0,0,8'; [void]$sp.Children.Add($lb)
     $pb = New-Object System.Windows.Controls.PasswordBox; $pb.MaxLength = 64; [System.Windows.Automation.AutomationProperties]::SetName($pb, 'View-only password')
-    $pf = New-D2Field $pb; $pf.Margin = '0,8,0,16'; [void]$sp.Children.Add($pf)
+    try { [System.Windows.Automation.AutomationProperties]::SetLabeledBy($pb, $lb) } catch {}
+    $pf = New-D2Field $pb; $pf.Margin = '0,0,0,8'; [void]$sp.Children.Add($pf)
+    $nt = New-D2Label 'Only used for computers listed by IP address. UltraVNC uses only the first 8 characters.' '#B4B4BC' 12; $nt.Margin = '0,0,0,8'; [void]$sp.Children.Add($nt)
+    $st = New-D2Label '' '#B4B4BC' 12; $st.Margin = '0,0,0,16'
+    try { [System.Windows.Automation.AutomationProperties]::SetLiveSetting($st, 'Assertive') } catch {}
+    $say = { param([string]$msg, [string]$fg) $st.Text = $msg; $st.Foreground = Brush $fg
+        try { $pe = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($st); if ($pe) { $pe.RaiseAutomationEvent('LiveRegionChanged') } } catch {} }.GetNewClosure()
+    $has = [bool](Test-VncSecret)
+    $st.Text = if ($has) { 'A view-only password is saved.' } else { 'No view-only password is saved: View only asks for one.' }
+    [void]$sp.Children.Add($st)
     $row = New-Object System.Windows.Controls.StackPanel; $row.Orientation = 'Horizontal'; $row.HorizontalAlignment = 'Right'
-    $res = @{ saved = $false }
+    $res = @{ saved = $has }
     $bSave = New-D2Button 'Save' 'Green' $dlg; $bSave.IsDefault = $true
-    $bNone = New-D2Button 'No password' 'Chip' $dlg
+    $bNone = New-D2Button 'Remove password' 'Chip' $dlg
+    $bNone.Visibility = Get-VncRemoveButtonVisibility $has
     $bCancel = New-D2Button 'Cancel' 'Chip' $dlg; $bCancel.IsCancel = $true
     $bSave.Add_Click({
-        if ($pb.SecurePassword.Length -eq 0) { $st.Text = 'Type the password, or choose No password.'; $st.Foreground = Brush '#F59E0B'; [void]$pb.Focus(); return }
+        if ($pb.SecurePassword.Length -eq 0) { & $say 'Type the password, then Save. Or press Cancel.' '#F59E0B'; [void]$pb.Focus(); return }
         $ok = $false; try { $ok = Save-VncSecret $pb.SecurePassword } catch { $ok = $null }
-        if ($null -eq $ok) { $pb.Clear(); $st.Text = "Couldn't save it. Nothing was changed."; $st.Foreground = Brush '#F59E0B'; Write-LauncherLog 'view-only password: save failed'; return }
-        if (-not $ok) { $pb.Clear(); $st.Text = "That password has a character UltraVNC can't use. Use standard letters, numbers and symbols, then Save again."; $st.Foreground = Brush '#F59E0B'; [void]$pb.Focus(); return }
+        if ($null -eq $ok) { $pb.Clear(); & $say "Couldn't save it. Nothing was changed." '#F59E0B'; Write-LauncherLog 'view-only password: save failed'; return }
+        if (-not $ok) { $pb.Clear(); & $say "That password has a character UltraVNC can't use. Use standard letters, numbers and symbols, then Save again." '#F59E0B'; [void]$pb.Focus(); return }
         $res.saved = $true; Write-LauncherLog 'view-only password: saved'; $pb.Clear(); $d.Close() }.GetNewClosure())
-    $bNone.Add_Click({ Remove-VncViewOnlySecret; Write-LauncherLog 'view-only password: none'; $pb.Clear(); $d.Close() }.GetNewClosure())
+    $bNone.Add_Click({ Remove-VncViewOnlySecret; Write-LauncherLog 'view-only password: none'; $pb.Clear(); $res.saved = $false
+        $bNone.Visibility = Get-VncRemoveButtonVisibility $false; & $say 'Saved password removed. View only will ask for one.' '#B4B4BC'; [void]$pb.Focus() }.GetNewClosure())
     $bCancel.Add_Click({ $pb.Clear(); $d.Close() }.GetNewClosure())
     foreach ($b in $bSave, $bNone, $bCancel) { [void]$row.Children.Add($b) }
     [void]$sp.Children.Add($row)
     $d.Add_ContentRendered({ [void]$pb.Focus() }.GetNewClosure())
     [void]$d.ShowDialog()
     return $res.saved
+}
+function global:Get-VncRemoveButtonVisibility([bool]$hasSecret) { if ($hasSecret) { 'Visible' } else { 'Collapsed' } }   # v1.4.6 (Squint 5): Remove password only when one is saved
+function global:Get-VncPasswordFallbackText($row, [bool]$hasSecret) {   # v1.4.6 (Squint 1): why View only lets the viewer ask; '' when the saved password is sent. Never contains the password.
+    if (Test-VncUsePassword $row $hasSecret) { return '' }
+    $n = Get-SafeText ([string]$(if ($row.name) { $row.name } else { $row.host })) 60
+    if (-not $hasSecret) { return 'No view-only password is saved, so the viewer will ask. To skip the prompt, set one in Setup > View-only password.' }
+    if (-not (Test-VncIPv4 ([string]$row.host))) { return ("{0} is listed by name, so the saved view-only password isn't sent and the viewer will ask. To skip the prompt, list it by IP address in Allowed computers." -f $n) }
+    return ("{0} didn't answer the quick check, so the saved view-only password isn't sent. Press F5, then try View only again." -f $n)
 }
 # ---------- D2 dialogs (Kern v1.3.0 Minor 6): panel gradient, 16 px padding, 32 px fields (radius 6, 6% fill, 12% rim, 2 px green focus line) ----------
 $global:D2DialogRes = $null
@@ -2421,8 +2438,8 @@ function global:Get-VncViewerLogText([string]$path, [string]$how, $others, $vi) 
     $o = @(foreach ($x in @($others)) { if ($x) { '"' + (Get-SafeText $x 260) + '"' } }); if ($o) { $t += '; also found: ' + ($o -join ', ') }
     return $t
 }
-function global:Initialize-VncViewerScan {   # once per session; logs what it found
-    if ($global:VncViewerScan) { return $global:VncViewerScan }
+function global:Initialize-VncViewerScan([switch]$Retry) {   # once per session (again with -Retry while not found); logs what it found
+    if ($global:VncViewerScan -and ($global:VncViewerScan.path -or -not $Retry)) { return $global:VncViewerScan }   # v1.4.6 (Squint 2): a cached 'not found' is searched again on Retry
     $sw = [Diagnostics.Stopwatch]::StartNew()
     try { $r = Find-VncViewerInProgramFiles } catch { $r = @{ path = ''; how = ''; others = @() } }
     $r.ms = $sw.ElapsedMilliseconds; $global:VncViewerScan = $r
@@ -2435,12 +2452,12 @@ function global:Find-VncViewer($btn) {   # local fixed path to vncviewer.exe, or
     if (-not (Is-Todo $t)) {   # LJ M41-L1: an override counts only as a plain local file named exactly vncviewer.exe; anything else (.lnk, odd path) is ignored and logged
         if (Test-VncViewerFile $t $global:VncViewerProbe) { $f = $t; $how = 'override' }
         elseif ($global:VncViewerBadOverride -ne $t) { $global:VncViewerBadOverride = $t; Write-LauncherLog ('VNC viewer: saved path "{0}" ignored (not a plain local vncviewer.exe); using the Program Files search' -f (Get-SafeText $t 260)) } }
-    if (-not $f) { $s = Initialize-VncViewerScan; if ($s.path -and (Test-VncViewerFile $s.path $global:VncViewerProbe)) { $f = $s.path; $how = $s.how; $others = $s.others } }   # LJ M41-I1: recheck as a plain local vncviewer.exe
+    if (-not $f) { $s = Initialize-VncViewerScan -Retry; if ($s.path -and (Test-VncViewerFile $s.path $global:VncViewerProbe)) { $f = $s.path; $how = $s.how; $others = $s.others } }   # LJ M41-I1: recheck as a plain local vncviewer.exe
     if (-not $f) { try {   # HKLM only: HKCU is user-writable
         $v = [string](Get-ItemProperty -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\App Paths\vncviewer.exe' -ErrorAction Stop).'(default)'
         $v = (Expand $v).Trim('"'); if ($v -and (Test-VncViewerFile $v $global:VncViewerProbe)) { $f = $v; $how = 'registry' } } catch {} }
     if (-not $f) {
-        $ans = [System.Windows.MessageBox]::Show("UltraVNC Viewer wasn't found in Program Files.`n`nInstall it, or choose Yes to pick vncviewer.exe on this PC now.", 'View Register', 'YesNo', 'Information', 'No')
+        $ans = [System.Windows.MessageBox]::Show("UltraVNC Viewer isn't installed on this PC (looked in Program Files).`n`nDo you want to find vncviewer.exe yourself?`n`nChoose No to close. To install it, ask whoever looks after this PC.", 'View Register', 'YesNo', 'Information', 'No')
         if ($ans -ne 'Yes') { return $null }
         $f = Ask-ForPath $btn 'program'; $how = 'picked'
         if (-not $f) { return $null }
@@ -2605,7 +2622,7 @@ function global:Save-VncAllowedElevated($list) {   # $true when saved; Windows a
 function global:Show-VncAllowedDialog($owner) {   # Setup > Allowed computers (admin)...
     $cur = Read-VncAllowed
     $dlg = New-D2Dialog 'Allowed computers (admin)' $owner 440; $d = $dlg.win; $sp = $dlg.body
-    [void]$sp.Children.Add((New-D2Label "View Register shows only these computers, for every Windows user on this PC. One per line: Name, address (an IP or computer name, optionally :port). Saving asks Windows for an administrator."))
+    [void]$sp.Children.Add((New-D2Label "View Register shows only these computers, for every Windows user on this PC. One per line: Name, address (an IP or computer name, optionally :port). Use IP addresses if you want View only to use the saved password. Saving asks Windows for an administrator."))
     $st = New-D2Label '' '#A0A0A0' 12
     $st.Text = switch ($cur.state) { 'unsafe' { 'The saved list is not protected, so it is ignored. Save again to fix it.' } 'bad' { 'The saved list could not be read. Save again to replace it.' } default { '{0} of {1} allowed.' -f @($cur.list).Count, $global:VncAllowedMax } }
     [void]$sp.Children.Add($st)
@@ -2668,8 +2685,10 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         # Interact never sends one (the viewer asks). Only to a host that greeted RFB this session (L4 + V2-I1).
         $pw = 'none'
         if ($viewOnly -and (Test-VncUsePassword $row (Test-VncSecret))) { $hex = Get-VncSecretHex; if ($hex) { $file = New-VncTempConfig $h $p $hex; $pw = 'saved' } }
+        $why = if ($viewOnly -and $pw -ne 'saved') { Get-VncPasswordFallbackText $row (Test-VncSecret) } else { '' }   # v1.4.6 (Squint 1)
         $vargs = @(Get-VncViewerArgs $h $p $viewOnly $file); $vi = Get-VncViewerInfo $exe
         Write-LauncherLog (Get-VncLaunchLogText $viewOnly $exe $vargs $file $pw $vi)   # never the password or the .vnc contents; the temp path is redacted
+        if ($why) { Write-LauncherLog ('VNC view only: viewer will ask: ' + $why); if ($global:vncPicker) { $global:vncPicker.setStatus.Invoke($why) } }
         if (-not $vi.ultra -and $owner -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke(('The picked viewer is "{0}", not UltraVNC. Pick UltraVNC''s vncviewer.exe if it can''t connect.' -f $vi.product)) }
         $proc = Start-Process -FilePath $exe -ArgumentList $vargs -WorkingDirectory (Split-Path -Parent $exe) -PassThru
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit; $file = $null }   # deleted 3 s after the viewer shows a window, or at 8 s
@@ -2982,6 +3001,7 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
 function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed computers; no network scan, no Add/Remove/Rescan
     if ($global:vncPicker -and $global:vncPicker.win.IsVisible) { $global:vncPicker.win.Activate() | Out-Null; return }
     Remove-VncTempLeftovers
+    try { if ($global:VncViewerScan -and -not $global:VncViewerScan.path) { [void](Initialize-VncViewerScan -Retry) } } catch {}   # v1.4.6 (Squint 2): installed since the last look? search again on open
     $al = Read-VncAllowed
     $ui = @{ btn = $btn; allowedMode = $true; allowed = @($al.list); online = @{}; checking = $false; check = $null; timer = $null }
     try { $w = [Windows.Markup.XamlReader]::Parse($global:VncPickerXaml) }

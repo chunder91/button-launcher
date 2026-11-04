@@ -1,5 +1,15 @@
 # Button Launcher release notes
 
+## v1.4.6: View only says why it asks; viewer found after install; password dialog tidy-up
+
+Pending review (build of 2026-11-04). Includes everything in v1.4.5.
+
+- View only: when the viewer is going to ask for the password, the picker's status line (and the log) says why: no view-only password is saved, the computer is listed by name (list it by IP address in Allowed computers), or it didn't answer the quick check (press F5). Never the password itself (Squint 1).
+- UltraVNC Viewer installed while the launcher is open is now found: a "not found" result is searched again when View Register opens and on every View only / Interact click (Squint 2). The not-found message asks a plain yes/no question.
+- Setup > View-only password (Charles, 7:55 AM Nov 4): short intro, a visible "Password" label, a 12 px note "Only used for computers listed by IP address. UltraVNC uses only the first 8 characters.", status text in #B4B4BC announced to screen readers, and "Remove password" (was "No password") shown only when one is saved; it keeps the dialog open and says "Saved password removed. View only will ask for one." (Squint 5, Kern).
+- Allowed computers intro: "Use IP addresses if you want View only to use the saved password."
+- Port parsing uses `[0-9]` and `\A...\z` (LJ M46-I2).
+
 ## v1.4.5: allowed computers save again
 
 Pending review (build of 2026-11-03). Includes everything in v1.4.4.
