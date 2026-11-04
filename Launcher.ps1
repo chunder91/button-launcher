@@ -639,8 +639,12 @@ function global:New-MissingDot($tip) {
     return $dot
 }
 
+function global:Get-LabelMaxWidth([string]$cls, [bool]$danger) {   # 290 panel - 12 padding - 6 gap - 24 tile padding; restart tiles also lose their 2 px red border on each side (the root cause of 'ScreenConnec' + 't')
+    $w = if ($cls -eq 'half') { 109 } else { 248 }; if ($danger) { $w -= 4 }; return $w
+}
 function global:Set-FitFontSize($main, $text, [double]$maxW, [double]$maxH, [double]$fs) {   # v1.4.2 (Kern/Squint): wrap first (up to 3 lines), then shrink to 12; returns $true when it fits
     if (-not ($maxW -gt 0)) { $maxW = [double]::PositiveInfinity }
+    $main.TextWrapping = 'WrapWithOverflow'   # v1.4.8 Windows capture fix: never break inside a word ('ScreenConnec' + 't'); an over-wide word widens DesiredSize, so the width test below rejects that size
     $fits = $false
     for ($size = $fs; $size -ge 12; $size--) {   # measured on the real TextBlock in layout units (DIP), so DPI scaling and 'Make text bigger' don't change the fit
         $main.FontSize = $size; $main.LineHeight = [Math]::Round($size * 1.2, 1)
@@ -702,12 +706,12 @@ function global:New-Content($btn, $h, $cls, $danger, $fg) {
         $sp.Orientation = 'Horizontal'; $sp.HorizontalAlignment = 'Left'; $sp.VerticalAlignment = 'Center'
         if ($icon) { $icon.VerticalAlignment = 'Center'; $icon.Margin = '0,0,10,0'; [void]$sp.Children.Add($icon) }
         $iconW = if ($icon) { $ipx + 10 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }
-        $text.MaxWidth = if ($cls -eq 'half') { 109 - $iconW } else { 248 - $iconW }   # 290 panel - 12 padding - 6 gap - 24 tile padding
+        $text.MaxWidth = (Get-LabelMaxWidth $cls $danger) - $iconW
     }
-    if ($above) { $text.MaxWidth = if ($cls -eq 'half') { 109 } else { 248 } }   # wrap width for centred labels too
+    if ($above) { $text.MaxWidth = Get-LabelMaxWidth $cls $danger }   # wrap width for centred labels too
     $availH = [Math]::Max(12, [double]$h - 22 - $(if ($above -and $icon) { $ipx + 6 + $(if ($isRedDog) { 8 } else { 0 }) } else { 0 }))   # tile minus 3+3 margin and 8+8 content margin, minus the icon above
     if (-not (Set-FitFontSize $main $text ([double]$text.MaxWidth) $availH $fs)) { $main.ToolTip = ($lab.main -replace "`n", ' ') }   # Squint 3: at 12 px still too long -> full name in the tooltip
-    Set-MaxLines $main 3   # CC L1: never scaled below 12 px; Wrap breaks an over-wide word by character, and past 3 lines (or a raised floor at panel scale < 1) it ends in '...'
+    Set-MaxLines $main 3   # CC L1: never scaled below 12 px; WrapWithOverflow keeps words whole, and a word that still can't fit (or 3+ lines, or a raised floor at panel scale < 1) ends in '...'
     [void]$sp.Children.Add($text)
     return @{ el = $sp; missingPic = $missingPic; icon = $icon }
 }
@@ -3450,6 +3454,9 @@ function global:Get-MailNextDelaySec($s, $minutes = 3) {   # -1 = stopped (sign-
 }
 function global:Get-MailBadgeText([int]$n) { if ($n -le 0) { '' } elseif ($n -ge 100) { '99+' } else { [string]$n } }
 function global:Get-MailBadgeWidth([string]$t) { switch ($t.Length) { 0 { 18 } 1 { 18 } 2 { 24 } default { 30 } } }   # Kern: fixed width per bucket
+function global:Get-MailBadgeLeft([double]$ipx, [double]$w, [double]$iconGap) {   # Windows capture fix: '99+' (30 px at icon right - 8) ran 12 px into the label. Keep icon right - 8 when it fits, else pin the right edge 4 px short of the label
+    return [Math]::Min($ipx - 8, $ipx + $iconGap - 4 - $w)
+}
 function global:Test-MailShowBadge($s) { ($s.phase -eq 'ok' -or $s.phase -eq 'retry') -and [int]$s.count -gt 0 }
 function global:Test-MailShowRing($s) { $s.phase -eq 'authfail' -or $s.phase -eq 'methodfail' -or $s.phase -eq 'offline' }   # the count is hidden whenever the ring shows
 function global:Get-MailMotion([string]$style, [bool]$animOn) { if (-not $animOn) { return 'badge' }; if ($style -ceq 'badge') { return 'badge' }; return 'pulse' }   # Charles 1:58 PM: Pulse (default) or Just show the number
@@ -3742,13 +3749,14 @@ function global:Add-MailOverlay($tile, $wrap, $g, $c, [string]$ir, $btn) {   # E
     $tx.HorizontalAlignment = 'Center'; $tx.VerticalAlignment = 'Center'; $tx.TextAlignment = 'Center'
     [System.Windows.Documents.Typography]::SetNumeralAlignment($tx, [System.Windows.FontNumeralAlignment]::Tabular)
     $bd.Child = $tx
-    [System.Windows.Controls.Canvas]::SetLeft($bd, $ipx - 8); [System.Windows.Controls.Canvas]::SetTop($bd, -6)   # Kern Minor 2: icon right - 8, icon top - 6
+    $iconGap = 10.0; if ($c.icon -and $sp.Orientation -ne 'Horizontal') { $iconGap = [double]::PositiveInfinity }   # label beside the icon (10 px gap) or below it (no side overlap)
+    [System.Windows.Controls.Canvas]::SetLeft($bd, (Get-MailBadgeLeft $ipx 18 $iconGap)); [System.Windows.Controls.Canvas]::SetTop($bd, -6)   # Kern Minor 2: icon right - 8, icon top - 6, pulled left so it never reaches the label
     $rg = New-Object System.Windows.Shapes.Ellipse; $rg.Width = 8; $rg.Height = 8; $rg.Stroke = Brush '#4A4A4A'; $rg.StrokeThickness = 1.5; $rg.Visibility = 'Collapsed'
     $rg.SnapsToDevicePixels = $true
     [System.Windows.Controls.Canvas]::SetLeft($rg, $ipx - 3); [System.Windows.Controls.Canvas]::SetTop($rg, -1)   # centred where the badge centre is
     [void]$cv.Children.Add($rg); [void]$cv.Children.Add($bd)
     $lab = Get-DisplayLabel $btn; $base = ([string]$lab.main -replace "`n", ' ').Trim(); if (-not $base) { $base = 'Email' }
-    $e = @{ tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; glow = $ov; pulse = $null; peak = [double]$look.peak; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
+    $e = @{ ipx = $ipx; iconGap = $iconGap; tile = $tile; wrap = $wrap; badge = $bd; text = $tx; scale = $sc; ring = $rg; glow = $ov; pulse = $null; peak = [double]$look.peak; tip0 = $tile.ToolTip; name = $base; born = [DateTime]::UtcNow }
     $tile.Add_IsVisibleChanged({ Update-MailPulse $e }.GetNewClosure())                # a hidden panel stops its pulse; shown again, it restarts
     $tile.Add_Unloaded({ Set-MailPulse $e $false }.GetNewClosure())
     $tile.Add_Loaded({ [void](Add-MailStateHookOnce ([System.Windows.Window]::GetWindow($e.tile)) { param($w) $w.Add_StateChanged({ foreach ($x in @($global:mail.ui)) { Update-MailPulse $x } }) }) }.GetNewClosure())   # CC: minimised stops the pulse, restore resumes; LJ M34-I1: one handler per window, however often tiles rebuild                    # a rebuilt panel (edit mode, layout) drops the old tile's pulse
@@ -3809,7 +3817,7 @@ function global:Set-MailEntry($e, [bool]$grew) {
     $e.ring.Visibility = if (Test-MailShowRing $s) { 'Visible' } else { 'Collapsed' }
     $motion = Get-MailMotion ([string]$m.set.style) (Test-MailAnimOn)
     if (Test-MailShowBadge $s) {
-        $txt = Get-MailBadgeText ([int]$s.count); $e.text.Text = $txt; $bd.Width = Get-MailBadgeWidth $txt
+        $txt = Get-MailBadgeText ([int]$s.count); $e.text.Text = $txt; $bd.Width = Get-MailBadgeWidth $txt; [System.Windows.Controls.Canvas]::SetLeft($bd, (Get-MailBadgeLeft $e.ipx $bd.Width $e.iconGap))   # wider '99+' grows left, over the icon, not onto the label
         $appear = $bd.Visibility -ne 'Visible'
         $bd.Visibility = 'Visible'
         $sx = [System.Windows.Media.ScaleTransform]::ScaleXProperty; $sy = [System.Windows.Media.ScaleTransform]::ScaleYProperty

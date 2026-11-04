@@ -299,7 +299,7 @@ Check 'no pulse in edit mode, on a hidden panel, with animations off, or with Ju
 $sq = New-MailState; [void](Update-MailState $sq @{ kind = 'ok'; unseen = 4 } $now); [void](Update-MailState $sq @{ kind = 'auth' } $now)
 $sr = New-MailState; [void](Update-MailState $sr @{ kind = 'ok'; unseen = 4 } $now); [void](Update-MailState $sr @{ kind = 'net' } $now); [void](Update-MailState $sr @{ kind = 'net' } $now)
 Check 'pulse stops when the count stops (sign-in) or goes offline' (-not (Test-MailPulseOn $sq 'pulse' $true $true $true) -and -not (Test-MailPulseOn $sr 'pulse' $true $true $true))
-Check 'badge: Kern -6 top, -8 right' ($src.Contains('SetLeft($bd, $ipx - 8); [System.Windows.Controls.Canvas]::SetTop($bd, -6)'))
+Check 'badge: Kern -6 top, -8 right (pulled left when wider so it never reaches the label)' ($src.Contains('SetLeft($bd, (Get-MailBadgeLeft $ipx 18 $iconGap)); [System.Windows.Controls.Canvas]::SetTop($bd, -6)') -and $src.Contains('return [Math]::Min($ipx - 8, $ipx + $iconGap - 4 - $w)'))
 Check 'motion follows Windows animation setting' ($src -match 'ClientAreaAnimation')
 Check 'exit stops the email check' ($src -match 'try \{ Stop-Mail \} catch \{\}')
 Check 'resume hooks the email check' ($src -match 'Resume-Mail')

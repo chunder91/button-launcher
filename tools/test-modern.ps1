@@ -196,7 +196,7 @@ Check 'v1.4.2 / CC L1: fit-to-tile labels, no Viewbox (never below 12 px), 3-lin
 Add-Type -AssemblyName WindowsBase -ErrorAction SilentlyContinue
 if (-not ('System.Windows.Size' -as [type])) { Add-Type -TypeDefinition 'namespace System.Windows { public struct Size { public double Width; public double Height; public Size(double w, double h) { Width = w; Height = h; } } }' }
 Invoke-Expression ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Set-FitFontSize' }, $true).Extent.Text)
-function New-FakeLabel([int]$chars) { $m = [pscustomobject]@{ FontSize = 0.0; LineHeight = 0.0; Tag = $null; Name = ''; DesiredSize = $null }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; chars = $chars }
+function New-FakeLabel([int]$chars) { $m = [pscustomobject]@{ FontSize = 0.0; LineHeight = 0.0; Tag = $null; Name = ''; DesiredSize = $null; TextWrapping = 'Wrap' }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; chars = $chars }
     $t | Add-Member ScriptMethod Measure { param($sz) $perLine = [Math]::Max(1, [Math]::Floor($sz.Width / ($this.m.FontSize * 0.55))); $lines = [Math]::Ceiling($this.chars / $perLine); $this.m.DesiredSize = [pscustomobject]@{ Height = $lines * $this.m.LineHeight }; $this.DesiredSize = [pscustomobject]@{ Width = [Math]::Min($sz.Width, $this.chars * $this.m.FontSize * 0.55); Height = $lines * $this.m.LineHeight } }; return @($m, $t) }
 $fk = New-FakeLabel 5; $ok = Set-FitFontSize $fk[0] $fk[1] 206 42 20
 Check 'v1.4.2: a short label keeps the full start size (20 px on a full tile)' ($ok -and $fk[0].FontSize -eq 20 -and $fk[0].Tag -eq 20 -and $fk[0].Name -eq 'fitLabel')
@@ -387,4 +387,36 @@ try { [System.Threading.Thread]::CurrentThread.CurrentCulture = [cultureinfo]'de
     $bc = Get-GlossBandCorner 18 7.5; $o = Get-GlossOutlineOffsets 2.4
     Check ('ClaudeCode: under de-DE the old -f margin broke ({0}); gloss maths stays numeric (corner {1}, offset {2})' -f $old, $bc[0], $o[4][0]) ($deOk -and $bc[0] -is [double] -and $bc[0] -eq 3 -and $o[4][0] -eq 0.85 -and (Get-GlossRowBand @(7.5, 24)) -eq 7.5 -and (Get-GlossLabelRight 272 100.5 $true) -eq 186.25) }
 finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $ci }
+
+# --- v1.4.8 Windows capture fixes (2871b6b at 100% / 144 DPI) ---
+Invoke-Expression ($ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Get-LabelMaxWidth' }, $true).Extent.Text)
+Check 'capture fix 1: label width = tile content minus the restart tiles'' 2 px red border each side (half 109 / restart half 105, full 248 / restart full 244)' ((Get-LabelMaxWidth 'half' $false) -eq 109 -and (Get-LabelMaxWidth 'half' $true) -eq 105 -and (Get-LabelMaxWidth 'full' $false) -eq 248 -and (Get-LabelMaxWidth 'full' $true) -eq 244)
+Check 'capture fix 1: both icon-left and icon-above labels use Get-LabelMaxWidth $cls $danger' ($nc.Contains('$text.MaxWidth = (Get-LabelMaxWidth $cls $danger) - $iconW') -and $nc.Contains('if ($above) { $text.MaxWidth = Get-LabelMaxWidth $cls $danger }') -and $nc -notmatch '109 - \$iconW')
+# word-aware fake: WrapWithOverflow keeps words whole, so an over-wide word widens DesiredSize (WPF behaviour); Wrap would split it by character
+function New-WordLabel([string]$text) { $m = [pscustomobject]@{ FontSize = 0.0; LineHeight = 0.0; Tag = $null; Name = ''; DesiredSize = $null; TextWrapping = 'Wrap' }; $t = [pscustomobject]@{ DesiredSize = $null; m = $m; words = @($text -split ' ') }
+    $t | Add-Member ScriptMethod Measure { param($sz) $cw = $this.m.FontSize * 0.55; $lines = 1; $cur = 0.0; $widest = 0.0
+        foreach ($w in $this.words) { $ww = $w.Length * $cw
+            if ($this.m.TextWrapping -eq 'Wrap' -and $ww -gt $sz.Width) { $ww = $sz.Width }   # Wrap: the word is cut to the line ('ScreenConnec' + 't')
+            $add = if ($cur -gt 0) { $cw + $ww } else { $ww }
+            if ($cur -gt 0 -and $cur + $add -gt $sz.Width) { $lines++; $cur = $ww } else { $cur += $add }
+            if ($cur -gt $widest) { $widest = $cur } }
+        if ($this.m.TextWrapping -eq 'Wrap') { $lines += @($this.words | Where-Object { $_.Length * $cw -gt $sz.Width }).Count }
+        $this.m.DesiredSize = [pscustomobject]@{ Height = $lines * $this.m.LineHeight }; $this.DesiredSize = [pscustomobject]@{ Width = $widest; Height = $lines * $this.m.LineHeight } }; return @($m, $t) }
+$fk = New-WordLabel 'Restart ScreenConnect'; $ok = Set-FitFontSize $fk[0] $fk[1] (Get-LabelMaxWidth 'half' $true) 40 16
+Check ('capture fix 1: Restart ScreenConnect on a restart half tile fits whole-word at {0} px (13 chars x 0.55 em <= 105), WrapWithOverflow set' -f $fk[0].FontSize) ($ok -and $fk[0].TextWrapping -eq 'WrapWithOverflow' -and 13 * $fk[0].FontSize * 0.55 -le 105 -and $fk[1].DesiredSize.Width -le 105)
+$fk = New-WordLabel 'Supercalifragilisticexpialidocious'; $ok = Set-FitFontSize $fk[0] $fk[1] 105 40 16
+Check 'capture fix 1: a single word too wide even at 12 px reports no fit (ellipsis + tooltip), never a mid-word split' (-not $ok -and $fk[0].TextWrapping -eq 'WrapWithOverflow' -and $nc.Contains("WrapWithOverflow keeps words whole"))
+$defs = Get-Content -Raw (Join-Path $root 'buttons.default.json') | ConvertFrom-Json; $bad = @()
+foreach ($pn in $defs.panels) { foreach ($b in $pn.buttons) { if (-not $b.label) { continue }
+    $dg = ([string]$b.label) -match '(?i)^restart'; $cls = if ($b.width -eq 'half') { 'half' } elseif ([double]$b.height -ge 110) { 'hero' } else { 'full' }
+    $mw = Get-LabelMaxWidth $cls $dg; $longest = (@(([string]$b.label) -split '\s+') | Measure-Object -Property Length -Maximum).Maximum
+    if ($longest * 12 * 0.62 -gt $mw) { $bad += [string]$b.label } } }   # 0.62 em: wide semibold caps estimate at the 12 px floor
+Check ('capture fix 1: every default label''s longest word fits its tile at the 12 px floor (estimate); over: ' + ($bad -join ' | ')) ($bad.Count -eq 0)
+$ms = Get-Content -Raw (Join-Path $root 'Launcher.ps1')
+Invoke-Expression ([regex]::Match($ms, '(?m)^function global:Get-MailBadgeLeft.*?\r?\n\}', 'Singleline').Value)
+Invoke-Expression ([regex]::Match($ms, '(?m)^function global:Get-MailBadgeWidth[^\r\n]*').Value)
+$ov = foreach ($t in '1', '42', '99+') { $w = Get-MailBadgeWidth $t; (Get-MailBadgeLeft 24 $w 10) + $w }
+Check ('capture fix 2: badge right edge stays >= 4 px short of the Email label (label at icon 24 + gap 10 = 34): right edges ' + ($ov -join ', ')) (@($ov | Where-Object { $_ -gt 30 }).Count -eq 0)
+Check 'capture fix 2: same badge sizes (18/24/30) and colours; 1-digit stays near icon right - 8 (moved 4 px at most); label below the icon keeps icon right - 8' ((Get-MailBadgeWidth '99+') -eq 30 -and (Get-MailBadgeLeft 24 18 10) -ge 12 -and (Get-MailBadgeLeft 24 30 ([double]::PositiveInfinity)) -eq 16 -and $ms.Contains("`$bd.Background = Brush '#111111'") -and $ms.Contains("`$tx.Foreground = Brush '#FACC15'"))
+Check 'capture fix 2: badge re-placed whenever its width changes; Email (dark label) keeps no outline' ($ms.Contains('$bd.Width = Get-MailBadgeWidth $txt; [System.Windows.Controls.Canvas]::SetLeft($bd, (Get-MailBadgeLeft $e.ipx $bd.Width $e.iconGap))') -and (Test-GlossDarkLabel '#111111'))
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

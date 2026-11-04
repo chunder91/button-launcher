@@ -2,8 +2,9 @@
 
 ## v1.4.8: glossy buttons (style C, "rounder candy gloss")
 
-Review status (build of 2026-11-04): the first build (164bf87) passed ClaudeCode (code) and Lockjaw (security: C0 H0 M0 L0). Kern and Squint (look and feel) said ship with fixes; this build applies those fixes and ClaudeCode's notes and goes back to all four for review. Not yet run on a real Windows PC: a Windows look-check at 100% and 150% is still needed. Includes everything in v1.4.7.
+Review status (build of 2026-11-04): 164bf87 passed ClaudeCode (code) and Lockjaw (security: C0 H0 M0 L0); Kern and Squint said ship with fixes, applied in 2871b6b. The first real Windows captures of 2871b6b (100%, and a 144 DPI render) showed the glossy style is right but found two bugs, fixed in this build: "Restart ScreenConnect" split mid-word, and the "99+" email badge covered the Email label. This build goes back to ClaudeCode, Lockjaw, Kern and Squint and needs a fresh Windows look-check (a true 150% capture is still outstanding). Includes everything in v1.4.7.
 
+- Windows capture fixes: button text never breaks in the middle of a word any more (long words shrink to fit, or end in "..." with the full name in the tooltip), and the restart buttons' red border is counted when fitting their text, so "Restart ScreenConnect" fits whole. The email count badge grows to the left over the envelope instead of onto the word "Email"; it keeps the same sizes and colours.
 - Follow-up fixes: the small grey second lines (such as "Version 11") are now full strength with a thin dark outline so they are easy to read; the outline thickness and gloss are worked out after the text has its final size; buttons in the same row get the same gloss height; margins no longer depend on the PC's language settings; the sparkle check knows about centred labels.
 
 - Charles picked style C (8:44 AM Nov 4). Every button keeps its own colours, size, gaps, fonts, auto-fit and layout. Only the finish changes:
