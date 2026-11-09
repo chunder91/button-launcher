@@ -30,8 +30,11 @@ WHAT EACH BUTTON DOES
                        v1.4.11: Interact closes View Register once the viewer starts.
                        v1.4.12 review (not released): the list shows Online,
                        Offline, or Not checked from a short VNC-port check.
+                       Online means VNC answered, not signed in or the screen.
+                       Offline is the VNC port, not the whole computer.
                        A listed computer is not automatically Online. The
-                       check time is in the row tooltip.
+                       check time is in the row tooltip and, for the selected
+                       row, in the status line under the list.
                        To connect straight to a register, edit the button and
                        put e.g. 192.168.1.50:5900 in Arguments.
   INTERNET             Opens Google in your browser.

@@ -369,7 +369,7 @@ Check 'LJ M18-I4: an adapter named Bluetooth Network Connection never scanned' (
 
 # ================= v1.4.1 (Charles 4:09 PM / 4:11 PM): allowed computers, View only never asks, Interact keeps UltraVNC's own box =================
 foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'ConvertTo-VncAllowedJson', 'ConvertFrom-VncAllowedText',
-               'ConvertTo-VncAllowedText', 'Get-VncReachWord', 'Get-VncReachTip', 'Test-VncReachStale', 'Get-VncReachOutcome', 'Get-VncReachView', 'ConvertTo-VncReachEntry', 'Get-VncAllowedRows', 'Get-VncAllowedSaveError', 'Get-VncAllowedWriterText', 'Get-VncAllowedWriterCommand', 'Test-VncAllowedAclSafe') {
+               'ConvertTo-VncAllowedText', 'Get-VncReachWord', 'Get-VncReachTip', 'Test-VncReachStale', 'ConvertTo-VncReachBanner', 'Get-VncReachOutcome', 'Get-VncReachView', 'Get-VncReachShort', 'ConvertTo-VncReachEntry', 'Get-VncAllowedRows', 'Get-VncAllowedSaveError', 'Get-VncAllowedWriterText', 'Get-VncAllowedWriterCommand', 'Test-VncAllowedAclSafe') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "v1.4.1 defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
 foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(VncAllowedMax|VncAllowedWriterScript|VncReachFresh)\s*=') { Invoke-Expression $l.Extent.Text } }
@@ -588,7 +588,7 @@ $offRow = [pscustomobject]@{ name = 'POS2'; host = '192.168.20.52'; port = 5900;
 Check 'v1.4.6 Squint 1: saved password + IP row that answered -> no fallback message' ((Get-VncPasswordFallbackText $ipRow $true) -eq '')
 Check 'v1.4.6 Squint 1: nothing saved -> says none is saved and where to set it' ((Get-VncPasswordFallbackText $ipRow $false) -like 'No view-only password is saved*Setup > View-only password*')
 Check 'v1.4.6 Squint 1: hostname row -> says listed by name, list it by IP' ((Get-VncPasswordFallbackText $nmRow $true) -like "POS1 is listed by name, so the saved view-only password isn't sent*by IP address in Allowed computers.")
-Check 'v1.4.6 Squint 1: no answer this session -> says press F5' ((Get-VncPasswordFallbackText $offRow $true) -like "POS2 didn't answer the quick check*F5*")
+Check 'v1.4.6 Squint 1: no answer this session -> says press F5' ((Get-VncPasswordFallbackText $offRow $true) -like 'POS2 has not been checked yet*F5*')
 $sv6 = & $fn 'Start-VncViewer'
 Check 'v1.4.6 Squint 1: Start-VncViewer logs and shows the reason only for View only without a sent password; never $hex/$pb in it' ($sv6.Contains("`$why = if (`$viewOnly -and `$pw -ne 'saved') { Get-VncPasswordFallbackText `$row (Test-VncSecret) }") -and $sv6.Contains("Write-LauncherLog ('VNC view only: viewer will ask: ' + `$why)") -and $sv6.Contains('$global:vncPicker.setStatus.Invoke($why)') -and (& $fn 'Get-VncPasswordFallbackText') -notmatch '\$hex|Get-VncSecretHex|SecurePassword')
 Check 'v1.4.6 Squint 2: Find-VncViewer and picker open re-search while not found' ((& $fn 'Find-VncViewer').Contains('Initialize-VncViewerScan -Retry') -and (& $fn 'Show-VncPicker').Contains('if ($global:VncViewerScan -and -not $global:VncViewerScan.path) { [void](Initialize-VncViewerScan -Retry) }'))
@@ -760,7 +760,7 @@ Check ('LJ M61-I1: exit with a hung runspace returns at once (BeginStop + Dispos
 Check 'CC Info: start-up call discards its result; README mentions the close' ($src.Contains('    [void](Start-LauncherDiagnostics)   #') -and (Get-Content -Raw (Join-Path $root 'README.txt')).Contains('Interact closes View Register once the viewer starts.'))
 Check 'v1.4.11: close goes through Closed (watcher + worker cleanup); temp .vnc timer is not owned by the window; args and start method unchanged' ((& $fn 'Close-VncPickerAfterStart').Contains('$win.Close()') -and $src.Contains('Remove-VncTileWatch $bView; Remove-VncTileWatch $bInt') -and (& $fn 'Remove-VncTempSoon') -notmatch '\$win|vncPicker|Owner' -and ((Get-VncViewerArgs '192.168.20.51' 5900 $false $null) -join ' ') -ceq '192.168.20.51:5900 -autoscaling' -and (& $fn 'Start-VncProcess').Contains('ShellExecute($psi.FileName, $psi.Arguments, $psi.WorkingDirectory, ''open'', 1)'))
 # --- v1.4.12 review: truthful reachability. No sockets are opened here. ---
-foreach ($n in 'Get-VncReachKind', 'Test-VncReachTarget', 'New-VncReachState', 'Start-VncReachCheck', 'Add-VncReachObservation', 'Complete-VncReachCheck', 'Close-VncReachCheck', 'Get-VncReachCounts', 'Get-VncReachExpiryMs', 'Get-VncReachStatusText', 'Get-VncPickerReason') { Invoke-Expression (& $fn $n) }
+foreach ($n in 'Get-VncReachKind', 'Test-VncReachTarget', 'ConvertTo-VncReachBanner', 'New-VncReachState', 'Start-VncReachCheck', 'Add-VncReachObservation', 'Complete-VncReachCheck', 'Close-VncReachCheck', 'Get-VncReachCounts', 'Get-VncReachExpiryMs', 'Get-VncReachStatusText', 'Get-VncReachShort', 'Test-VncReachAllExpired', 'Get-VncReachFooter', 'Get-VncStatusWrite', 'Get-VncPickerReason') { Invoke-Expression (& $fn $n) }
 $nowR = [datetime]::UtcNow
 Check 'reach: valid allowed target vs bad host, low port, empty' ((Test-VncReachTarget '192.168.20.51' 5900) -and (Test-VncReachTarget 'POS1' 5900) -and -not (Test-VncReachTarget 'not a host' 5900) -and -not (Test-VncReachTarget '192.168.20.51' 99) -and -not (Test-VncReachTarget '192.168.20.51' 0) -and -not (Test-VncReachTarget '' 5900))
 Check 'reach kind: invalid wins even if a connect looks successful; cancel wins over a finished connect' ((Get-VncReachKind $false $false $true $true $true $false 12) -eq 'invalid' -and (Get-VncReachKind $true $true $true $true $true $false 12) -eq 'cancelled')
@@ -804,7 +804,8 @@ $two = @([pscustomobject]@{ name = 'A'; host = '192.168.20.51'; port = 5900 }, [
 $mix = @{ '192.168.20.51:5900' = @{ kind = 'banner'; banner = 'RFB 003.008'; at = $nowR }; '10.0.0.8:5900' = @{ kind = 'timeout'; at = $nowR } }
 $cnt = Get-VncReachCounts $two $mix $nowR
 Check 'counts: one Online and one timeout is 1 online, 0 offline, 1 not checked' ($cnt.online -eq 1 -and $cnt.offline -eq 0 -and $cnt.unchecked -eq 1)
-Check 'status line while checking does not call anyone Offline' ((Get-VncReachStatusText 0 0 2 $true $false $false '') -match 'Not checked' -and (Get-VncReachStatusText 0 0 2 $true $false $false '') -notmatch 'Offline')
+$checkingLine = Get-VncReachStatusText 1 0 1 $true $false $false ''
+Check 'status line while checking keeps the counts and does not say a row is Offline' ($checkingLine -match '^Checking\. 1 online, 0 offline, 1 not checked\.' -and $checkingLine -match 'stays Not checked' -and $checkingLine -notmatch 'are Offline|is Offline')
 Check 'status line: a failed check is Not checked, not N of M online' ((Get-VncReachStatusText 0 0 2 $false $true $false '3:00 PM') -match 'not Offline' -and (Get-VncReachStatusText 1 0 1 $false $false $false '3:00 PM') -eq '1 online, 0 offline, 1 not checked at 3:00 PM. Press F5 to check again.')
 Check 'status line: expiry is not Offline' ((Get-VncReachStatusText 0 0 2 $false $false $true '') -match 'Expired is not Offline')
 $exp = @{ '192.168.20.51:5900' = @{ outcome = 'online'; kind = 'banner'; banner = 'RFB 003.008'; at = $nowR.AddSeconds(-30) } }
@@ -828,4 +829,87 @@ Check 'expiry timer only repaints (no socket, no scan, no check script)' ($ft -a
 $xamlR = [regex]::Match($src, "(?s)\`$global:VncPickerXaml = @'.*?'@").Value
 Check 'approved marks: green filled circle, red square, gray hollow circle; 16 SemiBold; selection pill stays separate' ($xamlR -match 'x:Name="markOn"[^>]*Fill="#22C55E"' -and $xamlR -match 'x:Name="markOff"[^>]*Fill="#F87171"' -and $xamlR -match 'x:Name="markNo"[^>]*Stroke="#B4B4BC"[^>]*StrokeThickness="1.5"' -and $xamlR -match 'Text="Status"' -and $xamlR -notmatch 'Text="Seen"' -and $xamlR -match 'Width="620" Height="522" MinWidth="616" MinHeight="410"' -and $xamlR -match 'Height="38"' -and $xamlR -match 'x:Name="pill"[^>]*Fill="#22C55E"' -and $xamlR -match 'FontSize="16" FontWeight="SemiBold"' -and $xamlR -match 'Value="#4ADE80"' -and $xamlR -match 'Value="#FECACA"' -and $xamlR -match 'Foreground="#B4B4BC"')
 Check 'column widths unchanged: 28 / * / 180 / 160 twice' (([regex]::Matches($xamlR, '<ColumnDefinition Width="28"/><ColumnDefinition Width="\*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="160"/>')).Count -eq 2)
+Check 'intro says Online is VNC answered and Offline is the VNC port' ($xamlR -match 'Online means VNC answered, not signed in or the screen\.' -and $xamlR -match 'Offline is the VNC port, not the whole computer\.' -and $xamlR -match 'Pick a computer\. View only to watch, Interact to take control\.')
+Check 'status owner: a selection event during rebuild does not write; an unchanged line is not announced' (($null -eq (Get-VncStatusWrite 'Checking. 1 online, 0 offline, 1 not checked.' 'Pick a computer to view or control it.' $true $true)) -and ($null -eq (Get-VncStatusWrite 'same' 'same' $false $false)) -and ((Get-VncStatusWrite 'old' '1 online, 0 offline, 1 not checked at 3:00 PM.' $false $false) -eq '1 online, 0 offline, 1 not checked at 3:00 PM.'))
+$kept = Get-VncReachFooter 1 0 2 $false $false $false '3:00 PM' 'POS1: VNC answered just now.'
+Check 'footer keeps the counts when the selected row adds its check detail' ($kept -eq '1 online, 0 offline, 2 not checked at 3:00 PM. Press F5 to check again. POS1: VNC answered just now.' -and $kept -notmatch 'RFB')
+$lf = ConvertTo-VncReachBanner ("RFB 003.008" + [char]10)
+$cr = ConvertTo-VncReachBanner ("RFB 003.008" + [char]13)
+Check 'greeting: LF is the RFB banner; CR is not, and does not open the password gate' ($lf -eq 'RFB 003.008' -and (Get-VncReachOutcome @{ kind = 'banner'; banner = $lf }) -eq 'online' -and $cr -eq '' -and (Get-VncReachOutcome @{ kind = 'banner'; banner = $cr }) -eq 'offline' -and -not (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.20.51'; banner = $cr; session = $true }) $true) -and (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.20.51'; banner = $lf; session = $true }) $true))
+$whyRow = { param($why) [pscustomobject]@{ name = 'POS2'; host = '192.168.20.52'; port = 5900; banner = ''; session = $false; reachWhy = $why } }
+Check 'fallback: stale, in flight, and cancelled are not "did not answer"' (((Get-VncPasswordFallbackText (& $whyRow 'stale') $true) -like '*last VNC check expired*') -and ((Get-VncPasswordFallbackText (& $whyRow 'running') $true) -like '*still being checked*') -and ((Get-VncPasswordFallbackText (& $whyRow 'cancelled') $true) -like '*was cancelled*') -and ((Get-VncPasswordFallbackText (& $whyRow 'timeout') $true) -like '*timed out*') -and ((Get-VncPasswordFallbackText (& $whyRow 'refused') $true) -like '*did not answer with VNC*'))
+$stag = @(
+  [pscustomobject]@{ name = 'Old'; host = '192.168.20.51'; port = 5900 }
+  [pscustomobject]@{ name = 'Fresh'; host = '192.168.20.52'; port = 5900 }
+  [pscustomobject]@{ name = 'Wait'; host = '192.168.20.53'; port = 5900 })
+$stagRes = @{
+  '192.168.20.51:5900' = @{ kind = 'banner'; banner = 'RFB 003.008'; outcome = 'online'; at = $nowR.AddSeconds(-70) }
+  '192.168.20.52:5900' = @{ kind = 'banner'; banner = 'RFB 003.008'; outcome = 'online'; at = $nowR.AddSeconds(-5) } }
+$stagRows = Get-VncAllowedRows $stag $stagRes $true $nowR
+$stagBy = @{}; foreach ($sr in $stagRows) { $stagBy[$sr.row.name] = $sr }
+$stagCounts = Get-VncReachCounts $stag $stagRes $nowR
+$stagFoot = Get-VncReachFooter $stagCounts.online $stagCounts.offline $stagCounts.unchecked $true $false $false '' ''
+Check 'staggered expiry while a check is still running: old Online is Not checked, fresh Online stays, footer keeps both counts' ($stagBy['Old'].statusText -eq 'Not checked' -and $stagBy['Fresh'].statusText -eq 'Online' -and $stagBy['Wait'].statusText -eq 'Not checked' -and $stagBy['Wait'].statusTip -match 'in progress' -and $stagCounts.online -eq 1 -and $stagCounts.unchecked -eq 2 -and $stagFoot -match 'Checking\. 1 online, 0 offline, 2 not checked' -and -not (Test-VncReachAllExpired $stagRes $nowR))
+Check 'picker writes the summary after rebuild and ignores selection noise while rebuilding' ($pkR -match '\$ui\.rebuilding = \$true' -and $pkR.IndexOf('$ui.rebuilding = $true') -lt $pkR.IndexOf('$lv.Items.Clear()') -and $pkR -match 'if \(\$ui\.rebuilding\) \{ return \}' -and $pkR -match 'if \(\$ui\.ownStatus\) \{ \$ui\.noteStatus\.Invoke\(\$false\) \}' -and $pkR -match 'if \(\$status\.Text -eq \$s\) \{ return \}')
+Check 'read gives up on cancel inside a short slice and still closes the socket' ($chk -match '\$s\.ReadTimeout = 50' -and $chk -match 'while \(\$got -lt 12 -and -not \$sync\.cancel\)' -and $chk -match 'ConvertTo-VncReachBanner')
+# Loopback only: 127.0.0.1 ephemeral port. No other address is contacted.
+function Wait-Loopback($ln, [int]$ms) {
+  $sw = [Diagnostics.Stopwatch]::StartNew()
+  while (-not $ln.Pending -and $sw.ElapsedMilliseconds -lt $ms) { Start-Sleep -Milliseconds 15 }
+  if (-not $ln.Pending) { throw 'loopback client did not connect' }
+  return $ln.AcceptTcpClient()
+}
+$lbOk = $false
+try {
+  $ln = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, 0)
+  $ln.Start(); $lbPort = ([System.Net.IPEndPoint]$ln.LocalEndpoint).Port
+  $lbSync = [hashtable]::Synchronized(@{ cancel = $false; done = $false; found = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]) })
+  $lbIss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+  foreach ($bn in 'Get-VncReachKind', 'ConvertTo-VncReachBanner') { $lbIss.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry $bn, (Get-Item "function:$bn").ScriptBlock.ToString())) }
+  $lbRs = [runspacefactory]::CreateRunspace($lbIss); $lbRs.Open(); $lbPs = [powershell]::Create(); $lbPs.Runspace = $lbRs
+  [void]$lbPs.AddScript($global:VncAllowedCheckScript).AddArgument(@(@{ key = "127.0.0.1:$lbPort"; host = '127.0.0.1'; port = $lbPort; probe = $true })).AddArgument(2000).AddArgument($lbSync)
+  $lbH = $lbPs.BeginInvoke()
+  $lbClient = Wait-Loopback $ln 2000; $lbStream = $lbClient.GetStream()
+  $lbBytes = [Text.Encoding]::ASCII.GetBytes("RFB 003.008`n"); [void]$lbStream.Write($lbBytes, 0, $lbBytes.Length)
+  $lbSw = [Diagnostics.Stopwatch]::StartNew(); while (-not $lbSync.done -and $lbSw.ElapsedMilliseconds -lt 3000) { Start-Sleep -Milliseconds 20 }
+  $lbHit = $null; [void]$lbSync.found.TryDequeue([ref]$lbHit)
+  $lbOk = ($lbSync.done -and $lbHit.kind -eq 'banner' -and $lbHit.banner -eq 'RFB 003.008' -and (Get-VncReachOutcome $lbHit) -eq 'online')
+  $lbClient.Close(); $ln.Stop(); $lbPs.Dispose(); $lbRs.Dispose()
+} catch { $lbOk = $false }
+Check 'loopback LF greeting is Online' $lbOk
+$crOk = $false
+try {
+  $ln2 = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, 0)
+  $ln2.Start(); $crPort = ([System.Net.IPEndPoint]$ln2.LocalEndpoint).Port
+  $crSync = [hashtable]::Synchronized(@{ cancel = $false; done = $false; found = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]) })
+  $crIss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+  foreach ($bn in 'Get-VncReachKind', 'ConvertTo-VncReachBanner') { $crIss.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry $bn, (Get-Item "function:$bn").ScriptBlock.ToString())) }
+  $crRs = [runspacefactory]::CreateRunspace($crIss); $crRs.Open(); $crPs = [powershell]::Create(); $crPs.Runspace = $crRs
+  [void]$crPs.AddScript($global:VncAllowedCheckScript).AddArgument(@(@{ key = "127.0.0.1:$crPort"; host = '127.0.0.1'; port = $crPort; probe = $true })).AddArgument(2000).AddArgument($crSync)
+  $crH = $crPs.BeginInvoke()
+  $crClient = Wait-Loopback $ln2 2000; $crStream = $crClient.GetStream()
+  $crBytes = [Text.Encoding]::ASCII.GetBytes("RFB 003.008`r"); [void]$crStream.Write($crBytes, 0, $crBytes.Length)
+  $crSw = [Diagnostics.Stopwatch]::StartNew(); while (-not $crSync.done -and $crSw.ElapsedMilliseconds -lt 3000) { Start-Sleep -Milliseconds 20 }
+  $crHit = $null; [void]$crSync.found.TryDequeue([ref]$crHit)
+  $crOk = ($crSync.done -and $crHit.kind -eq 'banner' -and $crHit.banner -eq '' -and (Get-VncReachOutcome $crHit) -eq 'offline' -and -not (Test-VncUsePassword ([pscustomobject]@{ host = '127.0.0.1'; banner = $crHit.banner; session = $true }) $true))
+  $crClient.Close(); $ln2.Stop(); $crPs.Dispose(); $crRs.Dispose()
+} catch { $crOk = $false }
+Check 'loopback CR greeting is Offline and the password gate stays closed' $crOk
+$cxOk = $false; $cxMs = -1
+try {
+  $ln3 = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, 0)
+  $ln3.Start(); $cxPort = ([System.Net.IPEndPoint]$ln3.LocalEndpoint).Port
+  $cxSync = [hashtable]::Synchronized(@{ cancel = $false; done = $false; found = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]) })
+  $cxIss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+  foreach ($bn in 'Get-VncReachKind', 'ConvertTo-VncReachBanner') { $cxIss.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry $bn, (Get-Item "function:$bn").ScriptBlock.ToString())) }
+  $cxRs = [runspacefactory]::CreateRunspace($cxIss); $cxRs.Open(); $cxPs = [powershell]::Create(); $cxPs.Runspace = $cxRs
+  [void]$cxPs.AddScript($global:VncAllowedCheckScript).AddArgument(@(@{ key = "127.0.0.1:$cxPort"; host = '127.0.0.1'; port = $cxPort; probe = $true })).AddArgument(4000).AddArgument($cxSync)
+  $cxH = $cxPs.BeginInvoke(); $cxClient = Wait-Loopback $ln3 2000
+  Start-Sleep -Milliseconds 80; $cxSync.cancel = $true; $cxSw = [Diagnostics.Stopwatch]::StartNew()
+  while (-not $cxSync.done -and $cxSw.ElapsedMilliseconds -lt 2000) { Start-Sleep -Milliseconds 20 }
+  $cxMs = $cxSw.ElapsedMilliseconds; $cxHit = $null; [void]$cxSync.found.TryDequeue([ref]$cxHit)
+  $cxOk = ($cxSync.done -and $cxMs -lt 1000 -and $cxHit.kind -eq 'cancelled')
+  try { $cxClient.Close() } catch {}; try { $ln3.Stop() } catch {}; try { if (-not $cxH.IsCompleted) { [void]$cxPs.BeginStop($null, $null) } } catch {}; try { $cxPs.Dispose() } catch {}; try { $cxRs.Dispose() } catch {}
+} catch { $cxOk = $false }
+Check ('loopback cancel closes a stalled read without waiting out the 4 s budget: ' + $cxMs + ' ms') $cxOk
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }
