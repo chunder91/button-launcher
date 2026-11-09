@@ -2984,12 +2984,18 @@ function global:Get-VncReachExpiryMs($results, [datetime]$nowUtc) {   # ms until
     if ($ms -gt 60000) { return 60000 }
     return $ms
 }
-function global:Get-VncReachStatusText([int]$online, [int]$offline, [int]$unchecked, [bool]$checking, [bool]$fault, [bool]$stale, [string]$at) {
+function global:Get-VncReachStatusText([int]$online, [int]$offline, [int]$unchecked, [bool]$checking, [bool]$fault, [bool]$stale, [string]$at) {   # one line. The selected-row clause is separate so this does not wrap into the list.
     $counts = '{0} online, {1} offline, {2} not checked' -f $online, $offline, $unchecked
-    if ($checking) { return ('Checking. {0}. A row stays Not checked until its own check finishes. Press F5 to start over.' -f $counts) }
-    if ($fault) { return ('The check did not finish. {0}. Rows without a result are Not checked, not Offline. Press F5 to try again.' -f $counts) }
-    if ($stale) { return 'The last check expired. Every row is Not checked until you press F5. Expired is not Offline.' }
-    return ('{0} at {1}. Press F5 to check again.' -f $counts, $at)
+    if ($checking) { return ('Checking. {0}.' -f $counts) }
+    if ($fault) { return ('Not finished. {0}. Not Offline. Press F5.' -f $counts) }
+    if ($stale) { return 'Expired. Every row is Not checked, not Offline. Press F5.' }
+    if ($at) { return ('{0}. Press F5 to check again.' -f $counts) }
+    return $counts
+}
+function global:Get-VncChromeDelta([int]$introLines, [double]$introMargin, [int]$footerLines, [double]$footerMargin, [double]$line) {   # vs the one-line intro (margin 12) and one-line footer (margin 10) the 240 px chrome model was built on. 0 = the list does not lose a row.
+    $base = (1 * $line + 12) + (1 * $line + 10)
+    $now = ($introLines * $line + $introMargin) + ($footerLines * $line + $footerMargin)
+    return [int]($now - $base)
 }
 # Off the UI thread. A default runspace plus Get-VncReachKind only, not the launcher session. Cancel and a non-probe
 # row never construct a socket. Sockets close in finally. The shared 300 ms budget is the whole batch, same as v1.4.11.
@@ -3409,7 +3415,7 @@ $global:VncPickerXaml = @'
   </Window.Resources>
   <Grid Margin="20,14,20,16">
     <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="2"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <TextBlock Grid.Row="0" TextWrapping="Wrap" Text="Pick a computer. View only to watch, Interact to take control. Online means VNC answered, not signed in or the screen. Offline is the VNC port, not the whole computer." FontSize="13" Foreground="#A0A0A0" Margin="0,0,0,12"/>
+    <TextBlock Grid.Row="0" Text="Pick a computer. View only to watch, Interact to take control." FontSize="13" LineHeight="16" Foreground="#A0A0A0" Margin="0,0,0,4" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis"/>
     <Border Grid.Row="1" CornerRadius="10" Background="#2E000000" BorderBrush="#1FFFFFFF" BorderThickness="1">
       <Grid>
         <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition Height="*"/></Grid.RowDefinitions>
@@ -3472,7 +3478,15 @@ $global:VncPickerXaml = @'
         <TextBlock Text="&#xE712;" FontFamily="Segoe Fluent Icons, Segoe MDL2 Assets" FontSize="16"/>
       </Button>
     </Grid>
-    <TextBlock x:Name="Status" Grid.Row="4" FontSize="12" Foreground="#A0A0A0" Margin="0,10,0,0" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" MaxHeight="48"/>
+    <Grid x:Name="StatusBlock" Grid.Row="4" Margin="0,2,0,0" MaxHeight="32">
+      <Grid.RowDefinitions><RowDefinition Height="16"/><RowDefinition Height="16"/></Grid.RowDefinitions>
+      <TextBlock x:Name="StatusCaveat" Grid.Row="0" FontSize="12" LineHeight="16" Foreground="#A0A0A0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="Online means the VNC port answered, not that you are signed in or the screen is available. Offline is the VNC port, not the whole computer." Text="Online: VNC answered, not signed in or the screen. Offline: the VNC port, not the PC."/>
+      <Grid Grid.Row="1">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+        <TextBlock x:Name="Status" Grid.Column="0" FontSize="12" LineHeight="16" Foreground="#A0A0A0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        <TextBlock x:Name="StatusDetail" Grid.Column="1" Margin="8,0,0,0" FontSize="12" LineHeight="16" Foreground="#A0A0A0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+      </Grid>
+    </Grid>
   </Grid>
 </Window>
 '@
@@ -3589,7 +3603,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
             [System.Windows.MessageBox]::Show("The computer finder couldn't open.`n`n" + $_.Exception.Message + "`n`nDetails are in launcher-error.log.", 'View Register', 'OK', 'Error') | Out-Null; return }
     $w.FontFamily = $global:UiFont
     $ui.win = $w
-    $lv = $w.FindName('List'); $status = $w.FindName('Status'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
+    $lv = $w.FindName('List'); $status = $w.FindName('Status'); $statusDetail = $w.FindName('StatusDetail'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
     $hdr = $w.FindName('Hdr')
     $lv.Add_Loaded({   # v1.4.10 (Kern/Squint): while the list shows its vertical scrollbar, the header gets the same right inset so Address/Status stay over their columns
         try { $sv = Find-VncScrollViewer $lv; $hd = $hdr; if ($sv) { $fix = { $hd.Margin = New-Object System.Windows.Thickness 4, 0, (Get-VncHeaderInset ([string]$sv.ComputedVerticalScrollBarVisibility) ([double][System.Windows.SystemParameters]::VerticalScrollBarWidth)), 0 }.GetNewClosure()
@@ -3600,13 +3614,17 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
     foreach ($n in 'Rescan', 'Add', 'More') { $w.FindName($n).Visibility = 'Collapsed' }
     $ui.list = $lv
     try { [System.Windows.Automation.AutomationProperties]::SetLiveSetting($status, 'Polite') } catch {}
-    $ui.setStatus = [Action[string]]{ param($s)
-        if ($status.Text -eq $s) { return }   # same words: do not announce again
-        $status.Text = $s
+    $ui.setLines = [Action[string,string]]{ param($counts, $detail)   # two fixed lines. Same combined words are not announced again.
+        $combined = $(if ($detail) { $counts + ' ' + $detail } else { $counts })
+        if ($ui.line -eq $combined) { return }
+        $ui.line = $combined
+        $status.Text = $counts; $status.ToolTip = $counts
+        $statusDetail.Text = [string]$detail; $statusDetail.ToolTip = [string]$detail
         try { $pe = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($status); if ($pe) { $pe.RaiseAutomationEvent('LiveRegionChanged') } } catch {} }.GetNewClosure()
-    $ui.noteStatus = [Action[bool]]{ param($fromSelection)   # reachability sentence, after the list is stable. Selection noise during a rebuild does not own this line.
+    $ui.setStatus = [Action[string]]{ param($s) $ui.setLines.Invoke($s, '') }.GetNewClosure()
+    $ui.noteStatus = [Action[bool]]{ param($fromSelection)   # counts stay; the selected-row clause is the second budget. A rebuild's selection noise does not own the line.
         $now = [datetime]::UtcNow
-        $counts = Get-VncReachCounts $ui.allowed $ui.reach.results $now
+        $countsN = Get-VncReachCounts $ui.allowed $ui.reach.results $now
         $checking = [bool]$ui.reach.checking; $fault = [bool]$ui.reach.fault
         $expired = ((-not $checking) -and -not $fault -and (Test-VncReachAllExpired $ui.reach.results $now))
         $at = ''
@@ -3614,9 +3632,10 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         $detail = ''; $sel = $lv.SelectedItem
         if ($sel -and $sel.statusShort) { $detail = [string]$sel.statusShort }
         elseif ((-not $sel) -and $lv.Items.Count -gt 0) { $detail = [string](Get-VncPickerReason $false) }
-        $next = Get-VncReachFooter $counts.online $counts.offline $counts.unchecked $checking $fault $expired $at $detail
-        $write = Get-VncStatusWrite ([string]$status.Text) $next ([bool]$fromSelection) ([bool]$ui.rebuilding)
-        if ($null -ne $write) { $ui.setStatus.Invoke([string]$write) } }.GetNewClosure()
+        $countsText = Get-VncReachStatusText $countsN.online $countsN.offline $countsN.unchecked $checking $fault $expired $at
+        $next = Get-VncReachFooter $countsN.online $countsN.offline $countsN.unchecked $checking $fault $expired $at $detail
+        $write = Get-VncStatusWrite ([string]$ui.line) $next ([bool]$fromSelection) ([bool]$ui.rebuilding)
+        if ($null -ne $write) { $ui.setLines.Invoke($countsText, $detail) } }.GetNewClosure()
     $ui.refresh = [Action]{
         $ui.rebuilding = $true
         try { $sel = $lv.SelectedItem; $lv.Items.Clear()
@@ -3628,8 +3647,9 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
                    $eB.Text = $(if ($al.state -eq 'unsafe') { "The allowed list on this PC isn't protected, so it is ignored. An administrator can save it again in Setup > Allowed computers (admin)..." } else { 'An administrator adds them in Setup > Allowed computers (admin)...' })
                    $empty.Visibility = 'Visible' } }
         finally { $ui.rebuilding = $false }
-        if ($ui.ownStatus) { $ui.noteStatus.Invoke($false) }
-        elseif ($r) { $pick = Get-VncStatusWrite ([string]$status.Text) $r $false $false; if ($null -ne $pick) { $ui.setStatus.Invoke([string]$pick) } } }.GetNewClosure()
+        if ($lv.Items.Count -eq 0) { $ui.setStatus.Invoke('No computers have been allowed yet. Ask your administrator.') }   # empty list: not "Pick a computer". Tiles stay off because nothing is selected.
+        elseif ($ui.ownStatus) { $ui.noteStatus.Invoke($false) }
+        elseif ($r) { $pick = Get-VncStatusWrite ([string]$ui.line) $r $false $false; if ($null -ne $pick) { $ui.setStatus.Invoke([string]$pick) } } }.GetNewClosure()
     $ui.armFresh = [Action]{   # next repaint only. No connect.
         if (-not $ui.freshTimer -or $ui.reach.closed) { return }
         $ms = Get-VncReachExpiryMs $ui.reach.results ([datetime]::UtcNow)
@@ -3679,8 +3699,9 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
     $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $r = Get-VncPickerReason $has
         if ($ui.rebuilding) { return }   # Clear() is not the user. The reachability line is written after the list is rebuilt.
-        if ($ui.ownStatus) { $ui.noteStatus.Invoke($true) }
-        elseif ($r) { $pick = Get-VncStatusWrite ([string]$status.Text) $r $true $false; if ($null -ne $pick) { $ui.setStatus.Invoke([string]$pick) } } }.GetNewClosure())
+        if ($lv.Items.Count -eq 0) { $ui.setStatus.Invoke('No computers have been allowed yet. Ask your administrator.') }
+        elseif ($ui.ownStatus) { $ui.noteStatus.Invoke($true) }
+        elseif ($r) { $pick = Get-VncStatusWrite ([string]$ui.line) $r $true $false; if ($null -ne $pick) { $ui.setStatus.Invoke([string]$pick) } } }.GetNewClosure())
     $lv.Add_MouseDoubleClick({ if ($lv.SelectedItem) { $ui.go.Invoke($true) } }.GetNewClosure())
     $lv.Add_PreviewMouseRightButtonUp({
         $o = $_.OriginalSource; while ($o -and -not ($o -is [System.Windows.Controls.ListBoxItem])) { if ($o -is [System.Windows.Media.Visual]) { $o = [System.Windows.Media.VisualTreeHelper]::GetParent($o) } else { $o = $null } }
