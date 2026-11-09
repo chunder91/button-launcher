@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>View Register status — concept comparison</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #141416; }
+  body { font-family: Inter, "Liberation Sans", sans-serif; color: #ececf1; padding: 22px 24px 18px; }
+  h1 { font-size: 18px; font-weight: 650; margin: 0 0 6px; letter-spacing: 0; }
+  .banner { font-size: 13px; line-height: 1.35; color: #f5d76e; background: #2a2618; border: 1px solid #6b5a28; border-radius: 8px; padding: 8px 12px; margin: 0 0 14px; }
+  .cols { display: flex; gap: 18px; }
+  .panel { flex: 1; min-width: 0; }
+  .cap { font-size: 13px; font-weight: 650; margin: 0 0 6px; }
+  .cap span { font-weight: 500; color: #b4b4bc; }
+  .list { background: #1b1b20; border: 1px solid #2e2e34; border-radius: 10px; overflow: hidden; }
+  .hdr, .row { display: grid; grid-template-columns: 28px 1fr 180px 160px; align-items: center; }
+  .hdr { height: 32px; color: #a0a0a0; font-size: 14px; font-weight: 650; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .hdr div, .row .name, .row .addr { padding-left: 0; }
+  .name { padding-left: 4px; }
+  .row { height: 38px; position: relative; font-size: 16px; color: #fff; }
+  .row.sel { background: #313136; }
+  .pill { position: absolute; left: 0; top: 10px; width: 3px; height: 18px; border-radius: 1.5px; background: #22c55e; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 650; min-width: 0; }
+  .status b { font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; flex: none; }
+  .sq { width: 10px; height: 10px; background: #f87171; flex: none; }
+  .ring { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #b4b4bc; flex: none; box-sizing: border-box; }
+  .on { color: #4ade80; }
+  .off { color: #fecaca; }
+  .no { color: #b4b4bc; }
+  .seenword { color: #a0a0a0; font-weight: 450; font-size: 16px; }
+  .foot { margin-top: 8px; color: #a0a0a0; font-size: 12px; line-height: 1.35; }
+  .strip { margin-top: 14px; background: #1b1b20; border: 1px solid #2e2e34; border-radius: 10px; padding: 10px 12px 12px; }
+  .strip h2 { margin: 0 0 8px; font-size: 13px; font-weight: 650; color: #f5d76e; }
+  .bits { display: flex; gap: 18px; flex-wrap: wrap; }
+  .bit { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .bit small { display: block; color: #b4b4bc; font-size: 12px; font-weight: 450; }
+  .note { margin-top: 10px; font-size: 12px; line-height: 1.4; color: #c8c8d0; }
+</style>
+</head>
+<body>
+  <h1>View Register list — before / after for the approved status marks</h1>
+  <div class="banner">CONCEPT RENDER AND RECONSTRUCTION — not a Windows WPF capture. No live check ran. Font is Inter, not Segoe UI. List background #1B1B20 and selected row #313136 are the spec’s measured colors, not a composited WPF screenshot. The original before.png was not on disk in this environment; the left panel reconstructs the attached historical list (POS1, 192.168.20.51, Seen text “Online”, green selection bar).</div>
+  <div class="cols">
+    <div class="panel">
+      <p class="cap">Before <span>— reconstruction of the attached historical list. Seen column is the word Online. Simulated, not the original pixels.</span></p>
+      <div class="list" aria-label="Reconstruction of the historical View Register list">
+        <div class="hdr"><div></div><div class="name">Name</div><div>Address</div><div>Seen</div></div>
+        <div class="row sel"><div class="pill"></div><div></div><div class="name">POS1</div><div class="addr">192.168.20.51</div><div class="seenword">Online</div></div>
+        <div class="row" style="height:76px"></div>
+      </div>
+      <p class="foot">Historical behavior treated a finished RFB greeting as the word Online in the Seen column, and anything else as Offline. This picture shows only the one row that was in the attachment.</p>
+    </div>
+    <div class="panel">
+      <p class="cap">After <span>— approved marks and labels. POS1 is a simulated fresh RFB result. The other two rows are simulated samples, not live computers.</span></p>
+      <div class="list" aria-label="Concept of the approved status column">
+        <div class="hdr"><div></div><div class="name">Name</div><div>Address</div><div>Status</div></div>
+        <div class="row"><div></div><div class="name">Register 2</div><div class="addr">192.168.20.52</div><div class="status off"><i class="sq"></i><b>Offline</b></div></div>
+        <div class="row sel"><div class="pill"></div><div></div><div class="name">POS1</div><div class="addr">192.168.20.51</div><div class="status on"><i class="dot"></i><b>Online</b></div></div>
+        <div class="row"><div></div><div class="name">Front till</div><div class="addr">192.168.20.53</div><div class="status no"><i class="ring"></i><b>Not checked</b></div></div>
+      </div>
+      <p class="foot">Green circle is Online only. The green pill on POS1 is selection, same as before. Tooltip on each status (not drawn) holds the last check time. Window size is unchanged.</p>
+    </div>
+  </div>
+  <div class="strip">
+    <h2>SIMULATED — what the words prove. Not a window capture. Not live data.</h2>
+    <div class="bits">
+      <div class="bit"><i class="dot"></i><div><b class="on">Online</b><small>TCP connect finished and the peer sent RFB. Not signed in. No remote session.</small></div></div>
+      <div class="bit"><i class="sq"></i><div><b class="off">Offline</b><small>That check finished and failed (refused, or not an RFB greeting).</small></div></div>
+      <div class="bit"><i class="ring"></i><div><b class="no">Not checked</b><small>No result, in progress, timeout, cancelled, invalid, or older than 60 seconds. Not Offline. Being listed is not Online.</small></div></div>
+    </div>
+    <p class="note">Sample only: a timeout, a stale Online result, and a computer that is only on the allowed list all use the hollow circle and the words Not checked. Discovery does not paint Online. v1.4.11 on a real Windows PC is still a separate pending test. This build is for review and is not released.</p>
+  </div>
+</body>
+</html>

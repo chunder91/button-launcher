@@ -1,5 +1,17 @@
 # Button Launcher release notes
 
+## v1.4.12 review only: View Register status (NOT RELEASED)
+
+Not tagged, not published, not installed. Built for review from v1.4.11 `37ea47df364fdfad29b07703fdd76fcbb925fdf4`. ClaudeCode, Lockjaw, Kern, and Squint have not reviewed this build. This note does not certify those reviews.
+
+- The Status column (the existing 160 px column; window size, 38 px rows, and the other columns are unchanged) shows a mark plus a 16 px SemiBold label: green filled circle **Online** (`#22C55E` / `#4ADE80`), red square **Offline** (`#F87171` / `#FECACA`), gray hollow circle **Not checked** (`#B4B4BC`). The green pill on the left stays the selection mark.
+- The header is **Status**, not Seen, so the word Seen is not read as Online. The last check time, and what that check found, is in the row tooltip and the row's accessible name.
+- **Online** means only: within the last 60 seconds, a TCP connection to that allowed computer's host and port finished, and the peer sent exactly an RFB greeting (`RFB ddd.ddd`, 12 bytes). The launcher sent nothing. Online does not mean a password was accepted, a view-only or interact session is open, or the screen is available.
+- **Offline** means that same check finished and the connection was refused, or the peer finished responding with something that was not an RFB greeting.
+- **Not checked** means there is no result yet, a check is in progress, the check timed out, it was cancelled, the address cannot be checked, the check did not finish, or the last result is older than 60 seconds (or more than 5 minutes in the future). None of those are Offline. Being on the allowed list is not Online.
+- The check is the existing allowed-list check: only those computers, the same 300 ms shared budget, at most 12 bytes read, nothing sent. It runs off the UI thread when the window opens and when F5 is pressed. F5 during a check cancels that check without waiting and starts another; a late result from the old check is ignored. Closing the window cancels it the same way (BeginStop, sockets closed in finally). After 60 seconds the labels repaint to Not checked. That timer does not connect.
+- A saved view-only password is still sent only for a fresh Online IPv4 row. A stale or missing result does not send it. Interact still closes View Register only after a start that did not throw. Arguments, Shell.Application with the ProcessStartInfo fallback, `-autoscaling`, and View only are unchanged.
+
 ## v1.4.11: Interact closes View Register
 - Charles: "when they click interact and connect to VNC i want the View register screen to close". After Interact starts the viewer, View Register closes; the log says "View Register closed after Interact start". If the viewer can't be started (no address, viewer missing, the start fails), View Register stays open and shows the problem as before. View only is unchanged, and so are the viewer arguments and how it's started.
 - The start-up diagnostics (parent chain, environment) are now gathered in the background, so they never hold up the panels; the launcher writes them itself when they're ready, and stops the lookup if it hangs or the launcher exits.

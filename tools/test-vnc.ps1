@@ -369,10 +369,10 @@ Check 'LJ M18-I4: an adapter named Bluetooth Network Connection never scanned' (
 
 # ================= v1.4.1 (Charles 4:09 PM / 4:11 PM): allowed computers, View only never asks, Interact keeps UltraVNC's own box =================
 foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'ConvertTo-VncAllowedJson', 'ConvertFrom-VncAllowedText',
-               'ConvertTo-VncAllowedText', 'Get-VncAllowedRows', 'Get-VncAllowedSaveError', 'Get-VncAllowedWriterText', 'Get-VncAllowedWriterCommand', 'Test-VncAllowedAclSafe') {
+               'ConvertTo-VncAllowedText', 'Get-VncReachWord', 'Get-VncReachTip', 'Test-VncReachStale', 'Get-VncReachOutcome', 'Get-VncReachView', 'ConvertTo-VncReachEntry', 'Get-VncAllowedRows', 'Get-VncAllowedSaveError', 'Get-VncAllowedWriterText', 'Get-VncAllowedWriterCommand', 'Test-VncAllowedAclSafe') {
     $f = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq "global:$n" }, $true)
     Check "v1.4.1 defines $n" ([bool]$f); if ($f) { Invoke-Expression $f.Extent.Text } }
-foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(VncAllowedMax|VncAllowedWriterScript)\s*=') { Invoke-Expression $l.Extent.Text } }
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:(VncAllowedMax|VncAllowedWriterScript|VncReachFresh)\s*=') { Invoke-Expression $l.Extent.Text } }
 # names, hosts, ports
 foreach ($n in 'Register 1', 'REG-2', 'Front (till) #3', 'a', ('a' * 40)) { Check "allowed name ok: $n" (Test-VncAllowedName $n) }
 foreach ($n in '', ' lead', ('a' * 41), 'x;calc', 'x"y', "x`ny", 'x$(y)', 'x<y>', [string][char]0xE9) { Check ("allowed name rejected: " + ($n -replace '[^\x20-\x7E]', '?')) (-not (Test-VncAllowedName $n)) }
@@ -396,8 +396,8 @@ foreach ($bad in 'no comma here', 'A, B, C', 'x;y, 1.2.3.4', 'Good, 999.1.1.1', 
 Check 'editor: at most 50' ([bool](ConvertFrom-VncAllowedText ((1..51 | ForEach-Object { "R$_, 10.0.0.$_" }) -join "`n")).error)
 # rows
 $rows = Get-VncAllowedRows $t.list @{ '192.168.1.21:5900' = 'RFB 003.008' } $false
-Check 'picker rows: Online / Offline, no star, names from the admin' ($rows.Count -eq 2 -and $rows[0].seen -eq 'Online' -and $rows[1].seen -eq 'Offline' -and $rows[0].star -eq '' -and $rows[0].nameText -eq 'Register 1')
-Check "picker rows: 'Checking...' while the check runs" ((Get-VncAllowedRows $t.list @{} $true)[0].seen -eq 'Checking...')
+Check 'picker rows: fresh RFB is Online; a row with no result is Not checked, not Offline; no star' ($rows.Count -eq 2 -and $rows[0].seen -eq 'Online' -and $rows[0].statusKind -eq 'online' -and $rows[1].seen -eq 'Not checked' -and $rows[1].statusKind -eq 'unchecked' -and $rows[0].star -eq '' -and $rows[0].nameText -eq 'Register 1')
+Check "picker rows: in-flight with no result stays Not checked" ((Get-VncAllowedRows $t.list @{} $true)[0].seen -eq 'Not checked' -and (Get-VncAllowedRows $t.list @{} $true)[0].statusTip -match 'in progress')
 Check 'empty list: rows empty' (@(Get-VncAllowedRows @() @{} $false).Count -eq 0)
 $pk = & $fn 'Show-VncPicker'
 Check "empty-state copy: 'No computers have been allowed yet. Ask your administrator.'" ($pk -match [regex]::Escape("'No computers have been allowed yet. Ask your administrator.'"))
@@ -405,7 +405,7 @@ Check 'picker: allowed list only (Read-VncAllowed), no scan, no favourites' ($pk
 Check 'picker: Rescan, Add and More hidden' ($pk -match "foreach \(\`$n in 'Rescan', 'Add', 'More'\) \{ \`$w.FindName\(\`$n\).Visibility = 'Collapsed' \}")
 Check 'picker: Enter = View only, Ctrl+Enter = Interact, double-click = View only, F5 = online check, Esc closes' ($pk -match "'Return' -and \`$ctrl\) \{ \`$_.Handled = \`$true; \`$ui.go.Invoke\(\`$false\)" -and $pk -match 'MouseDoubleClick\(\{ if \(\$lv.SelectedItem\) \{ \$ui.go.Invoke\(\$true\)' -and $pk -match "'F5'\) \{ \`$_.Handled = \`$true; \`$ui.startCheck.Invoke\(\)" -and $pk -match "'Escape'")
 Check 'picker: online check uses 300 ms (VncTimeoutMs) and only the allowed entries' ($pk -match 'VncAllowedCheckScript\).AddArgument\(\$items\).AddArgument\(\$global:VncTimeoutMs\)')
-Check 'picker: closing stops the check' ($pk -match 'Add_Closed\(\{ \$ui.stopCheck.Invoke\(\)')
+Check 'picker: closing stops the check' ($pk -match 'Add_Closed\(\{ \[void\]\(Close-VncReachCheck \$ui.reach\); \$ui.stopCheck.Invoke\(\)')
 $rm = & $fn 'New-VncRowMenu'; Check 'row menu: allowed mode has only View only + Interact' ($rm -match 'if \(\$ui.allowedMode\) \{ \$m.Items.RemoveAt')
 # View only never asks; password for any allowed row when saved
 $sv = & $fn 'Start-VncViewer'
@@ -468,9 +468,9 @@ Check 'v1.4.2: exact final args, View only and Interact, address and name' ((((G
 # --- ClaudeCode FIX-FIRST on c202b8b ---
 $on = Get-VncAllowedRows $t.list @{ '192.168.1.21:5900' = 'RFB 003.008'; 'REG2:5901' = 'SSH-2.0-x' } $false
 Check 'CC MED-1: online allowed row carries the RFB banner + session -> saved password used (usePassword True)' ($on[0].row.banner -eq 'RFB 003.008' -and $on[0].row.session -and (Test-VncUsePassword $on[0].row $true))
-Check 'CC MED-1: a non-RFB answer is not online and gets no password' ($on[1].seen -eq 'Offline' -and -not (Test-VncUsePassword $on[1].row $true))
+Check 'CC MED-1: a non-RFB answer is Offline (the check finished) and gets no password' ($on[1].seen -eq 'Offline' -and $on[1].statusKind -eq 'offline' -and -not $on[1].row.session -and -not (Test-VncUsePassword $on[1].row $true))
 Check 'CC MED-1: nothing saved -> no password and no launcher prompt' (-not (Test-VncUsePassword $on[0].row $false) -and (& $fn 'Start-VncViewer') -notmatch 'Show-VncPasswordDialog')
-Check 'CC MED-1: online check queues key + banner; picker keeps only RFB banners' ($src -match 'Enqueue\(@\{ key = \$b.key; banner = ' -and (& $fn 'Show-VncPicker') -match 'if \(Test-VncBannerText \(\[string\]\$k.banner\)\) \{ \$ui.online\[\[string\]\$k.key\] = \[string\]\$k.banner \}')
+Check 'CC MED-1: reachability check queues key, kind and banner; only an RFB greeting is Online' ($src -match 'Enqueue\(@\{ key = \$b.key; kind = \$kind; banner = \$banner \}\)' -and (& $fn 'Get-VncReachOutcome') -match 'Test-VncBannerText')
 Check 'CC LOW-L: a folder named vnc-allowed.json(.tmp) -> exit 6' ($global:VncAllowedWriterScript -match "Test-Path -LiteralPath \`$file -PathType Container\) -or \(Test-Path -LiteralPath \`$tmp -PathType Container\)\) \{ exit 6 \}")
 Check 'CC LOW-L: planted .tmp in an untrusted folder goes aside with the folder; CreateNew never opens an old .tmp' ($global:VncAllowedWriterScript -match 'CreateNew' -and $global:VncAllowedWriterScript -match '\.untrusted-')
 Check "CC LOW-L: clear 'Not saved' messages for codes 3, 4, 5, 6 and others" ((Get-VncAllowedSaveError 3) -like 'Not saved*' -and (Get-VncAllowedSaveError 6) -like 'Not saved: *unexpected*' -and (Get-VncAllowedSaveError 4) -eq (Get-VncAllowedSaveError 5) -and (Get-VncAllowedSaveError 2) -like 'Not saved (code 2)*' -and (Get-VncAllowedSaveError 23) -like 'Not saved (code 23): *checking the existing folder*' -and (Get-VncAllowedSaveError 27) -like '*replacing the old file*')
@@ -602,9 +602,9 @@ Check 'v1.4.6 Kern: Remove password visible only when saved' ((Get-VncRemoveButt
 $pd = & $fn 'Show-VncPasswordDialog'
 Check 'v1.4.6 Kern: dialog has Password label 14 px #FFFFFF (0,0,0,8), field 0,0,0,8, 12 px #B4B4BC note, #B4B4BC Assertive status 0,0,0,16, Remove password hidden unless saved' ($pd.Contains("New-D2Label 'Password' '#FFFFFF' 14; `$lb.Margin = '0,0,0,8'") -and $pd.Contains("`$pf.Margin = '0,0,0,8'") -and $pd.Contains("Only used for computers listed by IP address. UltraVNC uses only the first 8 characters.' '#B4B4BC' 12") -and $pd.Contains("`$st = New-D2Label '' '#B4B4BC' 12; `$st.Margin = '0,0,0,16'") -and $pd.Contains("SetLiveSetting(`$st, 'Assertive')") -and $pd.Contains("New-D2Button 'Remove password' 'Chip'") -and $pd.Contains('$bNone.Visibility = Get-VncRemoveButtonVisibility $has') -and $pd -notmatch "'No password'|#A0A0A0" -and $pd.Contains('Saved password removed. View only will ask for one.'))
 Check 'LJ M46-I2: Get-VncPort/ConvertTo-VncEndpoint use [0-9] and \A..\z' ((& $fn 'Get-VncPort').Contains("'\A[0-9]{1,5}\z'") -and (& $fn 'ConvertTo-VncEndpoint').Contains("'\A([^:]+)::?([0-9]+)\z'") -and -not (Get-VncPort ([string][char]0x0661 + '5900')) -and (Get-VncPort '5900') -eq 5900)
-$global:AppVersion = '1.4.11'; Invoke-Expression (& $fn 'Get-LauncherVersionText')
+$global:AppVersion = '1.4.12'; Invoke-Expression (& $fn 'Get-LauncherVersionText')
 $mv = $src.IndexOf('$ver.IsEnabled = $false; [void]$setup.Items.Add($ver)'); $ms = $src.IndexOf("Add-MenuItem `$setup 'Set up this PC...'")
-Check 'v1.4.6: Setup menu first item is a disabled "Button Launcher <AppVersion>" (no click handler)' ((Get-LauncherVersionText) -eq 'Button Launcher 1.4.11' -and $src.Contains("`$global:AppVersion   = '1.4.11'") -and $src.Contains('$ver.Header = Get-LauncherVersionText; $ver.IsEnabled = $false') -and $mv -gt 0 -and $mv -lt $ms -and $src.IndexOf('$setup.Items.Add') -eq $mv + '$ver.IsEnabled = $false; [void]'.Length -and $src -notmatch '\$ver\.Add_Click')
+Check 'v1.4.6: Setup menu first item is a disabled "Button Launcher <AppVersion>" (no click handler)' ((Get-LauncherVersionText) -eq 'Button Launcher 1.4.12' -and $src.Contains("`$global:AppVersion   = '1.4.12'") -and $src.Contains('$ver.Header = Get-LauncherVersionText; $ver.IsEnabled = $false') -and $mv -gt 0 -and $mv -lt $ms -and $src.IndexOf('$setup.Items.Add') -eq $mv + '$ver.IsEnabled = $false; [void]'.Length -and $src -notmatch '\$ver\.Add_Click')
 $global:VncViewerScan = $null; $global:scanCalls = 0; $global:VncViewerRetrySec = 30; $global:scanLogs = 0
 function global:Get-VncViewerLogText { $global:scanLogs++; 'x' }
 $b1 = Initialize-VncViewerScan; $b2 = Initialize-VncViewerScan -Retry; $c1 = $global:scanCalls
@@ -759,4 +759,73 @@ $hang = [PowerShell]::Create(); [void]$hang.AddScript('Start-Sleep -Seconds 60')
 Check ('LJ M61-I1: exit with a hung runspace returns at once (BeginStop + Dispose): ' + $sw.ElapsedMilliseconds + ' ms') ($sw.ElapsedMilliseconds -lt 3000 -and $null -eq $global:LauncherDiag -and $src.Contains('try { Clear-VncDeadWorkers -All } catch {}; try { Stop-LauncherDiagnostics } catch {};'))
 Check 'CC Info: start-up call discards its result; README mentions the close' ($src.Contains('    [void](Start-LauncherDiagnostics)   #') -and (Get-Content -Raw (Join-Path $root 'README.txt')).Contains('Interact closes View Register once the viewer starts.'))
 Check 'v1.4.11: close goes through Closed (watcher + worker cleanup); temp .vnc timer is not owned by the window; args and start method unchanged' ((& $fn 'Close-VncPickerAfterStart').Contains('$win.Close()') -and $src.Contains('Remove-VncTileWatch $bView; Remove-VncTileWatch $bInt') -and (& $fn 'Remove-VncTempSoon') -notmatch '\$win|vncPicker|Owner' -and ((Get-VncViewerArgs '192.168.20.51' 5900 $false $null) -join ' ') -ceq '192.168.20.51:5900 -autoscaling' -and (& $fn 'Start-VncProcess').Contains('ShellExecute($psi.FileName, $psi.Arguments, $psi.WorkingDirectory, ''open'', 1)'))
+# --- v1.4.12 review: truthful reachability. No sockets are opened here. ---
+foreach ($n in 'Get-VncReachKind', 'Test-VncReachTarget', 'New-VncReachState', 'Start-VncReachCheck', 'Add-VncReachObservation', 'Complete-VncReachCheck', 'Close-VncReachCheck', 'Get-VncReachCounts', 'Get-VncReachExpiryMs', 'Get-VncReachStatusText', 'Get-VncPickerReason') { Invoke-Expression (& $fn $n) }
+$nowR = [datetime]::UtcNow
+Check 'reach: valid allowed target vs bad host, low port, empty' ((Test-VncReachTarget '192.168.20.51' 5900) -and (Test-VncReachTarget 'POS1' 5900) -and -not (Test-VncReachTarget 'not a host' 5900) -and -not (Test-VncReachTarget '192.168.20.51' 99) -and -not (Test-VncReachTarget '192.168.20.51' 0) -and -not (Test-VncReachTarget '' 5900))
+Check 'reach kind: invalid wins even if a connect looks successful; cancel wins over a finished connect' ((Get-VncReachKind $false $false $true $true $true $false 12) -eq 'invalid' -and (Get-VncReachKind $true $true $true $true $true $false 12) -eq 'cancelled')
+Check 'reach kind: begin-failed, timeout, refused, read-timeout, banner, closed' ((Get-VncReachKind $true $false $false $false $false $false 0) -eq 'begin-failed' -and (Get-VncReachKind $true $false $true $false $false $false 0) -eq 'timeout' -and (Get-VncReachKind $true $false $true $true $false $false 0) -eq 'refused' -and (Get-VncReachKind $true $false $true $true $true $true 4) -eq 'read-timeout' -and (Get-VncReachKind $true $false $true $true $true $false 12) -eq 'banner' -and (Get-VncReachKind $true $false $true $true $true $false 5) -eq 'closed')
+foreach ($pair in @(@('banner','RFB 003.008','online'), @('banner','SSH-2.0-Open','offline'), @('banner','','offline'), @('refused','','offline'), @('closed','','offline'), @('timeout','','unchecked'), @('read-timeout','','unchecked'), @('invalid','','unchecked'), @('cancelled','','unchecked'), @('begin-failed','','unchecked'), @('worker-fault','','unchecked'), @('missing','','unchecked'))) {
+    Check ('reach outcome ' + $pair[0] + ' -> ' + $pair[2]) ((Get-VncReachOutcome @{ kind = $pair[0]; banner = $pair[1] }) -eq $pair[2]) }
+Check 'fresh through 60 s, stale at 61 s, stale if missing or more than 5 min ahead' (-not (Test-VncReachStale $nowR.AddSeconds(-60) $nowR) -and (Test-VncReachStale $nowR.AddSeconds(-61) $nowR) -and (Test-VncReachStale ([datetime]::MinValue) $nowR) -and (Test-VncReachStale $nowR.AddMinutes(6) $nowR) -and -not (Test-VncReachStale $nowR.AddMinutes(4) $nowR))
+$one = @([pscustomobject]@{ name = 'POS1'; host = '192.168.20.51'; port = 5900; seen = $true })
+$disc = Get-VncAllowedRows $one @{} $false $nowR
+Check 'discovery is not Online: a seen flag with no check is Not checked' ($disc[0].statusText -eq 'Not checked' -and $disc[0].statusKind -eq 'unchecked' -and -not $disc[0].row.session -and $disc[0].statusTip -match 'not Online' -and $disc[0].seen -ne 'Online')
+$fly = Get-VncAllowedRows $one @{} $true $nowR
+Check 'in-flight: Not checked, not Offline, tip says a check is in progress' ($fly[0].statusText -eq 'Not checked' -and $fly[0].statusTip -match 'in progress' -and $fly[0].statusTip -match 'not Offline' -and -not $fly[0].row.session)
+$okR = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'banner'; banner = 'RFB 003.008'; at = $nowR } } $true $nowR
+Check 'success: fresh RFB is Online while other rows could still be in flight; tip does not claim sign-in or a session' ($okR[0].statusKind -eq 'online' -and $okR[0].statusText -eq 'Online' -and $okR[0].row.session -and $okR[0].row.banner -eq 'RFB 003.008' -and (Test-VncUsePassword $okR[0].row $true) -and $okR[0].statusTip -match 'Nothing was signed in' -and $okR[0].statusTip -match 'no remote session' -and $okR[0].statusTip -notmatch 'password')
+$ref = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'refused'; banner = ''; at = $nowR } } $false $nowR
+Check 'refusal: check finished and the port refused -> Offline, no saved password' ($ref[0].statusText -eq 'Offline' -and $ref[0].statusKind -eq 'offline' -and $ref[0].statusTip -match 'refused' -and -not $ref[0].row.session -and -not (Test-VncUsePassword $ref[0].row $true))
+$to = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'timeout'; banner = ''; at = $nowR } } $false $nowR
+Check 'timeout is Not checked, not Offline' ($to[0].statusText -eq 'Not checked' -and $to[0].statusKind -eq 'unchecked' -and $to[0].statusTip -match 'timed out' -and $to[0].statusTip -match 'not Offline' -and -not $to[0].row.session)
+$rt = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'read-timeout'; banner = ''; at = $nowR } } $false $nowR
+Check 'read timeout is Not checked, not Offline' ($rt[0].statusText -eq 'Not checked' -and $rt[0].statusTip -match 'did not finish a VNC greeting' -and -not $rt[0].row.session)
+$badR = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'invalid'; banner = ''; at = $nowR } } $false $nowR
+Check 'invalid target: Not checked, nothing contacted' ($badR[0].statusText -eq 'Not checked' -and $badR[0].statusTip -match 'nothing was contacted')
+$staleR = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'banner'; banner = 'RFB 003.008'; outcome = 'online'; at = $nowR.AddSeconds(-61) } } $false $nowR
+Check 'stale Online expires to Not checked and does not keep the saved-password session' ($staleR[0].statusText -eq 'Not checked' -and $staleR[0].statusTip -match 'expired' -and $staleR[0].statusTip -match 'was Online' -and -not $staleR[0].row.session -and -not (Test-VncUsePassword $staleR[0].row $true) -and $staleR[0].tip -match 'Last check')
+$staleOff = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'refused'; outcome = 'offline'; at = $nowR.AddMinutes(-3) } } $false $nowR
+Check 'stale Offline expires to Not checked (expired is not still Offline)' ($staleOff[0].statusText -eq 'Not checked' -and $staleOff[0].statusTip -match 'was Offline' -and $staleOff[0].statusTip -match 'not still Offline')
+foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:VncTileSize\s*=') { Invoke-Expression $l.Extent.Text } }
+Check 'no selection: tiles stay disabled and the status reason is unchanged' ((Get-VncPickerReason $false) -ceq 'Pick a computer to view or control it.' -and (Get-VncPickerReason $true) -eq '' -and (& $fn 'Show-VncPicker') -match '\$bView.IsEnabled = \$has; \$bInt.IsEnabled = \$has')
+$rs = New-VncReachState; $g1 = Start-VncReachCheck $rs
+[void](Add-VncReachObservation $rs $g1 '192.168.20.51:5900' 'refused' '' $nowR)
+$g2 = Start-VncReachCheck $rs
+$late = Add-VncReachObservation $rs $g1 '192.168.20.51:5900' 'refused' '' $nowR
+$keep = Add-VncReachObservation $rs $g2 '192.168.20.51:5900' 'banner' 'RFB 003.008' $nowR
+$oldDone = Complete-VncReachCheck $rs $g1 $true $nowR
+$done2 = Complete-VncReachCheck $rs $g2 $false $nowR
+$after = Add-VncReachObservation $rs $g2 '192.168.20.51:5900' 'timeout' '' $nowR
+Check 'repeated refresh: old generation cannot overwrite; late result after complete is ignored' ($g1 -eq 1 -and $g2 -eq 2 -and -not $late -and $keep -and $rs.results['192.168.20.51:5900'].outcome -eq 'online' -and -not $oldDone -and $done2 -and -not $rs.checking -and -not $after)
+[void](Close-VncReachCheck $rs)
+Check 'window close: further checks and results are refused' ($rs.closed -and (Start-VncReachCheck $rs) -eq 0 -and $rs.gen -eq 2 -and -not (Add-VncReachObservation $rs 3 '192.168.20.51:5900' 'refused' '' $nowR) -and $rs.results['192.168.20.51:5900'].outcome -eq 'online')
+$two = @([pscustomobject]@{ name = 'A'; host = '192.168.20.51'; port = 5900 }, [pscustomobject]@{ name = 'B'; host = '10.0.0.8'; port = 5900 })
+$mix = @{ '192.168.20.51:5900' = @{ kind = 'banner'; banner = 'RFB 003.008'; at = $nowR }; '10.0.0.8:5900' = @{ kind = 'timeout'; at = $nowR } }
+$cnt = Get-VncReachCounts $two $mix $nowR
+Check 'counts: one Online and one timeout is 1 online, 0 offline, 1 not checked' ($cnt.online -eq 1 -and $cnt.offline -eq 0 -and $cnt.unchecked -eq 1)
+Check 'status line while checking does not call anyone Offline' ((Get-VncReachStatusText 0 0 2 $true $false $false '') -match 'Not checked' -and (Get-VncReachStatusText 0 0 2 $true $false $false '') -notmatch 'Offline')
+Check 'status line: a failed check is Not checked, not N of M online' ((Get-VncReachStatusText 0 0 2 $false $true $false '3:00 PM') -match 'not Offline' -and (Get-VncReachStatusText 1 0 1 $false $false $false '3:00 PM') -eq '1 online, 0 offline, 1 not checked at 3:00 PM. Press F5 to check again.')
+Check 'status line: expiry is not Offline' ((Get-VncReachStatusText 0 0 2 $false $false $true '') -match 'Expired is not Offline')
+$exp = @{ '192.168.20.51:5900' = @{ outcome = 'online'; kind = 'banner'; banner = 'RFB 003.008'; at = $nowR.AddSeconds(-30) } }
+$msExp = Get-VncReachExpiryMs $exp $nowR
+Check ('expiry timer is the remaining freshness, capped at 60 s, and -1 when nothing is still Online or Offline: ' + $msExp) ($msExp -ge 29000 -and $msExp -le 31000 -and (Get-VncReachExpiryMs @{ 'x:1' = @{ outcome = 'unchecked'; kind = 'timeout'; at = $nowR } } $nowR) -eq -1 -and (Get-VncReachExpiryMs @{ 'x:1' = @{ outcome = 'online'; at = $nowR.AddSeconds(-61) } } $nowR) -eq -1)
+$chk = [regex]::Match($src, '(?s)\$global:VncAllowedCheckScript = \{.*?\n\}').Value
+$iCancel = $chk.IndexOf('if ($sync.cancel)'); $iProbe = $chk.IndexOf('if (-not $probe)'); $iTcp = $chk.IndexOf('New-Object System.Net.Sockets.TcpClient')
+Check 'check script: cancel and non-probe return before any socket' ($iCancel -ge 0 -and $iProbe -gt $iCancel -and $iTcp -gt $iProbe -and $chk -match 'Get-VncReachKind' -and $chk -notmatch '\.Write\(|BeginSend|\.Send\(' -and $chk -match 'finally \{ foreach \(\$b in \$batch\) \{ try \{ \$b\.c\.Close\(\) \}' -and $chk -notmatch 'Get-VncScanTargets|VncScanScript|confirmedRanges|vnc-viewonly|email-count|SecureString')
+if ($iTcp -gt $iProbe -and $iProbe -gt $iCancel) {
+    Invoke-Expression $chk
+    $syncR = [hashtable]::Synchronized(@{ cancel = $false; done = $false; found = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]) })
+    & $global:VncAllowedCheckScript @(@{ key = 'bad host:5900'; host = 'bad host'; port = 5900; probe = $false }, @{ key = '192.168.20.51:99'; host = '192.168.20.51'; port = 99; probe = $false }) 300 $syncR
+    $gotR = @(); $oneR = $null; while ($syncR.found.TryDequeue([ref]$oneR)) { $gotR += $oneR }
+    Check 'simulated invalid rows: both Not-checked kinds, done, no connect' ($syncR.done -and $gotR.Count -eq 2 -and @($gotR | Where-Object { $_.kind -eq 'invalid' }).Count -eq 2)
+} else { Check 'refused to execute the check script (it might connect)' $false }
+$pkR = & $fn 'Show-VncPicker'
+Check 'picker check list is only the allowed computers, with an explicit probe flag' ($pkR -match 'foreach \(\$e in \$ui.allowed\)' -and $pkR -match 'probe = \(Test-VncReachTarget' -and $pkR -notmatch 'Get-VncScanTargets|Start-VncScan|Get-VncLocalSubnets')
+Check 'F5 while a check is in flight stops it with BeginStop before the next generation' ($pkR -match 'if \(\$ui.check\) \{ \$ui.stopCheck.Invoke\(\) \}' -and $pkR.IndexOf('if ($ui.check) { $ui.stopCheck.Invoke() }') -lt $pkR.IndexOf('$gen = Start-VncReachCheck') -and $pkR -match 'BeginStop\(\$null, \$null\)' -and $pkR -notmatch '\$ui\.check\.ps\.Stop\(|\.EndInvoke\(')
+$ft = [regex]::Match($pkR, '(?s)\$ui\.freshTimer\.Add_Tick\(\{.*?\}\.GetNewClosure\(\)').Value
+Check 'expiry timer only repaints (no socket, no scan, no check script)' ($ft -and $ft -notmatch 'TcpClient|BeginConnect|VncAllowedCheckScript|VncScanScript|\.Write\(')
+$xamlR = [regex]::Match($src, "(?s)\`$global:VncPickerXaml = @'.*?'@").Value
+Check 'approved marks: green filled circle, red square, gray hollow circle; 16 SemiBold; selection pill stays separate' ($xamlR -match 'x:Name="markOn"[^>]*Fill="#22C55E"' -and $xamlR -match 'x:Name="markOff"[^>]*Fill="#F87171"' -and $xamlR -match 'x:Name="markNo"[^>]*Stroke="#B4B4BC"[^>]*StrokeThickness="1.5"' -and $xamlR -match 'Text="Status"' -and $xamlR -notmatch 'Text="Seen"' -and $xamlR -match 'Width="620" Height="522" MinWidth="616" MinHeight="410"' -and $xamlR -match 'Height="38"' -and $xamlR -match 'x:Name="pill"[^>]*Fill="#22C55E"' -and $xamlR -match 'FontSize="16" FontWeight="SemiBold"' -and $xamlR -match 'Value="#4ADE80"' -and $xamlR -match 'Value="#FECACA"' -and $xamlR -match 'Foreground="#B4B4BC"')
+Check 'column widths unchanged: 28 / * / 180 / 160 twice' (([regex]::Matches($xamlR, '<ColumnDefinition Width="28"/><ColumnDefinition Width="\*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="160"/>')).Count -eq 2)
 if ($fail) { "FAILED: $fail"; exit 1 } else { 'ALL PASS' }

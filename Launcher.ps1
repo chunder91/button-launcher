@@ -70,7 +70,7 @@ $global:toastTimer   = $null                                      # CC OP-L1: on
 $global:iconCache    = @{}                                         # OP-L1/OP-L3: chip icons, key = path|LastWriteTimeUtc ticks
 $global:iconCacheOrder = New-Object System.Collections.ArrayList          # R6-N2: insertion order for the cap
 $global:IconCacheMax = 256
-$global:AppVersion   = '1.4.11'
+$global:AppVersion   = '1.4.12'
 $global:showEvent    = $null                                      # second launch signals this to bring panels forward                                      # labels collected while a panel is built (min font)
 
 function global:Write-LauncherError($where, $err) {
@@ -2029,6 +2029,7 @@ function global:Stop-TrayAndHotkey {
 # The -password switch is never used: a password must never be on a command line.
 $global:VncDefaultPort = 5900
 $global:VncTimeoutMs   = 300
+$global:VncReachFresh  = [TimeSpan]::FromSeconds(60)   # review: Online/Offline become Not checked after 60 s; the expiry timer only repaints (no connect)
 $global:VncParallel    = 16
 $global:VncPaceMs      = 40
 $global:VncCacheMaxAge = [TimeSpan]::FromDays(1)
@@ -2803,33 +2804,194 @@ function global:Show-VncAllowedDialog($owner) {   # Setup > Allowed computers (a
     $d.Add_ContentRendered({ [void]$tb.Focus() }.GetNewClosure())
     [void]$d.ShowDialog()
 }
-# Quick online check of the allowed computers only: 300 ms connect, at most 12 bytes read, never replies.
+# Reachability for the allowed list only (review, not a release). One TCP connect per allowed computer, the same 300 ms
+# shared budget as v1.4.11, at most 12 bytes read, nothing sent. Online proves only that the connect finished and the
+# peer sent exactly "RFB ddd.ddd". It does not prove a password was accepted, a view-only or interact session, or that
+# the screen is available. Being on the allowed list (or found by an older scan) is not Online. Connection refused, or a
+# finished reply that is not that greeting, is Offline. Timeout, cancel, a bad address, a check that did not finish, or a
+# result older than VncReachFresh (60 s) is Not checked, not Offline. Opening the window and F5 are the only checks.
+function global:Test-VncReachTarget([string]$h, $port) {   # same host/port gates as a launch; a miss is not contacted
+    $p = Get-VncPort $port
+    return [bool]((Test-VncHost $h) -and $p -and $p -ge 100)
+}
+function global:Get-VncReachKind([bool]$probe, [bool]$cancel, [bool]$began, [bool]$waited, [bool]$connected, [bool]$readTimeout, [int]$got) {   # pure; the worker calls this and does not decide Online/Offline
+    if (-not $probe) { return 'invalid' }
+    if ($cancel) { return 'cancelled' }
+    if (-not $began) { return 'begin-failed' }
+    if (-not $waited) { return 'timeout' }
+    if (-not $connected) { return 'refused' }
+    if ($readTimeout -and $got -lt 12) { return 'read-timeout' }
+    if ($got -eq 12) { return 'banner' }
+    return 'closed'
+}
+function global:Get-VncReachOutcome($obs) {   # kind -> online | offline | unchecked. Anything unfinished stays unchecked
+    $k = [string]$obs.kind
+    if ($k -eq 'banner') { if (Test-VncBannerText ([string]$obs.banner)) { return 'online' }; return 'offline' }
+    if ($k -eq 'refused' -or $k -eq 'closed') { return 'offline' }
+    return 'unchecked'
+}
+function global:Test-VncReachStale([datetime]$at, [datetime]$nowUtc) {   # older than 60 s, missing, or more than 5 min in the future
+    if ($at -le [datetime]::MinValue) { return $true }
+    if ($at -gt $nowUtc.AddMinutes(5)) { return $true }
+    return (($nowUtc - $at) -gt $global:VncReachFresh)
+}
+function global:Get-VncReachWord([string]$outcome) {
+    if ($outcome -eq 'online') { return 'Online' }
+    if ($outcome -eq 'offline') { return 'Offline' }
+    return 'Not checked'
+}
+function global:Get-VncReachTip([string]$shown, [string]$kind, [string]$previous, [string]$age) {   # last-check time lives here; never a password, sign-in, or live session
+    $when = if ($age) { $age } else { 'just now' }
+    if ($shown -eq 'online') { return ('Online. Checked {0}: a connection to this computer''s VNC port completed and it sent a VNC greeting (RFB). Nothing was signed in and no remote session was started.' -f $when) }
+    if ($shown -eq 'offline') {
+        if ($kind -eq 'refused') { return ('Offline. Checked {0}: the connection to this computer''s VNC port was refused.' -f $when) }
+        return ('Offline. Checked {0}: the VNC port answered, but not with a VNC greeting (RFB).' -f $when) }
+    if ($kind -eq 'running') { return 'Not checked. A check is in progress. That is not Offline.' }
+    if ($kind -eq 'timeout') { return ('Not checked. Checked {0}: the check timed out before it finished. A timeout is not Offline.' -f $when) }
+    if ($kind -eq 'read-timeout') { return ('Not checked. Checked {0}: the port accepted the connection but did not finish a VNC greeting in time. That is not Offline.' -f $when) }
+    if ($kind -eq 'invalid') { return 'Not checked. This address cannot be checked, so nothing was contacted.' }
+    if ($kind -eq 'cancelled') { return 'Not checked. The check was cancelled before it finished. That is not Offline.' }
+    if ($kind -eq 'stale') { return ('Not checked. Last check {0} was {1}. That result has expired, so it is not still {1}.' -f $when, $previous) }
+    if ($kind -eq 'missing' -or $kind -eq 'none') { return 'Not checked. No reachability check yet. Being listed here is not Online.' }
+    return 'Not checked. The check did not finish. That is not Offline.'
+}
+function global:Get-VncReachView($entry, [datetime]$nowUtc, [bool]$checking) {   # display + whether View only may use the saved password (fresh RFB only)
+    $outcome = 'unchecked'; $kind = 'missing'; $at = [datetime]::MinValue; $banner = ''; $stale = $false
+    if ($entry) {
+        $outcome = [string]$entry.outcome; $kind = [string]$entry.kind; $banner = [string]$entry.banner; $at = [datetime]$entry.at
+        $stale = Test-VncReachStale $at $nowUtc
+    } elseif ($checking) { $kind = 'running' }
+    $shown = 'unchecked'
+    if ($entry -and -not $stale -and ($outcome -eq 'online' -or $outcome -eq 'offline')) { $shown = $outcome }
+    $tipKind = $kind
+    if (-not $entry -and -not $checking) { $tipKind = 'missing' }
+    if ($stale) { $tipKind = 'stale' }
+    $age = ''
+    if ($at -gt [datetime]::MinValue) { $age = Get-VncAgeText $at $nowUtc }
+    $keep = ''
+    if ($shown -eq 'online') { $keep = $banner }
+    return @{ kind = $shown; text = (Get-VncReachWord $shown); tip = (Get-VncReachTip $shown $tipKind (Get-VncReachWord $outcome) $age); session = ($shown -eq 'online'); banner = $keep; stale = [bool]$stale }
+}
+function global:ConvertTo-VncReachEntry($value, [datetime]$nowUtc) {   # a banner string (tests) or @{ kind; banner; at; outcome }
+    if ($null -eq $value) { return $null }
+    $kind = 'banner'; $banner = ''; $at = $nowUtc; $outcome = ''
+    if ($value -is [string]) { $banner = [string]$value }
+    elseif ($value -is [System.Collections.IDictionary]) {
+        $kind = [string]$value['kind']; $banner = [string]$value['banner']
+        if ($value.Contains('at') -and $null -ne $value['at']) { $at = [datetime]$value['at'] }
+        if ($value.Contains('outcome') -and $value['outcome']) { $outcome = [string]$value['outcome'] }
+    } else { return $null }
+    if (-not $outcome) { $outcome = Get-VncReachOutcome @{ kind = $kind; banner = $banner } }
+    $keep = ''
+    if ($outcome -eq 'online') { $keep = $banner }
+    return @{ outcome = $outcome; kind = $kind; banner = $keep; at = $at }
+}
+function global:New-VncReachState { return @{ gen = 0; checking = $false; closed = $false; fault = $false; results = @{}; checkedAt = [datetime]::MinValue } }
+function global:Start-VncReachCheck($state) {   # next generation; drops the previous results so an in-flight row is Not checked
+    if ($state.closed) { return 0 }
+    $state.gen = [int]$state.gen + 1; $state.checking = $true; $state.fault = $false; $state.results = @{}; $state.checkedAt = [datetime]::MinValue
+    return [int]$state.gen
+}
+function global:Add-VncReachObservation($state, [int]$gen, [string]$key, [string]$kind, [string]$banner, [datetime]$at) {   # ignores a stale generation, a closed window, and anything after the check completed
+    if ($state.closed -or $gen -ne [int]$state.gen -or -not $state.checking -or -not $key) { return $false }
+    $outcome = Get-VncReachOutcome @{ kind = $kind; banner = $banner }
+    $keep = ''
+    if ($outcome -eq 'online') { $keep = [string]$banner }
+    $state.results[$key] = @{ outcome = $outcome; kind = [string]$kind; banner = $keep; at = $at }
+    return $true
+}
+function global:Complete-VncReachCheck($state, [int]$gen, [bool]$fault, [datetime]$at) {
+    if ($state.closed -or $gen -ne [int]$state.gen -or -not $state.checking) { return $false }
+    $state.checking = $false; $state.fault = [bool]$fault
+    if (-not $fault) { $state.checkedAt = $at }
+    return $true
+}
+function global:Close-VncReachCheck($state) {
+    if (-not $state) { return $false }
+    $state.closed = $true; $state.checking = $false
+    return $true
+}
+function global:Get-VncReachCounts($list, $results, [datetime]$nowUtc) {
+    $o = 0; $f = 0; $u = 0
+    foreach ($e in @($list)) {
+        $k = '{0}:{1}' -f $e.host, $e.port; $raw = $null
+        if ($results -and $results.ContainsKey($k)) { $raw = $results[$k] }
+        $view = Get-VncReachView (ConvertTo-VncReachEntry $raw $nowUtc) $nowUtc $false
+        if ($view.kind -eq 'online') { $o++ } elseif ($view.kind -eq 'offline') { $f++ } else { $u++ } }
+    return @{ online = $o; offline = $f; unchecked = $u }
+}
+function global:Get-VncReachExpiryMs($results, [datetime]$nowUtc) {   # ms until the next Online/Offline must repaint as Not checked; -1 if none. No connect.
+    if (-not $results) { return -1 }
+    $soon = $null
+    foreach ($k in @($results.Keys)) {
+        $e = $results[$k]
+        if ($e.outcome -ne 'online' -and $e.outcome -ne 'offline') { continue }
+        if (Test-VncReachStale ([datetime]$e.at) $nowUtc) { continue }
+        $due = ([datetime]$e.at).Add($global:VncReachFresh)
+        if ($null -eq $soon -or $due -lt $soon) { $soon = $due } }
+    if ($null -eq $soon) { return -1 }
+    $ms = [int]($soon - $nowUtc).TotalMilliseconds
+    if ($ms -lt 1) { return 1 }
+    if ($ms -gt 60000) { return 60000 }
+    return $ms
+}
+function global:Get-VncReachStatusText([int]$online, [int]$offline, [int]$unchecked, [bool]$checking, [bool]$fault, [bool]$stale, [string]$at) {
+    if ($checking) { return 'Checking the allowed computers. A row stays Not checked until its own check finishes. Press F5 to start that check over.' }
+    if ($fault) { return 'The check did not finish. Rows without a result are Not checked, not Offline. Press F5 to try again.' }
+    if ($stale) { return 'The last check expired. Every row is Not checked until you press F5. Expired is not Offline.' }
+    return ('{0} online, {1} offline, {2} not checked at {3}. Press F5 to check again.' -f $online, $offline, $unchecked, $at)
+}
+# Off the UI thread. A default runspace plus Get-VncReachKind only, not the launcher session. Cancel and a non-probe
+# row never construct a socket. Sockets close in finally. The shared 300 ms budget is the whole batch, same as v1.4.11.
 $global:VncAllowedCheckScript = {
-    param($items, [int]$timeoutMs, $sync)
+    param([object[]]$items, [int]$timeoutMs, $sync)
     $batch = @()
     try {
-        foreach ($it in $items) { $c = New-Object System.Net.Sockets.TcpClient; $b = @{ key = $it.key; c = $c; ar = $null }; $batch += $b
-            try { $b.ar = $c.BeginConnect([string]$it.host, [int]$it.port, $null, $null) } catch {} }
+        foreach ($it in @($items)) {
+            if ($sync.cancel) { $sync.found.Enqueue(@{ key = [string]$it.key; kind = 'cancelled'; banner = '' }); continue }
+            $probe = $false
+            try { $probe = [bool]$it.probe } catch { $probe = $false }
+            if (-not $probe) { $sync.found.Enqueue(@{ key = [string]$it.key; kind = (Get-VncReachKind $false $false $false $false $false $false 0); banner = '' }); continue }
+            $c = New-Object System.Net.Sockets.TcpClient
+            $b = @{ key = [string]$it.key; c = $c; ar = $null; began = $false }
+            $batch += $b
+            try { $b.ar = $c.BeginConnect([string]$it.host, [int]$it.port, $null, $null); $b.began = [bool]$b.ar } catch { $b.began = $false }
+        }
         $deadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
         foreach ($b in $batch) {
-            if ($sync.cancel -or -not $b.ar) { continue }
-            $left = [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
-            $ok = $false; try { $ok = $b.ar.AsyncWaitHandle.WaitOne($left) -and $b.c.Connected } catch {}
-            if (-not $ok) { continue }
-            $buf = New-Object byte[] 12; $got = 0
-            try { $s = $b.c.GetStream(); $s.ReadTimeout = $timeoutMs
-                  while ($got -lt 12) { $n = $s.Read($buf, $got, 12 - $got); if ($n -le 0) { break }; $got += $n } } catch {}
-            $g = [Text.Encoding]::ASCII.GetString($buf, 0, $got)
-            if ($got -eq 12 -and $g -cmatch '^RFB \d{3}\.\d{3}\n$') { $sync.found.Enqueue(@{ key = $b.key; banner = $g.TrimEnd([char]10) }) } }   # CC MED-1: the banner too
+            $cancel = [bool]$sync.cancel; $waited = $false; $connected = $false; $readTimeout = $false; $got = 0; $banner = ''
+            if (-not $cancel -and $b.began) {
+                $left = [int][Math]::Max(0, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+                try { $waited = [bool]$b.ar.AsyncWaitHandle.WaitOne($left) } catch { $waited = $false }
+                if ($waited) {
+                    try { $b.c.EndConnect($b.ar); $connected = [bool]$b.c.Connected } catch { $connected = $false }
+                    if ($connected) {
+                        $buf = New-Object byte[] 12
+                        try { $s = $b.c.GetStream(); $s.ReadTimeout = $timeoutMs
+                              while ($got -lt 12) { $n = $s.Read($buf, $got, (12 - $got)); if ($n -le 0) { break }; $got += $n } } catch { $readTimeout = $true }
+                        if ($got -gt 0) { $banner = [Text.Encoding]::ASCII.GetString($buf, 0, $got).TrimEnd([char]10, [char]13) }
+                    }
+                }
+            }
+            $kind = Get-VncReachKind $true $cancel ([bool]$b.began) $waited $connected $readTimeout $got
+            $sync.found.Enqueue(@{ key = $b.key; kind = $kind; banner = $banner })
+        }
     } finally { foreach ($b in $batch) { try { $b.c.Close() } catch {} }; $sync.done = $true }
 }
-function global:Get-VncAllowedRows($list, $online, [bool]$checking) {   # picker rows for the allowed list, sorted by name
-    $rows = foreach ($e in @($list)) { $k = '{0}:{1}' -f $e.host, $e.port
-        $bn = [string]$online[$k]; if (-not (Test-VncBannerText $bn)) { $bn = '' }   # CC MED-1: the RFB greeting from this window's online check
-        $r = [pscustomobject]@{ host = $e.host; port = $e.port; name = $e.name; dnsName = $false; banner = $bn; pinned = $false; fav = $false; seen = [bool]$bn; session = [bool]$bn }
+function global:Get-VncAllowedRows($list, $results, [bool]$checking, $nowUtc) {   # picker rows for the allowed list, sorted by name. No result is Not checked, not Offline.
+    if (-not ($nowUtc -is [datetime])) { $nowUtc = [datetime]::UtcNow }
+    $rows = foreach ($e in @($list)) { $k = '{0}:{1}' -f $e.host, $e.port; $raw = $null
+        if ($results -and $results.ContainsKey($k)) { $raw = $results[$k] }
+        $reach = Get-VncReachView (ConvertTo-VncReachEntry $raw $nowUtc) $nowUtc $checking
+        $r = [pscustomobject]@{ host = $e.host; port = $e.port; name = $e.name; dnsName = $false; banner = $reach.banner; pinned = $false; fav = $false; seen = $false; session = [bool]$reach.session }
         $v = Get-VncRowView $r $true $false
-        $v.star = ''; $v.starTip = $null; $v.seen = $(if ($r.seen) { 'Online' } elseif ($checking) { 'Checking...' } else { 'Offline' })
-        $v.nameFg = '#FFFFFF'; $v.addrFg = $(if ($r.seen -or $checking) { '#FFFFFF' } else { '#A0A0A0' })
+        $v.star = ''; $v.starTip = $null; $v.seen = $reach.text
+        $v | Add-Member -NotePropertyName statusText -NotePropertyValue $reach.text
+        $v | Add-Member -NotePropertyName statusKind -NotePropertyValue $reach.kind
+        $v | Add-Member -NotePropertyName statusTip -NotePropertyValue $reach.tip
+        $v | Add-Member -NotePropertyName statusName -NotePropertyValue $reach.tip
+        $v.nameFg = '#FFFFFF'; $v.addrFg = '#FFFFFF'
+        if ($reach.tip) { $v.tip = $v.tip + '   ' + $reach.tip }
         $v }
     return @($rows | Sort-Object { $_.row.name })
 }
@@ -3189,7 +3351,7 @@ $global:VncPickerXaml = @'
         <Grid.RowDefinitions><RowDefinition Height="32"/><RowDefinition Height="*"/></Grid.RowDefinitions>
         <Grid x:Name="Hdr" Margin="4,0" TextElement.FontSize="14" TextElement.FontWeight="SemiBold" TextElement.Foreground="#A0A0A0">
           <Grid.ColumnDefinitions><ColumnDefinition Width="28"/><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
-          <TextBlock Grid.Column="1" Text="Name" VerticalAlignment="Center" Margin="4,0"/><TextBlock Grid.Column="2" Text="Address" VerticalAlignment="Center"/><TextBlock Grid.Column="3" Text="Seen" VerticalAlignment="Center"/>
+          <TextBlock Grid.Column="1" Text="Name" VerticalAlignment="Center" Margin="4,0"/><TextBlock Grid.Column="2" Text="Address" VerticalAlignment="Center"/><TextBlock Grid.Column="3" Text="Status" VerticalAlignment="Center" ToolTip="Reachability of the VNC port. The last check time is on each row. A listed computer is not automatically Online."/>
         </Grid>
         <Rectangle Grid.Row="0" Height="1" VerticalAlignment="Bottom" Fill="#14FFFFFF"/>
         <ListBox x:Name="List" Grid.Row="1" TabIndex="0" Background="Transparent" BorderThickness="0" Foreground="#FFFFFF" FontSize="16" Padding="0,4"
@@ -3202,7 +3364,13 @@ $global:VncPickerXaml = @'
               </Border>
               <TextBlock Grid.Column="1" Text="{Binding nameText}" ToolTip="{Binding nameFull}" Foreground="{Binding nameFg}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="4,0,12,0"/>
               <TextBlock Grid.Column="2" Text="{Binding addr}" Foreground="{Binding addrFg}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-              <TextBlock Grid.Column="3" Text="{Binding seen}" ToolTip="{Binding seen}" Foreground="#A0A0A0" FontSize="16" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              <Grid Grid.Column="3" VerticalAlignment="Center" ToolTip="{Binding statusTip}" AutomationProperties.Name="{Binding statusName}">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="10"/><ColumnDefinition Width="6"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Ellipse x:Name="markOn" Grid.Column="0" Width="10" Height="10" HorizontalAlignment="Left" VerticalAlignment="Center" Fill="#22C55E" Visibility="Collapsed"/>
+                <Rectangle x:Name="markOff" Grid.Column="0" Width="10" Height="10" HorizontalAlignment="Left" VerticalAlignment="Center" Fill="#F87171" Visibility="Collapsed"/>
+                <Ellipse x:Name="markNo" Grid.Column="0" Width="10" Height="10" HorizontalAlignment="Left" VerticalAlignment="Center" Fill="Transparent" Stroke="#B4B4BC" StrokeThickness="1.5" Visibility="Collapsed"/>
+                <TextBlock x:Name="statusLabel" Grid.Column="2" Text="{Binding statusText}" ToolTip="{Binding statusTip}" FontSize="16" FontWeight="SemiBold" Foreground="#B4B4BC" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              </Grid>
             </Grid>
             <DataTemplate.Triggers>
               <MultiDataTrigger>
@@ -3214,6 +3382,9 @@ $global:VncPickerXaml = @'
                 <Setter TargetName="star" Property="Opacity" Value="0"/>
               </MultiDataTrigger>
               <DataTrigger Binding="{Binding starOn}" Value="False"><Setter TargetName="star" Property="Foreground" Value="#80FFFFFF"/></DataTrigger>
+              <DataTrigger Binding="{Binding statusKind}" Value="online"><Setter TargetName="markOn" Property="Visibility" Value="Visible"/><Setter TargetName="statusLabel" Property="Foreground" Value="#4ADE80"/></DataTrigger>
+              <DataTrigger Binding="{Binding statusKind}" Value="offline"><Setter TargetName="markOff" Property="Visibility" Value="Visible"/><Setter TargetName="statusLabel" Property="Foreground" Value="#FECACA"/></DataTrigger>
+              <DataTrigger Binding="{Binding statusKind}" Value="unchecked"><Setter TargetName="markNo" Property="Visibility" Value="Visible"/><Setter TargetName="statusLabel" Property="Foreground" Value="#B4B4BC"/></DataTrigger>
             </DataTemplate.Triggers>
           </DataTemplate></ListBox.ItemTemplate>
         </ListBox>
@@ -3261,7 +3432,8 @@ function global:New-VncRowMenu($ui, [bool]$withLaunch) {   # Rename (F2), Pin/Un
     $m.Foreground = Brush '#FFFFFF'; $m.FontFamily = $global:UiFont; $m.FontSize = 14   # Kern Blocker: a popup doesn't inherit the window's text colour or font
     return $m
 }
-# v1.4.10 (Charles 11:07 AM): list text +2 px (headers 12->14, rows 14->16, Seen 13->16 + tooltip), rows 32->38, header 28->32, Address 150->180, Seen 130->160; header right margin follows the list's scrollbar
+# v1.4.10 (Charles 11:07 AM): list text +2 px (headers 12->14, rows 14->16), rows 32->38, header 28->32, Address 150->180, trailing column 130->160; header right margin follows the list's scrollbar
+# v1.4.12 review: that 160 px column is Status (10 px mark, 6 px gap, 16 px SemiBold). Last-check time stays in the tooltip. Window size unchanged. The green pill stays selection only.
 # ---------- v1.4.9 View Register tiles, option B "with icons" (Charles 10:34 AM; Smudge v2 + Kern review). Look only.
 # Two glossy style C tiles 271x72, 16 px apart; Lucide eye / hand (ISC) drawn as constant path geometry, visibly 8 px from a 24 px label with a 3.2 px outline.
 $global:VncTiles = @{
@@ -3347,7 +3519,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
     Remove-VncTempLeftovers
     try { if ($global:VncViewerScan -and -not $global:VncViewerScan.path) { [void](Initialize-VncViewerScan -Retry) } } catch {}   # v1.4.6 (Squint 2): installed since the last look? search again on open
     $al = Read-VncAllowed
-    $ui = @{ btn = $btn; allowedMode = $true; allowed = @($al.list); online = @{}; checking = $false; check = $null; timer = $null }
+    $ui = @{ btn = $btn; allowedMode = $true; allowed = @($al.list); reach = (New-VncReachState); check = $null; timer = $null; freshTimer = $null }
     try { $w = [Windows.Markup.XamlReader]::Parse($global:VncPickerXaml) }
     catch { Write-LauncherLog ('VNC picker window could not load: ' + $_.Exception.Message)
             [System.Windows.MessageBox]::Show("The computer finder couldn't open.`n`n" + $_.Exception.Message + "`n`nDetails are in launcher-error.log.", 'View Register', 'OK', 'Error') | Out-Null; return }
@@ -3355,7 +3527,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
     $ui.win = $w
     $lv = $w.FindName('List'); $status = $w.FindName('Status'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
     $hdr = $w.FindName('Hdr')
-    $lv.Add_Loaded({   # v1.4.10 (Kern/Squint): while the list shows its vertical scrollbar, the header gets the same right inset so Address/Seen stay over their columns
+    $lv.Add_Loaded({   # v1.4.10 (Kern/Squint): while the list shows its vertical scrollbar, the header gets the same right inset so Address/Status stay over their columns
         try { $sv = Find-VncScrollViewer $lv; $hd = $hdr; if ($sv) { $fix = { $hd.Margin = New-Object System.Windows.Thickness 4, 0, (Get-VncHeaderInset ([string]$sv.ComputedVerticalScrollBarVisibility) ([double][System.Windows.SystemParameters]::VerticalScrollBarWidth)), 0 }.GetNewClosure()
             $sv.Add_ScrollChanged($fix); $sv.Add_SizeChanged($fix); & $fix } } catch {} }.GetNewClosure())
     $bView = $w.FindName('View'); $bInt = $w.FindName('Interact')
@@ -3368,29 +3540,57 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         try { $pe = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($status); if ($pe) { $pe.RaiseAutomationEvent('LiveRegionChanged') } } catch {} }.GetNewClosure()
     $ui.refresh = [Action]{
         $sel = $lv.SelectedItem; $lv.Items.Clear()
-        foreach ($v in (Get-VncAllowedRows $ui.allowed $ui.online ([bool]$ui.checking))) { [void]$lv.Items.Add($v); if ($sel -and $sel.row.host -eq $v.row.host -and $sel.row.port -eq $v.row.port) { $lv.SelectedItem = $v } }
+        foreach ($v in (Get-VncAllowedRows $ui.allowed $ui.reach.results ([bool]$ui.reach.checking) ([datetime]::UtcNow))) { [void]$lv.Items.Add($v); if ($sel -and $sel.row.host -eq $v.row.host -and $sel.row.port -eq $v.row.port) { $lv.SelectedItem = $v } }
         if (-not $lv.SelectedItem -and $lv.Items.Count) { $lv.SelectedIndex = 0 }
         $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $r = Get-VncPickerReason $has; if ($r -and $lv.Items.Count -gt 0) { $ui.setStatus.Invoke($r) }
         if ($lv.Items.Count -gt 0) { $empty.Visibility = 'Collapsed' }
         else { $eT.Text = 'No computers have been allowed yet. Ask your administrator.'
                $eB.Text = $(if ($al.state -eq 'unsafe') { "The allowed list on this PC isn't protected, so it is ignored. An administrator can save it again in Setup > Allowed computers (admin)..." } else { 'An administrator adds them in Setup > Allowed computers (admin)...' })
                $empty.Visibility = 'Visible' } }.GetNewClosure()
-    $ui.startCheck = [Action]{   # F5 too: ~300 ms check of only the allowed computers
-        if ($ui.checking -or @($ui.allowed).Count -eq 0) { return }
+    $ui.freshTimer = New-Object System.Windows.Threading.DispatcherTimer   # repaints expired Online/Offline to Not checked; does not connect
+    $ui.freshTimer.Add_Tick({ $ui.freshTimer.Stop()
+        if ($ui.reach.closed -or $ui.reach.checking) { return }
+        $now = [datetime]::UtcNow; $counts = Get-VncReachCounts $ui.allowed $ui.reach.results $now; $ui.refresh.Invoke()
+        if ($counts.online -eq 0 -and $counts.offline -eq 0) { $ui.setStatus.Invoke((Get-VncReachStatusText 0 0 $counts.unchecked $false $false $true '')) }
+        else { $ms = Get-VncReachExpiryMs $ui.reach.results $now; if ($ms -gt 0) { $ui.freshTimer.Interval = [TimeSpan]::FromMilliseconds($ms); $ui.freshTimer.Start() } } }.GetNewClosure())
+    $ui.startCheck = [Action]{   # open and F5: only the allowed computers. A repeat cancels the in-flight check (BeginStop, no wait) and starts a new generation.
+        if ($ui.reach.closed -or @($ui.allowed).Count -eq 0) { return }
+        if ($ui.check) { $ui.stopCheck.Invoke() }
+        $gen = Start-VncReachCheck $ui.reach
+        if ($gen -le 0) { return }
+        $items = @(foreach ($e in $ui.allowed) { @{ key = ('{0}:{1}' -f $e.host, $e.port); host = [string]$e.host; port = $e.port; probe = (Test-VncReachTarget ([string]$e.host) $e.port) } })
         $sync = [hashtable]::Synchronized(@{ cancel = $false; done = $false; found = (New-Object System.Collections.Concurrent.ConcurrentQueue[object]) })
-        $items = @(foreach ($e in $ui.allowed) { @{ key = ('{0}:{1}' -f $e.host, $e.port); host = $e.host; port = $e.port } })
-        try { $rs = [runspacefactory]::CreateRunspace(); $rs.ApartmentState = 'MTA'; $rs.Open(); $ps = [powershell]::Create(); $ps.Runspace = $rs
+        $rs = $null; $ps = $null
+        try { $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+              $iss.Commands.Add((New-Object System.Management.Automation.Runspaces.SessionStateFunctionEntry 'Get-VncReachKind', ${function:Get-VncReachKind}.ToString()))
+              $rs = [runspacefactory]::CreateRunspace($iss); $rs.ApartmentState = 'MTA'; $rs.Open(); $ps = [powershell]::Create(); $ps.Runspace = $rs
               [void]$ps.AddScript($global:VncAllowedCheckScript).AddArgument($items).AddArgument($global:VncTimeoutMs).AddArgument($sync)
-              $ui.check = @{ sync = $sync; ps = $ps; rs = $rs; handle = $ps.BeginInvoke() } }
-        catch { Write-LauncherLog ('VNC online check could not start: ' + $_.Exception.Message); return }
-        $ui.online = @{}; $ui.checking = $true; $busyBar.IsIndeterminate = $true; $busyBar.Visibility = 'Visible'; $ui.refresh.Invoke(); $ui.timer.Start() }.GetNewClosure()
-    $ui.stopCheck = [Action]{ $ui.timer.Stop(); $busyBar.IsIndeterminate = $false; $busyBar.Visibility = 'Hidden'; $ui.checking = $false
+              $ui.check = @{ gen = $gen; sync = $sync; ps = $ps; rs = $rs; handle = $ps.BeginInvoke() } }
+        catch { Write-LauncherLog ('VNC reachability check could not start: ' + $_.Exception.Message)
+                if ($ps) { try { $ps.Dispose() } catch {} }; if ($rs) { try { $rs.Dispose() } catch {} }
+                [void](Complete-VncReachCheck $ui.reach $gen $true ([datetime]::UtcNow)); $ui.refresh.Invoke()
+                $ui.setStatus.Invoke((Get-VncReachStatusText 0 0 @($ui.allowed).Count $false $true $false '')); return }
+        if ($ui.freshTimer) { $ui.freshTimer.Stop() }
+        $busyBar.IsIndeterminate = $true; $busyBar.Visibility = 'Visible'; $ui.refresh.Invoke()
+        $ui.setStatus.Invoke((Get-VncReachStatusText 0 0 @($ui.allowed).Count $true $false $false '')); $ui.timer.Start() }.GetNewClosure()
+    $ui.stopCheck = [Action]{ if ($ui.timer) { $ui.timer.Stop() }; if ($ui.freshTimer) { $ui.freshTimer.Stop() }
+        $busyBar.IsIndeterminate = $false; $busyBar.Visibility = 'Hidden'
         if ($ui.check) { $ui.check.sync.cancel = $true; try { [void]$ui.check.ps.BeginStop($null, $null) } catch {}; [void]$global:VncDeadWorkers.Add(@{ ps = $ui.check.ps; rs = $ui.check.rs }); $ui.check = $null } }.GetNewClosure()
     $ui.timer = New-Object System.Windows.Threading.DispatcherTimer; $ui.timer.Interval = [TimeSpan]::FromMilliseconds(200)
     $ui.timer.Add_Tick({ $c = $ui.check; if (-not $c) { $ui.timer.Stop(); return }
-        $k = $null; while ($c.sync.found.TryDequeue([ref]$k)) { if (Test-VncBannerText ([string]$k.banner)) { $ui.online[[string]$k.key] = [string]$k.banner } }
-        if ($c.sync.done -or (Get-VncWorkerFault $c.ps ([bool]$c.sync.done))) { $ui.stopCheck.Invoke(); Clear-VncDeadWorkers
-            $n = @($ui.online.Keys).Count; $ui.refresh.Invoke(); $ui.setStatus.Invoke(('{0} of {1} online at {2}. Press F5 to check again.' -f $n, @($ui.allowed).Count, (Get-Date -Format 't'))) } }.GetNewClosure())
+        if ($ui.reach.closed -or $c.gen -ne $ui.reach.gen) { return }
+        $k = $null; $changed = $false
+        while ($c.sync.found.TryDequeue([ref]$k)) { if (Add-VncReachObservation $ui.reach ([int]$c.gen) ([string]$k.key) ([string]$k.kind) ([string]$k.banner) ([datetime]::UtcNow)) { $changed = $true } }
+        $faultText = Get-VncWorkerFault $c.ps ([bool]$c.sync.done)
+        if ($c.sync.done -or $faultText) {
+            while ($c.sync.found.TryDequeue([ref]$k)) { if (Add-VncReachObservation $ui.reach ([int]$c.gen) ([string]$k.key) ([string]$k.kind) ([string]$k.banner) ([datetime]::UtcNow)) { $changed = $true } }
+            $gen = [int]$c.gen; $ui.stopCheck.Invoke(); Clear-VncDeadWorkers
+            if (-not $ui.reach.closed) { [void](Complete-VncReachCheck $ui.reach $gen ([bool]$faultText) ([datetime]::UtcNow)); $changed = $true
+                $now = [datetime]::UtcNow; $counts = Get-VncReachCounts $ui.allowed $ui.reach.results $now
+                $ui.setStatus.Invoke((Get-VncReachStatusText $counts.online $counts.offline $counts.unchecked $false ([bool]$faultText) $false (Get-Date -Format 't')))
+                $ms = Get-VncReachExpiryMs $ui.reach.results $now
+                if ($ms -gt 0 -and $ui.freshTimer) { $ui.freshTimer.Interval = [TimeSpan]::FromMilliseconds($ms); $ui.freshTimer.Start() } } }
+        if ($changed) { $ui.refresh.Invoke() } }.GetNewClosure())
     $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the saved view-only password. Change it in Setup > View-only password (for viewing computers)...") }.GetNewClosure()
     $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; $was = Set-VncTilesBusy @($bView, $bInt); $ok = $false; try { $ok = Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw } finally { if (-not (Close-VncPickerAfterStart $ui.win $vo $ok)) { Restore-VncTiles @($bView, $bInt) $was } } }.GetNewClosure()   # v1.4.11: Interact closes View Register once the viewer started
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure())
@@ -3408,7 +3608,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         elseif ($k -eq 'System' -and $_.SystemKey -eq 'I' -and $bInt.IsEnabled) { $_.Handled = $true; $ui.go.Invoke($false) }   # Alt+I = Interact
         elseif ($k -eq 'F5') { $_.Handled = $true; $ui.startCheck.Invoke() }
         elseif ($k -eq 'Escape') { $_.Handled = $true; $w.Close() } }.GetNewClosure())
-    $w.Add_Closed({ $ui.stopCheck.Invoke(); $global:vncPicker = $null; Remove-VncTileWatch $bView; Remove-VncTileWatch $bInt
+    $w.Add_Closed({ [void](Close-VncReachCheck $ui.reach); $ui.stopCheck.Invoke(); $global:vncPicker = $null; Remove-VncTileWatch $bView; Remove-VncTileWatch $bInt
         $ct = New-Object System.Windows.Threading.DispatcherTimer; $ct.Interval = [TimeSpan]::FromSeconds(3)
         $ct.Add_Tick({ $ct.Stop(); if (-not $global:vncPicker) { Clear-VncDeadWorkers -All } }.GetNewClosure()); $ct.Start() }.GetNewClosure())
     $global:vncPicker = $ui

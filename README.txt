@@ -28,6 +28,10 @@ WHAT EACH BUTTON DOES
                        the viewer asks. Interact uses UltraVNC's own
                        password box.
                        v1.4.11: Interact closes View Register once the viewer starts.
+                       v1.4.12 review (not released): the list shows Online,
+                       Offline, or Not checked from a short VNC-port check.
+                       A listed computer is not automatically Online. The
+                       check time is in the row tooltip.
                        To connect straight to a register, edit the button and
                        put e.g. 192.168.1.50:5900 in Arguments.
   INTERNET             Opens Google in your browser.
