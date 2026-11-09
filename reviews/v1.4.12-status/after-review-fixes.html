@@ -26,7 +26,9 @@
   .foot { margin-top: 2px; height: 32px; color: #a0a0a0; font-size: 12px; line-height: 16px; }
   .foot div { height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .pair { display: flex; gap: 8px; }
-  .pair b { font-weight: 450; color: #c8c8d0; }
+  .pair span, .pair b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pair span { max-width: 360px; flex: 0 1 auto; }
+  .pair b { min-width: 180px; flex: 1 0 180px; font-weight: 450; color: #c8c8d0; }
   .note { margin: 12px 0 0; color: #c8c8d0; font-size: 12px; line-height: 1.4; max-width: 680px; }
 </style>
 </head>
@@ -43,9 +45,9 @@
     </div>
     <div class="foot">
       <div>Online: VNC answered, not signed in or the screen. Offline: the VNC port, not the PC.</div>
-      <div class="pair"><span>Checking. 1 online, 1 offline, 1 not checked.</span><b>POS1: VNC answered just now.</b></div>
+      <div class="pair"><span>Not finished. 12 online, 4 offline, 8 not checked. Not Offline. Press F5.</span><b>Front till: the VNC check timed out.</b></div>
     </div>
   </div>
-  <p class="note">Sample states only. The green bar on POS1 is selection, not the Online mark. The column label stays Not checked while a check is still running. Counts and the selected-row line share the second 16 px footer line, so they cannot wrap into the list. An empty allowed list says no computers have been allowed, not “Pick a computer.” Window size in the product stays 620×522, minimum 616×410. This picture does not prove that fit.</p>
+  <p class="note">Sample states only. SIMULATED. The green bar on POS1 is selection, not the Online mark. The column label stays Not checked while a check is still running. Counts are capped near 360 px so the selected or error line keeps about 180 px; both can ellipsize, and the full words stay on the tooltips. The spoken status line is the counts plus that detail. An empty list says “No computers have been allowed yet.” Window size in the product stays 620×522, minimum 616×410. This picture does not prove that fit.</p>
 </body>
 </html>

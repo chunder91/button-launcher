@@ -3480,11 +3480,11 @@ $global:VncPickerXaml = @'
     </Grid>
     <Grid x:Name="StatusBlock" Grid.Row="4" Margin="0,2,0,0" MaxHeight="32">
       <Grid.RowDefinitions><RowDefinition Height="16"/><RowDefinition Height="16"/></Grid.RowDefinitions>
-      <TextBlock x:Name="StatusCaveat" Grid.Row="0" FontSize="12" LineHeight="16" Foreground="#A0A0A0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="Online means the VNC port answered, not that you are signed in or the screen is available. Offline is the VNC port, not the whole computer." Text="Online: VNC answered, not signed in or the screen. Offline: the VNC port, not the PC."/>
+      <TextBlock x:Name="StatusCaveat" Grid.Row="0" FontSize="12" LineHeight="16" Foreground="#A0A0A0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" ToolTip="Online means the VNC port answered, not that you are signed in or the screen is available. Offline is the VNC port, not the whole computer." AutomationProperties.Name="Online: VNC answered, not signed in or the screen. Offline: the VNC port, not the PC." Text="Online: VNC answered, not signed in or the screen. Offline: the VNC port, not the PC."/>
       <Grid Grid.Row="1">
         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-        <TextBlock x:Name="Status" Grid.Column="0" FontSize="12" LineHeight="16" Foreground="#A0A0A0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-        <TextBlock x:Name="StatusDetail" Grid.Column="1" Margin="8,0,0,0" FontSize="12" LineHeight="16" Foreground="#A0A0A0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        <TextBlock x:Name="Status" Grid.Column="0" MaxWidth="360" FontSize="12" LineHeight="16" Foreground="#A0A0A0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+        <TextBlock x:Name="StatusDetail" Grid.Column="1" MinWidth="180" Margin="8,0,0,0" FontSize="12" LineHeight="16" Foreground="#A0A0A0" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
       </Grid>
     </Grid>
   </Grid>
@@ -3603,7 +3603,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
             [System.Windows.MessageBox]::Show("The computer finder couldn't open.`n`n" + $_.Exception.Message + "`n`nDetails are in launcher-error.log.", 'View Register', 'OK', 'Error') | Out-Null; return }
     $w.FontFamily = $global:UiFont
     $ui.win = $w
-    $lv = $w.FindName('List'); $status = $w.FindName('Status'); $statusDetail = $w.FindName('StatusDetail'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
+    $lv = $w.FindName('List'); $status = $w.FindName('Status'); $statusDetail = $w.FindName('StatusDetail'); $caveat = $w.FindName('StatusCaveat'); $busyBar = $w.FindName('Busy'); $empty = $w.FindName('Empty'); $eT = $w.FindName('EmptyTitle'); $eB = $w.FindName('EmptyBody')
     $hdr = $w.FindName('Hdr')
     $lv.Add_Loaded({   # v1.4.10 (Kern/Squint): while the list shows its vertical scrollbar, the header gets the same right inset so Address/Status stay over their columns
         try { $sv = Find-VncScrollViewer $lv; $hd = $hdr; if ($sv) { $fix = { $hd.Margin = New-Object System.Windows.Thickness 4, 0, (Get-VncHeaderInset ([string]$sv.ComputedVerticalScrollBarVisibility) ([double][System.Windows.SystemParameters]::VerticalScrollBarWidth)), 0 }.GetNewClosure()
@@ -3620,6 +3620,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         $ui.line = $combined
         $status.Text = $counts; $status.ToolTip = $counts
         $statusDetail.Text = [string]$detail; $statusDetail.ToolTip = [string]$detail
+        try { [System.Windows.Automation.AutomationProperties]::SetName($status, $combined); [System.Windows.Automation.AutomationProperties]::SetName($statusDetail, [string]$detail); [System.Windows.Automation.AutomationProperties]::SetName($caveat, [string]$caveat.Text) } catch {}
         try { $pe = [System.Windows.Automation.Peers.UIElementAutomationPeer]::CreatePeerForElement($status); if ($pe) { $pe.RaiseAutomationEvent('LiveRegionChanged') } } catch {} }.GetNewClosure()
     $ui.setStatus = [Action[string]]{ param($s) $ui.setLines.Invoke($s, '') }.GetNewClosure()
     $ui.noteStatus = [Action[bool]]{ param($fromSelection)   # counts stay; the selected-row clause is the second budget. A rebuild's selection noise does not own the line.
@@ -3643,11 +3644,11 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
             if (-not $lv.SelectedItem -and $lv.Items.Count) { $lv.SelectedIndex = 0 }
             $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $r = Get-VncPickerReason $has
             if ($lv.Items.Count -gt 0) { $empty.Visibility = 'Collapsed' }
-            else { $eT.Text = 'No computers have been allowed yet. Ask your administrator.'
+            else { $eT.Text = 'No computers have been allowed yet.'
                    $eB.Text = $(if ($al.state -eq 'unsafe') { "The allowed list on this PC isn't protected, so it is ignored. An administrator can save it again in Setup > Allowed computers (admin)..." } else { 'An administrator adds them in Setup > Allowed computers (admin)...' })
                    $empty.Visibility = 'Visible' } }
         finally { $ui.rebuilding = $false }
-        if ($lv.Items.Count -eq 0) { $ui.setStatus.Invoke('No computers have been allowed yet. Ask your administrator.') }   # empty list: not "Pick a computer". Tiles stay off because nothing is selected.
+        if ($lv.Items.Count -eq 0) { $ui.setStatus.Invoke('No computers have been allowed yet.') }   # empty list: not "Pick a computer". Tiles stay off because nothing is selected.
         elseif ($ui.ownStatus) { $ui.noteStatus.Invoke($false) }
         elseif ($r) { $pick = Get-VncStatusWrite ([string]$ui.line) $r $false $false; if ($null -ne $pick) { $ui.setStatus.Invoke([string]$pick) } } }.GetNewClosure()
     $ui.armFresh = [Action]{   # next repaint only. No connect.
@@ -3699,7 +3700,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
     $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $r = Get-VncPickerReason $has
         if ($ui.rebuilding) { return }   # Clear() is not the user. The reachability line is written after the list is rebuilt.
-        if ($lv.Items.Count -eq 0) { $ui.setStatus.Invoke('No computers have been allowed yet. Ask your administrator.') }
+        if ($lv.Items.Count -eq 0) { $ui.setStatus.Invoke('No computers have been allowed yet.') }
         elseif ($ui.ownStatus) { $ui.noteStatus.Invoke($true) }
         elseif ($r) { $pick = Get-VncStatusWrite ([string]$ui.line) $r $true $false; if ($null -ne $pick) { $ui.setStatus.Invoke([string]$pick) } } }.GetNewClosure())
     $lv.Add_MouseDoubleClick({ if ($lv.SelectedItem) { $ui.go.Invoke($true) } }.GetNewClosure())
