@@ -2021,6 +2021,14 @@ public static class Waits {
     static extern int GetWindowLongW(System.IntPtr hWnd, int nIndex);
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     static extern System.IntPtr SendMessage(System.IntPtr hWnd, int msg, System.IntPtr wParam, System.IntPtr lParam);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool BringWindowToTop(System.IntPtr hWnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern System.IntPtr GetForegroundWindow();
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    static extern uint GetCurrentThreadId();
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
     public static void WatchHandle(System.Threading.WaitHandle h, System.Windows.Threading.Dispatcher d, System.Action a) {
         System.Threading.ThreadPool.RegisterWaitForSingleObject(h, delegate(object s, bool t) { d.BeginInvoke(a); }, null, -1, false); }
     public static void WatchResume(System.Windows.Threading.Dispatcher d, System.Action a) {
@@ -2038,14 +2046,26 @@ public static class Waits {
         return walk.rows.ToArray(); }
     public static bool ActivatePrompt(System.IntPtr dialog) {
         if (dialog == System.IntPtr.Zero) return false;
+        bool attached = false;
+        uint foreThread = 0;
+        uint ourThread = 0;
         try {
-            SetForegroundWindow(dialog);
+            uint forePid;
+            System.IntPtr fore = GetForegroundWindow();
+            foreThread = GetWindowThreadProcessId(fore, out forePid);
+            ourThread = GetCurrentThreadId();
+            if (fore == System.IntPtr.Zero || (foreThread == 0 && forePid == 0)) foreThread = 0;
+            if (foreThread != 0 && ourThread != 0 && foreThread != ourThread)
+                attached = AttachThreadInput(ourThread, foreThread, true);
+            BringWindowToTop(dialog);
+            bool fg = SetForegroundWindow(dialog);
             EditWalk kids = new EditWalk();
             EnumChildWindows(dialog, kids.Child, System.IntPtr.Zero);
             System.IntPtr edit = kids.password != System.IntPtr.Zero ? kids.password : kids.found;
             if (edit != System.IntPtr.Zero) SendMessage(dialog, 0x0028, edit, new System.IntPtr(1));
-            return true;
-        } catch { return false; } }
+            return fg;
+        } catch { return false; }
+        finally { if (attached) { try { AttachThreadInput(ourThread, foreThread, false); } catch { } } } }
     class WinWalk {
         public System.Collections.Generic.List<string> rows = new System.Collections.Generic.List<string>();
         public bool Top(System.IntPtr h, System.IntPtr l) {
@@ -2083,7 +2103,7 @@ function global:Stop-TrayAndHotkey {
 # UltraVNC viewer switches, checked against https://uvnc.com/docs/ultravnc-viewer/52-ultravnc-viewer-commandline-parameters.html
 # and the viewer source (github.com/ultravnc/UltraVNC vncviewer/VNCOptions.cpp, ClientConnectionFile.cpp):
 #   host:port    first, one colon (v1.4.7; Charles's Win+R form). Ports below 100 are refused, since host:N with N < 100 means display N (port 5900+N)
-#   -config file for View only on an allowed computer: a short-lived owner-only temp .vnc, after host:port ('host:port -config "<file>" -viewonly')
+#   -config file for View only on an allowed computer: '-config "<file>" -viewonly -autoscaling', no host on the command line. UltraVNC reads [connection] only when m_port is still -1.
 #   -viewonly    do not send keyboard or mouse events. -autoscaling   fit the remote screen to the window (last; back in v1.4.10). -connect is not sent (v1.4.7).
 # The -password switch is never used: a password must never be on a command line. The .vnc holds the VNC DES obfuscation (not encryption).
 $global:VncDefaultPort = 5900
@@ -2246,11 +2266,13 @@ function global:Get-VncDisplayName([string]$n, [int]$max = 40) {   # L5: shown w
 function global:Get-VncViewerArgs([string]$h, $port, [bool]$viewOnly, [string]$configFile) {   # an argument list; no shell
     $p = Get-VncPort $port
     if (-not (Test-VncHost $h) -or -not $p -or $p -lt 100) { throw 'bad host or port' }   # L6/M43-I2: one colon + a number below 100 is a display number, not a port
-    $a = @(('{0}:{1}' -f $h, $p))   # v1.4.7 (Charles 8:22 AM Nov 4, Win+R): '"...\vncviewer.exe" 192.168.20.51:5900' connects and takes his password; with -connect first VNC Server was blank and auth failed. Bare host:port (one colon) comes FIRST, no -connect
-    if ($configFile) {   # v1.4.4: View only with a saved view-only password: the .vnc also holds host and port ([connection]), so the host is set twice
+    if ($configFile) {   # UltraVNC ClientConnection::Run calls GetConnectDetails, which LoadConnection uses for [connection] password, only when m_port == -1. -config alone is LoadOptions ([options] only). Host and port are already in the .vnc.
         if ($configFile -notmatch '^[A-Za-z]:\\[^"]+\.vnc$') { throw 'bad config path' }
-        $a += @('-config', ('"' + $configFile + '"'))
-    }
+        $a = @('-config', ('"' + $configFile + '"'))
+        if ($viewOnly) { $a += '-viewonly' }
+        $a += '-autoscaling'
+        return $a }
+    $a = @(('{0}:{1}' -f $h, $p))   # v1.4.7 (Charles 8:22 AM Nov 4, Win+R): '"...\vncviewer.exe" 192.168.20.51:5900' connects and takes his password; with -connect first VNC Server was blank and auth failed. Bare host:port (one colon) comes FIRST, no -connect
     if ($viewOnly) { $a += '-viewonly' }
     $a += '-autoscaling'   # v1.4.10 (Charles 11:06 AM): with the Shell.Application start, '<host>:<port> -autoscaling' connects (same string as Win+R / admin cmd); host:port stays first
     return $a
@@ -3234,7 +3256,10 @@ function global:Enable-VncViewerForeground([int]$viewerPid) {
     try { if ($viewerPid -gt 0 -and ('BL.Waits' -as [type])) { [void][BL.Waits]::AllowForeground($viewerPid) } } catch {}
 }
 function global:Show-VncPasswordPrompt($hwnd) {   # activate that dialog and ask it to focus its password edit. No keys, no paste, no read of the field.
-    try { if ($hwnd -and ($hwnd -ne [IntPtr]::Zero) -and ('BL.Waits' -as [type])) { [void][BL.Waits]::ActivatePrompt([IntPtr]$hwnd) } } catch {}
+    $ok = $false
+    try { if ($hwnd -and ($hwnd -ne [IntPtr]::Zero) -and ('BL.Waits' -as [type])) { $ok = [bool][BL.Waits]::ActivatePrompt([IntPtr]$hwnd) } } catch { $ok = $false }
+    Write-LauncherLog ('VNC password prompt: activation ' + $(if ($ok) { 'accepted' } else { 'rejected' }))
+    return $ok
 }
 function global:Update-VncPromptWatch($state, [datetime]$now) {   # one poll. Retries the PID diff until the deadline. Returns wait, found, or timeout. Does not sleep.
     if ($state.pid -le 0) { $state.pid = Resolve-VncViewerPid $state.proc $state.exe $state.before }
@@ -3267,10 +3292,13 @@ function global:Complete-VncPromptWatch($state, [string]$step) {
     elseif ($state.pid -gt 0) { Write-LauncherLog ('VNC password prompt: not found for pid ' + $state.pid) }
     elseif ($global:VncPromptTie) { Write-LauncherLog 'VNC password prompt: refused, two viewers started together' }
     $global:VncPromptTie = $false
-    if (-not $state.viewOnly -and $state.win) {
-        try { $state.win.Close() } catch {}
-        if ($state.hit) { Show-VncPasswordPrompt $state.hit.hwnd } }
-    elseif ($state.hit) { Show-VncPasswordPrompt $state.hit.hwnd }
+    if ($state.hit) { [void](Show-VncPasswordPrompt $state.hit.hwnd) }   # while this window is still the foreground window
+    if ($state.win) {
+        $why = 'after the password prompt wait'
+        if ($step -eq 'found') { $why = 'after the password prompt' }
+        Write-LauncherLog ('View Register closed ' + $why)
+        try { $state.win.Close() } catch { Write-LauncherLog ('View Register close failed: ' + (Get-SafeText ([string]$_.Exception.Message) 120)) }
+    }
 }
 function global:Start-VncPromptWatch($proc, [string]$exe, [int[]]$before, [bool]$viewOnly, $win) {   # dispatcher ticks, so the UI thread is not asleep. No window: one pass and return.
     $state = @{ id = [guid]::NewGuid().ToString('n'); proc = $proc; exe = $exe; before = @($before); viewOnly = [bool]$viewOnly; win = $win; born = [datetime]::UtcNow; pid = 0; granted = $false; hit = $null; done = $false; timer = $null }
@@ -3309,7 +3337,8 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         $why = if ($viewOnly -and $pw -eq 'none') { 'This computer is not on the allowed list, so View only was not given a password.' } else { '' }
         $vargs = @(Get-VncViewerArgs $h $p $viewOnly $file); $vi = Get-VncViewerInfo $exe
         $argLine = Get-VncArgLine $vargs   # v1.4.9: ONE string, built here and logged byte-for-byte as passed (no PS 5.1 array re-joining)
-        if (-not $argLine.StartsWith($h + ':')) { throw 'the viewer arguments do not start with the host' }   # v1.4.9 guard: never start the viewer without host:port first
+        $configFirst = [bool]$file -and $argLine.StartsWith('-config "') -and ($file -match '^[A-Za-z]:\\[^"]+\.vnc$') -and $argLine.Contains('"' + $file + '"') -and -not $argLine.StartsWith($h + ':')
+        if (-not $argLine.StartsWith($h + ':') -and -not $configFirst) { throw 'the viewer arguments do not start with the host' }   # v1.4.9 guard. The one exception is View only with a .vnc: -config first, no host, so UltraVNC reads [connection].
         Write-LauncherLog (Get-VncLaunchLogText $viewOnly $exe $vargs $file $pw $vi)   # never the password or the .vnc contents; the temp path is redacted
 
         if ($why) { Write-LauncherLog ('VNC view only: viewer will ask: ' + $why); if ($global:vncPicker) { $global:vncPicker.setStatus.Invoke($why) } }
@@ -3763,16 +3792,17 @@ function global:Set-VncTilesBusy($tiles) {   # v1.4.11 (CC Info): no double Inte
     $was = @(); foreach ($b in $tiles) { $was += [bool]$b.IsEnabled; $b.IsEnabled = $false }; return ,$was
 }
 function global:Restore-VncTiles($tiles, $was) { for ($k = 0; $k -lt @($tiles).Count; $k++) { @($tiles)[$k].IsEnabled = [bool]@($was)[$k] } }   # window stays open: back as they were
-function global:Close-VncPickerAfterStart($win, [bool]$viewOnly, $started) {   # v1.4.11 (Charles 12:06 PM): Interact + a start that didn't throw -> close View Register; View only or any failure -> stay open
-    if ($viewOnly -or -not ($started -is [bool] -and $started) -or -not $win) { return $false }   # strict: only a real [bool] $true
-    if ($global:VncPromptWatch -and -not $global:VncPromptWatch.done -and -not $global:VncPromptWatch.viewOnly) { Write-LauncherLog 'View Register closed after Interact start'; return $true }   # the timer closes it after the dialog, or when 2 s ends
-    Write-LauncherLog 'View Register closed after Interact start'
+function global:Close-VncPickerAfterStart($win, [bool]$viewOnly, $started) {   # a start that didn't throw. A password prompt keeps the window up until that box is focused or the wait ends. Otherwise close now.
+    if (-not ($started -is [bool] -and $started) -or -not $win) { return $false }   # strict: only a real [bool] $true
+    if ($global:VncPromptWatch -and -not $global:VncPromptWatch.done) { Write-LauncherLog 'View Register staying open until the password prompt is ready'; return $true }
+    $kind = if ($viewOnly) { 'View only' } else { 'Interact' }
+    Write-LauncherLog ('View Register closed after ' + $kind + ' start')
     $hwnd = [IntPtr]::Zero
-    try { if ($global:VncPromptHwnd) { $hwnd = [IntPtr]$global:VncPromptHwnd } } catch {}
+    try { if ($global:VncPromptHwnd -and ($global:VncPromptHwnd -ne [IntPtr]::Zero)) { $hwnd = [IntPtr]$global:VncPromptHwnd } } catch {}
     $global:VncPromptHwnd = [IntPtr]::Zero
-    [void]$win.Dispatcher.BeginInvoke('Background', [Action]{   # after the click finishes. Close first, then the password dialog, so the panel does not keep the keyboard. The temp .vnc timer is not tied to the window.
-        try { $win.Close() } catch {}
-        if ($hwnd -ne [IntPtr]::Zero) { Show-VncPasswordPrompt $hwnd } }.GetNewClosure())
+    [void]$win.Dispatcher.BeginInvoke('Background', [Action]{   # after the click finishes. Focus the password box first, then close, so this process is still the foreground process. The temp .vnc timer is not tied to the window.
+        if ($hwnd -ne [IntPtr]::Zero) { [void](Show-VncPasswordPrompt $hwnd) }
+        try { $win.Close() } catch { Write-LauncherLog ('View Register close failed: ' + (Get-SafeText ([string]$_.Exception.Message) 120)) } }.GetNewClosure())
     return $true
 }
 function global:Get-VncPickerReason([bool]$hasSelection) { if ($hasSelection) { '' } else { $global:VncTileSize.reason } }
@@ -3930,7 +3960,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
             if (-not $ui.reach.closed) { [void](Complete-VncReachCheck $ui.reach $gen ([bool]$faultText) ([datetime]::UtcNow)); $changed = $true; $ui.armFresh.Invoke() } }
         if ($changed) { $ui.refresh.Invoke(); if (-not $c.sync.done -and -not $faultText) { $ui.armFresh.Invoke() } } }.GetNewClosure())
     $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the view-only password. Set a different one in Setup > View-only password (for viewing computers)...") }.GetNewClosure()
-    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; $was = Set-VncTilesBusy @($bView, $bInt); $ok = $false; try { $ok = Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw } finally { if (-not (Close-VncPickerAfterStart $ui.win $vo $ok)) { Restore-VncTiles @($bView, $bInt) $was } } }.GetNewClosure()   # v1.4.11: Interact closes View Register once the viewer started
+    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; $was = Set-VncTilesBusy @($bView, $bInt); $ok = $false; try { $ok = Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw } finally { if (-not (Close-VncPickerAfterStart $ui.win $vo $ok)) { Restore-VncTiles @($bView, $bInt) $was } } }.GetNewClosure()   # View only closes once the viewer starts. A password prompt keeps the window up until the box is focused or the wait ends.
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure())
     $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $r = Get-VncPickerReason $has

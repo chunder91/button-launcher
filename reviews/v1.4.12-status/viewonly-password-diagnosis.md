@@ -1,5 +1,21 @@
 # View only password diagnosis
 
+## Why a password file was still ignored (UltraVNC)
+
+Field result on Windows with UltraVNC Viewer 1.5.0.0: View only still prompted even though the log said a password file was sent, as `host:port -config "<temp .vnc>" -viewonly -autoscaling`.
+
+UltraVNC source (`vncviewer/ClientConnection.cpp`, `ClientConnectionFile.cpp`, current main; not re-checked against the 1.5.0.0 tag): `-config` on the command line only runs `LoadOptions`, which reads `[options]`. The `[connection]` password is read by `ClientConnection::LoadConnection`, and `Run` calls that (via `GetConnectDetails`) only when `m_port == -1`, meaning no host was given on the command line. Putting `host:port` first set the port, so the password in the `.vnc` was never read.
+
+View only with a password file is therefore `-config "<file>" -viewonly -autoscaling` and nothing else. The `.vnc` already has host, port, and the obfuscated password. Interact, and View only without a file, stay `host:port` first. There is still no `-password` argument. The temp file is still deleted on the same timer; the viewer reads it at startup.
+
+## Why View Register stayed open, and why the password box did not take focus
+
+Charles's log at 20:24:54 (launcher elevated, viewer started with Shell.Application, so it is not a child of this process) writes `View Register closed after Interact start` in the same second as the start, then at 20:24:55 `VNC password prompt: found for pid 12996`. The window was still there: that first line was written as soon as the watch began, and the real close ran only after the dialog was found, and only after that did the launcher call SetForegroundWindow. By then this process was no longer the foreground process, so Windows rejected the focus change. View only never closed at all, because a successful View only start was left open on purpose.
+
+View only with a password file now closes as soon as the viewer starts. When a password box is expected, the window stays up until the box is focused or the 2 second wait ends, and the log says so at the moment it actually closes. Activation attaches this thread to the current foreground thread, calls BringWindowToTop and SetForegroundWindow, then WM_NEXTDLGCTL (0x0028) to the password edit. No keys are sent and the field is not read.
+
+## Earlier diagnosis
+
 Diagnosed at `0c0968dbe56537f96d9a0e515bf11f4f0e177e6b` (same behavior as reviewed v1.4.11 `37ea47df364fdfad29b07703fdd76fcbb925fdf4` for this path, plus the later freshness gate). The line numbers below are from that commit, before the fix. No password file on this machine was opened.
 
 Charles (Nov 9, 6:56 PM ET): View only should use the built-in default unless he overrides it from the panel. When he tried it, the viewer asked for a password the same way Interact does.
@@ -10,9 +26,9 @@ The launcher starts UltraVNC `vncviewer.exe` (`Find-VncViewer`, `Launcher.ps1` a
 
 - Interact: `host:port -autoscaling`
 - View only, no password file: `host:port -viewonly -autoscaling`
-- View only, password file: `host:port -config "<temp .vnc>" -viewonly -autoscaling`
+- View only, password file, before the UltraVNC `[connection]` fix: `host:port -config "<temp .vnc>" -viewonly -autoscaling`
 
-`-viewonly` is only the input lock. It does not supply a password, and UltraVNC does not ignore `-config` when that file is actually passed. The `-password` switch is never used (`Launcher.ps1:2029`).
+`-viewonly` is only the input lock. It does not supply a password. With `host:port` also on the command line, `-config` does not load `[connection]` (see the section above). The `-password` switch is never used (`Launcher.ps1:2029`).
 
 ## Where the password comes from
 

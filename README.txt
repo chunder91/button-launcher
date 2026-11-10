@@ -28,6 +28,10 @@ WHAT EACH BUTTON DOES
                        the viewer asks. Interact uses UltraVNC's own
                        password box.
                        v1.4.11: Interact closes View Register once the viewer starts.
+                       v1.4.12 review: View only closes View Register once the
+                       viewer starts. When a password box is expected, View
+                       Register stays open until that box is focused, or for
+                       up to 2 seconds, and then closes.
                        v1.4.12 review (not released): the list shows Online,
                        Offline, or Not checked from a short VNC-port check.
                        A line under the list says Online means VNC answered,
