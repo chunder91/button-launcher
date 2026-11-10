@@ -2494,10 +2494,11 @@ function global:Remove-VncTempSoon([string]$file, $proc, [scriptblock]$OnEarlyEx
         $sec = ([DateTime]::UtcNow - $state.start).TotalSeconds
         if ($state.act -eq 'wait') {
             $ps = Get-VncProcState $proc; $ex = $ps.exited; $hw = $ps.window
-            if ($hw -and $state.win -lt 0) { $state.win = $sec }
+            if ($hw -and $state.win -lt 0) { $state.win = $sec; [void](Complete-VncViewHold 'window') }
             $state.act = Get-VncTempAction $sec $ex ($state.win -ge 0) $state.win
             if ($state.act -eq 'wait') { return }
-            if ($state.act -eq 'early' -and $OnEarlyExit) { try { & $OnEarlyExit } catch {} } }
+            if ($state.act -eq 'early') { [void](Complete-VncViewHold 'early'); if ($OnEarlyExit) { try { & $OnEarlyExit } catch {} } }
+            else { [void](Complete-VncViewHold 'done') } }
         $state.tries++
         if ((Remove-VncTempDir $dir) -or $state.tries -ge 6) { $t.Stop() } }.GetNewClosure())
     $t.Start()
@@ -2532,7 +2533,7 @@ function global:Show-VncPasswordDialog($owner) {   # v1.4.4: set, change or clea
     [System.Windows.Automation.AutomationProperties]::SetName($tb, 'View-only password, visible')
     $tf = New-D2Field $tb; $tf.Margin = '0,0,0,8'; $tf.Visibility = 'Collapsed'; [void]$sp.Children.Add($tf)
     $reveal = @{ on = $false }
-    $bShow = New-D2Button 'Show password' 'Chip' $dlg; $bShow.Margin = '0,0,0,8'; $bShow.HorizontalAlignment = 'Left'
+    $bShow = New-D2Button 'Show password' 'Chip' $dlg; $bShow.Margin = '0,0,0,8'; $bShow.HorizontalAlignment = 'Left'; $bShow.MinWidth = 140
     [System.Windows.Automation.AutomationProperties]::SetName($bShow, 'Show password')
     $bShow.Add_Click({
         if (-not $reveal.on) { $tb.Text = [string]$pb.Password; $pf.Visibility = 'Collapsed'; $tf.Visibility = 'Visible'; $bShow.Content = 'Hide password'; [System.Windows.Automation.AutomationProperties]::SetName($bShow, 'Hide password'); $reveal.on = $true; [void]$tb.Focus() }
@@ -2552,6 +2553,8 @@ function global:Show-VncPasswordDialog($owner) {   # v1.4.4: set, change or clea
     $bSave = New-D2Button 'Save' 'Green' $dlg; $bSave.IsDefault = $true
     $bNone = New-D2Button 'Reset to default password' 'Chip' $dlg
     $bNone.Visibility = Get-VncRemoveButtonVisibility $has
+    if ($has) { $st.Margin = '0,0,0,8' }
+    $bNone.Margin = '0,0,0,16'; $bNone.HorizontalAlignment = 'Left'
     $bCancel = New-D2Button 'Cancel' 'Chip' $dlg; $bCancel.IsCancel = $true
     $bSave.Add_Click({
         $typed = if ($reveal.on) { [string]$tb.Text } else { [string]$pb.Password }
@@ -2567,9 +2570,11 @@ function global:Show-VncPasswordDialog($owner) {   # v1.4.4: set, change or clea
         $left = $true; try { $left = [bool](Test-VncSecret) } catch {}   # LJ M47-I1: recheck, don't assume it worked
         if ($left) { Write-LauncherLog 'view-only password: reset failed (still saved)'; & $say "Couldn't reset it. The override is still saved; try again." '#F59E0B'; & $focusPw; return }
         Write-LauncherLog 'view-only password: default'; $res.saved = $false
-        $bNone.Visibility = Get-VncRemoveButtonVisibility $false; & $say 'Override reset. View only uses the built-in default.' '#B4B4BC'; & $focusPw }.GetNewClosure())
+        $bNone.Visibility = Get-VncRemoveButtonVisibility $false; $st.Margin = '0,0,0,16'; & $say 'Override reset. View only uses the built-in default.' '#B4B4BC'; & $focusPw }.GetNewClosure())
     $bCancel.Add_Click({ $pb.Clear(); $d.Close() }.GetNewClosure())
-    foreach ($b in $bSave, $bNone, $bCancel) { [void]$row.Children.Add($b) }
+    [void]$sp.Children.Add($bNone)
+    $bSave.Margin = '0'
+    foreach ($b in $bSave, $bCancel) { [void]$row.Children.Add($b) }
     [void]$sp.Children.Add($row)
     $d.Add_ContentRendered({ [void]$pb.Focus() }.GetNewClosure())
     [void]$d.ShowDialog()
@@ -3109,9 +3114,9 @@ function global:Get-VncReachExpiryMs($results, [datetime]$nowUtc) {   # ms until
 function global:Get-VncReachStatusText([int]$online, [int]$offline, [int]$unchecked, [bool]$checking, [bool]$fault, [bool]$stale, [string]$at) {   # one line. The selected-row clause is separate so this does not wrap into the list.
     $counts = '{0} online, {1} offline, {2} not checked' -f $online, $offline, $unchecked
     if ($checking) { return ('Checking. {0}.' -f $counts) }
-    if ($fault) { return ('Not finished. {0}. Not Offline. Press F5.' -f $counts) }
-    if ($stale) { return 'Expired. Every row is Not checked, not Offline. Press F5.' }
-    if ($at) { return ('{0}. Press F5 to check again.' -f $counts) }
+    if ($fault) { return ('F5 to try again · {0}' -f $counts) }   # F5 first. This wording, and the idle line below, stay within 340 DIP in Segoe UI Semibold 12 at two-digit counts.
+    if ($stale) { return 'Results expired. Press F5 to check again.' }
+    if ($at) { return ('F5 to check again · {0}' -f $counts) }
     return $counts
 }
 function global:Get-VncChromeDelta([int]$introLines, [double]$introMargin, [int]$footerLines, [double]$footerMargin, [double]$line) {   # vs the one-line intro (margin 12) and one-line footer (margin 10) the 240 px chrome model was built on. 0 = the list does not lose a row.
@@ -3263,13 +3268,20 @@ function global:Show-VncPasswordPrompt($hwnd) {   # activate that dialog and ask
 }
 function global:Update-VncPromptWatch($state, [datetime]$now) {   # one poll. Retries the PID diff until the deadline. Returns wait, found, or timeout. Does not sleep.
     if ($state.pid -le 0) { $state.pid = Resolve-VncViewerPid $state.proc $state.exe $state.before }
-    $deadline = $state.born.AddMilliseconds(2000)
+    $deadline = $state.born.AddMilliseconds(7000)
     if ($state.pid -gt 0 -and -not $state.granted) { Enable-VncViewerForeground $state.pid; $state.granted = $true }
+    if ($state.pid -gt 0 -and (Test-VncViewerGone $state.proc ([int]$state.pid) $state.exe)) { return 'exited' }
     if ($state.pid -gt 0) {
         $hit = Select-VncPasswordPrompt (Get-VncVisibleWindowRows) $state.pid $now $deadline
         if ($hit) { $state.hit = $hit; return 'found' } }
     if ($now -gt $deadline) { return 'timeout' }
     return 'wait'
+}
+function global:Test-VncViewerGone($proc, [int]$viewerPid, [string]$exe) {   # true only when that viewer is no longer running. A lookup failure is not gone.
+    if ($viewerPid -le 0) { return $false }
+    if ($proc -is [System.Diagnostics.Process]) { try { $proc.Refresh(); return [bool]$proc.HasExited } catch { return $false } }
+    try { foreach ($p in @(Get-VncViewerProcessList $exe)) { if ([int]$p.Id -eq $viewerPid) { return $false } } } catch { return $false }
+    return $true
 }
 function global:Stop-VncPromptWatch($state) {   # Stop is the release. Does not activate a dialog.
     if (-not $state) { return }
@@ -3289,6 +3301,7 @@ function global:Enable-VncPickerTiles($win) {   # after a failed watch the windo
 function global:Complete-VncPromptWatch($state, [string]$step) {
     Stop-VncPromptWatch $state
     if ($step -eq 'found') { Write-LauncherLog ('VNC password prompt: found for pid ' + $state.pid) }
+    elseif ($step -eq 'exited') { Write-LauncherLog ('VNC password prompt: viewer exited before a password box, pid ' + $state.pid) }
     elseif ($state.pid -gt 0) { Write-LauncherLog ('VNC password prompt: not found for pid ' + $state.pid) }
     elseif ($global:VncPromptTie) { Write-LauncherLog 'VNC password prompt: refused, two viewers started together' }
     $global:VncPromptTie = $false
@@ -3309,11 +3322,12 @@ function global:Start-VncPromptWatch($proc, [string]$exe, [int[]]$before, [bool]
         return $false }
     if ($global:VncPromptWatch) { Stop-VncPromptWatch $global:VncPromptWatch }
     $global:VncPromptWatch = $state
+    try { if ($global:vncPicker) { $global:vncPicker.setStatus.Invoke('Opening the viewer. The password box comes next.') } } catch {}   # polite live region; setLines announces a new line once
     $tick = { if ($state.done) { return }
         $failed = $false
         try { $step = Update-VncPromptWatch $state ([datetime]::UtcNow); if ($step -eq 'wait') { return }; Complete-VncPromptWatch $state $step }
         catch { $failed = $true; Write-LauncherLog 'VNC password prompt: watch failed' }
-        finally { if ($failed) { Stop-VncPromptWatch $state; Enable-VncPickerTiles $state.win } } }.GetNewClosure()
+        finally { if ($failed) { Stop-VncPromptWatch $state; try { if ($state.win) { $state.win.Close() } } catch { Enable-VncPickerTiles $state.win; Write-LauncherLog 'View Register close failed' } } } }.GetNewClosure()
     try {
         $t = New-Object System.Windows.Threading.DispatcherTimer
         $t.Interval = [TimeSpan]::FromMilliseconds(50); $state.timer = $t
@@ -3337,8 +3351,7 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         $why = if ($viewOnly -and $pw -eq 'none') { 'This computer is not on the allowed list, so View only was not given a password.' } else { '' }
         $vargs = @(Get-VncViewerArgs $h $p $viewOnly $file); $vi = Get-VncViewerInfo $exe
         $argLine = Get-VncArgLine $vargs   # v1.4.9: ONE string, built here and logged byte-for-byte as passed (no PS 5.1 array re-joining)
-        $configFirst = [bool]$file -and $argLine.StartsWith('-config "') -and ($file -match '^[A-Za-z]:\\[^"]+\.vnc$') -and $argLine.Contains('"' + $file + '"') -and -not $argLine.StartsWith($h + ':')
-        if (-not $argLine.StartsWith($h + ':') -and -not $configFirst) { throw 'the viewer arguments do not start with the host' }   # v1.4.9 guard. The one exception is View only with a .vnc: -config first, no host, so UltraVNC reads [connection].
+        if (-not (Test-VncViewerArgLine $argLine $h $file)) { throw 'the viewer arguments do not start with the host' }   # v1.4.9 guard. The one exception is exactly -config "<file>" -viewonly -autoscaling, so UltraVNC reads [connection].
         Write-LauncherLog (Get-VncLaunchLogText $viewOnly $exe $vargs $file $pw $vi)   # never the password or the .vnc contents; the temp path is redacted
 
         if ($why) { Write-LauncherLog ('VNC view only: viewer will ask: ' + $why); if ($global:vncPicker) { $global:vncPicker.setStatus.Invoke($why) } }
@@ -3352,14 +3365,41 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         Write-LauncherLog ('VNC viewer start: method={0}' -f $global:VncStartMethod)
         if ($expectPrompt) { $global:VncPromptHwnd = [IntPtr]::Zero; [void](Start-VncPromptWatch $proc $exe $beforeIds $viewOnly $owner) }   # ticks on the dispatcher; does not sleep this thread
         if ($null -eq $proc) { Write-LauncherLog ('VNC viewer start: no process object returned' + $(if ($file) { '; temp .vnc deleted at 8 s' } else { '' })) }   # CC Low: not 'early', no 'viewer closed'
+        if ($viewOnly -and -not $expectPrompt) {   # a password file was sent. Stay open until a window or the 8 s check. The file timer is unchanged.
+            $global:VncViewHold = @{ win = $owner; done = $false }
+            try { if ($global:vncPicker) { $global:vncPicker.setStatus.Invoke('Starting View only…') } } catch {} }
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit; $file = $null }   # deleted 3 s after the viewer shows a window, or at 8 s
         return $true
     } catch {
+        $global:VncViewHold = $null
         if ($file) { [void](Remove-VncTempDir (Split-Path -Parent $file)) }
         [System.Windows.MessageBox]::Show("Couldn't start the viewer.`n`n" + $_.Exception.Message, 'View Register') | Out-Null; return $false
     } finally { $hex = $null; if ($file) { [void](Remove-VncTempDir (Split-Path -Parent $file)) } }
 }
 function global:Show-VncNotice([string]$t) { [System.Windows.MessageBox]::Show($t, 'View Register') | Out-Null }
+function global:Test-VncViewerArgLine([string]$argLine, [string]$h, [string]$file) {   # host:port first, or exactly one -config form. The path still has to be a drive path ending in .vnc.
+    if ($file) {
+        if ($file -notmatch '^[A-Za-z]:\\[^"]+\.vnc$') { return $false }
+        return ($argLine -ceq ('-config "' + $file + '" -viewonly -autoscaling')) }
+    return $argLine.StartsWith($h + ':')
+}
+function global:Show-VncViewOnlyFault($win, [string]$msg) {   # the wrong-password line. The open window gets it as status; a closed window gets a notice. The text has no secret.
+    $open = $false
+    try { if ($win -and $win.IsLoaded) { $open = $true } } catch { $open = $false }
+    if ($open -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke($msg); return 'status' }
+    Show-VncNotice $msg
+    return 'notice'
+}
+function global:Complete-VncViewHold([string]$step) {   # end the View only wait. A window, or the 8 s check finishing, closes View Register. An early exit leaves it open.
+    $h = $global:VncViewHold
+    if (-not $h -or $h.done) { return }
+    $h.done = $true
+    $global:VncViewHold = $null
+    if ($step -eq 'early') { Write-LauncherLog 'View only: viewer exited before a window'; Enable-VncPickerTiles $h.win; return }
+    if (-not $h.win) { return }
+    Write-LauncherLog 'View Register closed after View only start'
+    try { $h.win.Close() } catch { Write-LauncherLog ('View Register close failed: ' + (Get-SafeText ([string]$_.Exception.Message) 120)) }
+}
 function global:Get-VncRowHost($row) {   # v1.4.9: the host of a picker row: PSCustomObject or hashtable, or a picker view whose .row holds it
     if ($null -eq $row) { return '' }
     if ($row -is [System.Collections.IDictionary]) { if ($row.Contains('host')) { return [string]$row['host'] }; if ($row.Contains('row')) { return (Get-VncRowHost $row['row']) }; return '' }
@@ -3776,7 +3816,7 @@ $global:VncTiles = @{
     view     = @{ label = 'View only'; iconGap = 6.0; fill = '#0C6941'; disabled = '#25352E'; icon = 'M2.062,12.348 A1,1 0 0 1 2.062,11.652 A10.75,10.75 0 0 1 21.938,11.652 A1,1 0 0 1 21.938,12.348 A10.75,10.75 0 0 1 2.062,12.348 M15,12 A3,3 0 1 1 9,12 A3,3 0 1 1 15,12' }
     interact = @{ label = 'Interact'; iconGap = 4.5; fill = '#095F84'; disabled = '#253339'; icon = 'M18,11 V6 A2,2 0 0 0 16,4 A2,2 0 0 0 14,6 M14,10 V4 A2,2 0 0 0 12,2 A2,2 0 0 0 10,4 V6 M10,10.5 V6 A2,2 0 0 0 8,4 A2,2 0 0 0 6,6 V14 M18,8 A2,2 0 1 1 22,8 V14 A8,8 0 0 1 14,22 H12 C9.2,22 7.5,21.14 6.01,19.66 L2.41,16.06 A2,2 0 0 1 5.24,13.24 L7,15' }
 }
-$global:VncTileSize = @{ w = 271; h = 72; gap = 16; icon = 26; iconGap = 8; font = 24; outline = 3.2; disabledLabel = '#C4C4C8'; reason = 'Pick a computer to view or control it.' }
+$global:VncTileSize = @{ w = 271; h = 72; gap = 16; icon = 26; iconGap = 8; font = 24; outline = 3.2; disabledLabel = '#C4C4C8'; reason = 'Pick a computer first.' }
 function global:Get-VncTileBandHeight {   # Kern Minor 2: band ends 4.5 px above the higher of cap top and icon ink top (20 px); same on both tiles
     $S = $global:VncTileSize; $capTop = ($S.h - $S.font * 1.2) / 2 + $S.font * 0.2; $inkTop = ($S.h - $S.icon) / 2 + 1.5   # Kern: top of the visible ink, not the icon box
     return [Math]::Min($capTop, $inkTop) - 4.5
@@ -3794,6 +3834,7 @@ function global:Set-VncTilesBusy($tiles) {   # v1.4.11 (CC Info): no double Inte
 function global:Restore-VncTiles($tiles, $was) { for ($k = 0; $k -lt @($tiles).Count; $k++) { @($tiles)[$k].IsEnabled = [bool]@($was)[$k] } }   # window stays open: back as they were
 function global:Close-VncPickerAfterStart($win, [bool]$viewOnly, $started) {   # a start that didn't throw. A password prompt keeps the window up until that box is focused or the wait ends. Otherwise close now.
     if (-not ($started -is [bool] -and $started) -or -not $win) { return $false }   # strict: only a real [bool] $true
+    if ($global:VncViewHold -and -not $global:VncViewHold.done) { Write-LauncherLog 'View Register staying open until View only shows a window'; return $true }
     if ($global:VncPromptWatch -and -not $global:VncPromptWatch.done) { Write-LauncherLog 'View Register staying open until the password prompt is ready'; return $true }
     $kind = if ($viewOnly) { 'View only' } else { 'Interact' }
     Write-LauncherLog ('View Register closed after ' + $kind + ' start')
@@ -3959,8 +4000,8 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
             $gen = [int]$c.gen; $ui.stopCheck.Invoke(); Clear-VncDeadWorkers
             if (-not $ui.reach.closed) { [void](Complete-VncReachCheck $ui.reach $gen ([bool]$faultText) ([datetime]::UtcNow)); $changed = $true; $ui.armFresh.Invoke() } }
         if ($changed) { $ui.refresh.Invoke(); if (-not $c.sync.done -and -not $faultText) { $ui.armFresh.Invoke() } } }.GetNewClosure())
-    $wrongPw = { $ui.setStatus.Invoke("Couldn't connect with the view-only password. Set a different one in Setup > View-only password (for viewing computers)...") }.GetNewClosure()
-    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; $was = Set-VncTilesBusy @($bView, $bInt); $ok = $false; try { $ok = Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw } finally { if (-not (Close-VncPickerAfterStart $ui.win $vo $ok)) { Restore-VncTiles @($bView, $bInt) $was } } }.GetNewClosure()   # View only closes once the viewer starts. A password prompt keeps the window up until the box is focused or the wait ends.
+    $wrongPw = { Show-VncViewOnlyFault $ui.win "Couldn't connect with the view-only password. Set a different one in Setup > View-only password (for viewing computers)..." }.GetNewClosure()
+    $ui.go = [Action[bool]]{ param($vo) $s = $lv.SelectedItem; if (-not $s) { return }; $was = Set-VncTilesBusy @($bView, $bInt); $ok = $false; try { $ok = Start-VncViewer $ui.btn $s.row $vo $ui.win $wrongPw } finally { if (-not (Close-VncPickerAfterStart $ui.win $vo $ok)) { Restore-VncTiles @($bView, $bInt) $was } } }.GetNewClosure()   # View only with a password file stays up until a window or the 8 s check. A password prompt stays up until the box is focused or the wait ends.
     $bView.Add_Click({ $ui.go.Invoke($true) }.GetNewClosure())
     $bInt.Add_Click({ $ui.go.Invoke($false) }.GetNewClosure())
     $lv.Add_SelectionChanged({ $has = [bool]$lv.SelectedItem; $bView.IsEnabled = $has; $bInt.IsEnabled = $has; $r = Get-VncPickerReason $has
@@ -3980,7 +4021,7 @@ function global:Show-VncPicker($btn) {   # v1.4.1: only the admin's allowed comp
         elseif ($k -eq 'System' -and $_.SystemKey -eq 'I' -and $bInt.IsEnabled) { $_.Handled = $true; $ui.go.Invoke($false) }   # Alt+I = Interact
         elseif ($k -eq 'F5') { $_.Handled = $true; $ui.startCheck.Invoke() }
         elseif ($k -eq 'Escape') { $_.Handled = $true; $w.Close() } }.GetNewClosure())
-    $w.Add_Closed({ Stop-VncPromptWatch $global:VncPromptWatch; [void](Close-VncReachCheck $ui.reach); $ui.stopCheck.Invoke(); $global:vncPicker = $null; Remove-VncTileWatch $bView; Remove-VncTileWatch $bInt
+    $w.Add_Closed({ Stop-VncPromptWatch $global:VncPromptWatch; if ($global:VncViewHold) { $global:VncViewHold.done = $true; $global:VncViewHold = $null }; [void](Close-VncReachCheck $ui.reach); $ui.stopCheck.Invoke(); $global:vncPicker = $null; Remove-VncTileWatch $bView; Remove-VncTileWatch $bInt
         $ct = New-Object System.Windows.Threading.DispatcherTimer; $ct.Interval = [TimeSpan]::FromSeconds(3)
         $ct.Add_Tick({ $ct.Stop(); if (-not $global:vncPicker) { Clear-VncDeadWorkers -All } }.GetNewClosure()); $ct.Start() }.GetNewClosure())
     $global:vncPicker = $ui
