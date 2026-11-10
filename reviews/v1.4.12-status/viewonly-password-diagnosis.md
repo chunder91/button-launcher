@@ -82,6 +82,32 @@ The viewer shows its own password box, the same box Interact uses, whenever no `
 
 The allowlist already limits which rows the picker can launch. It is not what decides the password. A listed computer that is not a fresh Online IPv4, or that has no saved override, is started as `host:port -viewonly -autoscaling`. UltraVNC then asks. That is the same prompt Interact gets from `host:port -autoscaling`.
 
+## Why the password box does not take the keyboard
+
+At `93482a47890442a275bd14af0df01e1853334849`, before the focus handoff:
+
+Charles (Nov 9, 6:57 PM ET): after View Register closes he has to click the viewer, then click the password field, before he can type.
+
+Three things stack up.
+
+1. `Start-VncProcess` (`Launcher.ps1:3202` at that commit) calls `ShellExecute` and returns no process (`Launcher.ps1:3204`). There is no PID to hand the foreground right to.
+2. `Close-VncPickerAfterStart` (`Launcher.ps1:3563`) closes View Register as soon as the start did not throw, on a dispatcher callback (`Launcher.ps1:3566`), before UltraVNC has created its password dialog. Closing the picker gives the foreground back to the launcher panel.
+3. Windows will not let a process that was not the foreground, and was not granted `AllowSetForegroundWindow` by the foreground process, call `SetForegroundWindow` for itself. The dialog can appear behind the launcher, or in front without keyboard focus in the password edit. `-viewonly` and the `.vnc` file do not change that. Nothing in this path called `AllowSetForegroundWindow` or `SetForegroundWindow`.
+
+The admin ScreenConnect restart prompt and the force-restart prompt are separate message boxes. They are not this dialog.
+
+## Focus handoff
+
+The fix, still least privilege and still not typing into the field:
+
+- When Interact starts, or when View only had to fall back to a prompt (no password file), snapshot `vncviewer.exe`, start the viewer the same way, then take the new PID (`Process.Id` when ProcessStartInfo was used, otherwise a new process with that exe path that was not in the snapshot).
+- Call `AllowSetForegroundWindow` for that PID while the launcher is still allowed to grant it, before waiting for the dialog.
+- Poll at most 2 seconds. A window counts only when its process id is that PID, its class is `#32770`, and its title says Authentication or Password. Any other window of that process is ignored. No `BL.Waits` type, or no PID: stop at once and leave the old behaviour.
+- Interact closes View Register first, in the same dispatcher turn, and then activates that dialog. View only that is still showing the picker activates it without closing. Activation is `SetForegroundWindow` on the dialog, then `WM_NEXTDLGCTL` so the dialog itself focuses its password edit (`ES_PASSWORD` if one is present, otherwise the last visible Edit). The edit's text is never read. Nothing is typed, pasted, or sent with SendKeys.
+- If the dialog is not there when the 2 seconds end, log `not found` and close (Interact) or stay (View only) exactly as before.
+
+`BL.Waits` gained `AllowForeground`, `ListVisibleWindows`, and `ActivatePrompt`. The match and the timeout are PowerShell functions so they can be tested here. Whether the real UltraVNC dialog comes forward has to be checked on Windows. This host cannot do that.
+
 ## Decision for the fix
 
 - View only on an allowed computer always gets a password file: the DPAPI override if one is saved, otherwise the built-in default. Stale and Not checked do not block it. A name on the allowlist does not block it either, so those rows do not prompt. A computer that is not on the allowlist still gets no password file.

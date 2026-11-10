@@ -2000,6 +2000,27 @@ $global:WaitsSource = @'
 namespace BL {
 public static class Waits {
     static Microsoft.Win32.PowerModeChangedEventHandler resume;
+    delegate bool EnumProc(System.IntPtr hWnd, System.IntPtr lParam);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool AllowSetForegroundWindow(int dwProcessId);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool SetForegroundWindow(System.IntPtr hWnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool EnumWindows(EnumProc lpEnumFunc, System.IntPtr lParam);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool EnumChildWindows(System.IntPtr hWnd, EnumProc lpEnumFunc, System.IntPtr lParam);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern uint GetWindowThreadProcessId(System.IntPtr hWnd, out uint lpdwProcessId);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern int GetClassName(System.IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    static extern int GetWindowText(System.IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool IsWindowVisible(System.IntPtr hWnd);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetWindowLong")]
+    static extern int GetWindowLong(System.IntPtr hWnd, int nIndex);
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern System.IntPtr SendMessage(System.IntPtr hWnd, int msg, System.IntPtr wParam, System.IntPtr lParam);
     public static void WatchHandle(System.Threading.WaitHandle h, System.Windows.Threading.Dispatcher d, System.Action a) {
         System.Threading.ThreadPool.RegisterWaitForSingleObject(h, delegate(object s, bool t) { d.BeginInvoke(a); }, null, -1, false); }
     public static void WatchResume(System.Windows.Threading.Dispatcher d, System.Action a) {
@@ -2008,6 +2029,44 @@ public static class Waits {
         Microsoft.Win32.SystemEvents.PowerModeChanged += resume; }
     public static void UnwatchResume() {
         if (resume != null) { Microsoft.Win32.SystemEvents.PowerModeChanged -= resume; resume = null; } }
+    public static bool AllowForeground(int pid) {
+        if (pid <= 0) return false;
+        try { return AllowSetForegroundWindow(pid); } catch { return false; } }
+    public static string[] ListVisibleWindows() {
+        WinWalk walk = new WinWalk();
+        try { EnumWindows(walk.Top, System.IntPtr.Zero); } catch { }
+        return walk.rows.ToArray(); }
+    public static bool ActivatePrompt(System.IntPtr dialog) {
+        if (dialog == System.IntPtr.Zero) return false;
+        try {
+            SetForegroundWindow(dialog);
+            EditWalk kids = new EditWalk();
+            EnumChildWindows(dialog, kids.Child, System.IntPtr.Zero);
+            System.IntPtr edit = kids.password != System.IntPtr.Zero ? kids.password : kids.found;
+            if (edit != System.IntPtr.Zero) SendMessage(dialog, 0x0028, edit, new System.IntPtr(1));
+            return true;
+        } catch { return false; } }
+    class WinWalk {
+        public System.Collections.Generic.List<string> rows = new System.Collections.Generic.List<string>();
+        public bool Top(System.IntPtr h, System.IntPtr l) {
+            if (!IsWindowVisible(h)) return true;
+            uint pid; GetWindowThreadProcessId(h, out pid);
+            System.Text.StringBuilder c = new System.Text.StringBuilder(256);
+            System.Text.StringBuilder t = new System.Text.StringBuilder(256);
+            GetClassName(h, c, c.Capacity); GetWindowText(h, t, t.Capacity);
+            rows.Add(pid.ToString() + "\t" + c.ToString() + "\t" + h.ToInt64().ToString() + "\t" + t.ToString());
+            return true; } }
+    class EditWalk {
+        public System.IntPtr found = System.IntPtr.Zero;
+        public System.IntPtr password = System.IntPtr.Zero;
+        public bool Child(System.IntPtr h, System.IntPtr l) {
+            if (!IsWindowVisible(h)) return true;
+            System.Text.StringBuilder c = new System.Text.StringBuilder(64);
+            GetClassName(h, c, c.Capacity);
+            if (c.ToString() != "Edit") return true;
+            found = h;
+            try { if ((GetWindowLong(h, -16) & 0x20) != 0) password = h; } catch { }
+            return true; } }
 } }
 '@
 function global:Stop-TrayAndHotkey {
@@ -3092,6 +3151,80 @@ function global:Get-VncViewerInfo([string]$exe) {   # 'UltraVNC 1.5.0.0 (64-bit)
     try { $vi = (Get-Item -LiteralPath $exe).VersionInfo; $prod = [string]$vi.ProductName; $ver = [string]$vi.FileVersion } catch { $prod = ''; $ver = '' }
     return @{ product = (Get-SafeText $prod 60); version = (Get-SafeText $ver 30); ultra = ($prod -match 'Ultr@?VNC|UltraVNC') }
 }
+function global:Test-VncPasswordPrompt([int]$windowPid, [string]$className, [string]$title, [int]$viewerPid) {   # this process, and a dialog whose title is an auth prompt. Not any window of that process.
+    if ($viewerPid -le 0 -or $windowPid -ne $viewerPid) { return $false }
+    if ([string]$className -ne '#32770') { return $false }
+    return ([string]$title -match 'VNC Authentication|UltraVNC Authentication|Authentication|Password')
+}
+function global:Select-VncPasswordPrompt($windows, [int]$viewerPid, [datetime]$now, [datetime]$deadline) {   # $null once the wait is over, even if a window is sitting there
+    if ($viewerPid -le 0 -or $now -gt $deadline) { return $null }
+    foreach ($w in @($windows)) {
+        if (Test-VncPasswordPrompt ([int]$w.pid) ([string]$w.class) ([string]$w.title) $viewerPid) { return $w } }
+    return $null
+}
+function global:Get-VncExeLeaf([string]$exe) {   # last path segment. Backslash or slash, so a Windows path still splits on this host.
+    $t = [string]$exe; $i = [Math]::Max($t.LastIndexOf('\'), $t.LastIndexOf('/'))
+    if ($i -ge 0 -and $i -lt ($t.Length - 1)) { return $t.Substring($i + 1) }
+    return $t
+}
+function global:Select-VncStartedPid([int]$fromProcess, [int[]]$before, $running, [string]$exe) {   # the ProcessStartInfo id, else a new vncviewer.exe that was not running before the start
+    if ($fromProcess -gt 0) { return $fromProcess }
+    $leaf = Get-VncExeLeaf $exe
+    $bestId = 0; $bestT = [datetime]::MinValue
+    foreach ($p in @($running)) {
+        if (-not $p) { continue }
+        $id = 0; try { $id = [int]$p.Id } catch { $id = 0 }
+        if ($id -le 0 -or @($before) -contains $id) { continue }
+        if ([string]$p.Name -ne $leaf) { continue }
+        if ($p.PSObject.Properties['Path'] -and [string]$p.Path -and ([string]$p.Path -ine $exe)) { continue }
+        $t = [datetime]::MinValue
+        if ($p.PSObject.Properties['Started'] -and $p.Started) { try { $t = [datetime]$p.Started } catch { $t = [datetime]::MinValue } }
+        if ($bestId -eq 0 -or $t -gt $bestT) { $bestId = $id; $bestT = $t } }
+    return $bestId
+}
+function global:Get-VncViewerProcessList([string]$exe) {   # live list for the PID handoff. Tests replace this. Never reads a window's text.
+    $leaf = Get-VncExeLeaf $exe; $name = $leaf -replace '\.exe$', ''; $out = @()
+    try { foreach ($p in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
+        $path = ''; $started = [datetime]::MinValue
+        try { $path = [string]$p.Path } catch {}
+        try { $started = [datetime]$p.StartTime } catch {}
+        $out += [pscustomobject]@{ Id = [int]$p.Id; Name = $leaf; Path = $path; Started = $started } } } catch {}
+    return $out
+}
+function global:Resolve-VncViewerPid($proc, [string]$exe, [int[]]$before) {
+    $from = 0
+    if ($proc -is [System.Diagnostics.Process]) { try { $from = [int]$proc.Id } catch { $from = 0 } }
+    if ($from -gt 0) { return $from }
+    return (Select-VncStartedPid 0 $before (Get-VncViewerProcessList $exe) $exe)
+}
+function global:Get-VncVisibleWindowRows {   # pid, class, hwnd, title. Empty when BL.Waits is not loaded.
+    if (-not ('BL.Waits' -as [type])) { return @() }
+    $rows = @()
+    try { foreach ($line in @([BL.Waits]::ListVisibleWindows())) {
+        $parts = ([string]$line).Split([char]9)
+        if ($parts.Count -lt 4) { continue }
+        $hwnd = [IntPtr]::Zero; try { $hwnd = [IntPtr][int64]$parts[2] } catch { continue }
+        $title = [string]::Join([char]9, $parts[3..($parts.Count - 1)])
+        $rows += [pscustomobject]@{ pid = [int]$parts[0]; class = [string]$parts[1]; hwnd = $hwnd; title = $title } } } catch { return @() }
+    return $rows
+}
+function global:Enable-VncViewerForeground([int]$viewerPid) {
+    try { if ($viewerPid -gt 0 -and ('BL.Waits' -as [type])) { [void][BL.Waits]::AllowForeground($viewerPid) } } catch {}
+}
+function global:Show-VncPasswordPrompt($hwnd) {   # activate that dialog and ask it to focus its password edit. No keys, no paste, no read of the field.
+    try { if ($hwnd -and ($hwnd -ne [IntPtr]::Zero) -and ('BL.Waits' -as [type])) { [void][BL.Waits]::ActivatePrompt([IntPtr]$hwnd) } } catch {}
+}
+function global:Find-VncPasswordPrompt([int]$viewerPid, [int]$timeoutMs) {   # bounded poll. No BL.Waits, or no PID: give up at once.
+    if ($viewerPid -le 0 -or $timeoutMs -lt 0) { return $null }
+    if (-not ('BL.Waits' -as [type])) { return $null }
+    $deadline = [datetime]::UtcNow.AddMilliseconds($timeoutMs)
+    while ($true) {
+        $now = [datetime]::UtcNow
+        $hit = Select-VncPasswordPrompt (Get-VncVisibleWindowRows) $viewerPid $now $deadline
+        if ($hit) { return $hit }
+        if ($now -ge $deadline) { return $null }
+        Start-Sleep -Milliseconds 50 }
+}
 function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptblock]$OnEarlyExit) {
     $h = ([string](Get-VncRowHost $row)).Trim(); $p = Get-VncPort (Get-VncRowPort $row)   # v1.4.9: host/port read from the row whether it is a PSCustomObject, a hashtable or a picker view (.row)
     if (-not $h) { Write-LauncherLog 'VNC launch refused: empty host (nothing passed to the viewer)'; Show-VncNotice "This computer has no address, so the viewer wasn't started. Ask your administrator to check Setup > Allowed computers."; return $false }
@@ -3117,8 +3250,22 @@ function global:Start-VncViewer($btn, $row, [bool]$viewOnly, $owner, [scriptbloc
         $psi = New-VncStartInfo $exe $argLine   # v1.4.9: like a Win+R / manual start: ShellExecute, the viewer's own folder, one exact argument string
         Write-LauncherLog (Get-VncStartInfoLogText $psi $file)   # read back from the ProcessStartInfo right before Start(); temp .vnc redacted, never a password
         $ew = Get-VncElevatedWarning ([bool]$global:LauncherElevated); if ($ew -and $global:vncPicker) { $global:vncPicker.setStatus.Invoke($ew) }   # v1.4.9: an elevated viewer uses another settings file; still started as before
+        $expectPrompt = (-not $viewOnly) -or ($pw -eq 'none')   # Interact always asks. View only asks only when no password file was sent.
+        $beforeIds = @(); if ($expectPrompt) { foreach ($pre in @(Get-VncViewerProcessList $exe)) { $beforeIds += [int]$pre.Id } }
         $proc = Start-VncProcess $psi
         Write-LauncherLog ('VNC viewer start: method={0}' -f $global:VncStartMethod)
+        if ($expectPrompt) {
+            $vpid = Resolve-VncViewerPid $proc $exe $beforeIds
+            Enable-VncViewerForeground $vpid   # while this process may still set the foreground, before the dialog exists
+            $hit = Find-VncPasswordPrompt $vpid 2000
+            if ($hit) {
+                Write-LauncherLog ('VNC password prompt: found for pid ' + $vpid)
+                if ($viewOnly) { Show-VncPasswordPrompt $hit.hwnd; $global:VncPromptHwnd = [IntPtr]::Zero }   # picker stays open
+                else { $global:VncPromptHwnd = $hit.hwnd }
+            }   # Interact: activated after View Register closes
+            else {
+                $global:VncPromptHwnd = [IntPtr]::Zero
+                if ($vpid -gt 0) { Write-LauncherLog ('VNC password prompt: not found for pid ' + $vpid) } } }
         if ($null -eq $proc) { Write-LauncherLog ('VNC viewer start: no process object returned' + $(if ($file) { '; temp .vnc deleted at 8 s' } else { '' })) }   # CC Low: not 'early', no 'viewer closed'
         if ($file) { Remove-VncTempSoon $file $proc $OnEarlyExit; $file = $null }   # deleted 3 s after the viewer shows a window, or at 8 s
         return $true
@@ -3563,7 +3710,12 @@ function global:Restore-VncTiles($tiles, $was) { for ($k = 0; $k -lt @($tiles).C
 function global:Close-VncPickerAfterStart($win, [bool]$viewOnly, $started) {   # v1.4.11 (Charles 12:06 PM): Interact + a start that didn't throw -> close View Register; View only or any failure -> stay open
     if ($viewOnly -or -not ($started -is [bool] -and $started) -or -not $win) { return $false }   # strict: only a real [bool] $true
     Write-LauncherLog 'View Register closed after Interact start'
-    [void]$win.Dispatcher.BeginInvoke('Background', [Action]{ try { $win.Close() } catch {} }.GetNewClosure())   # after the click finishes; Closed still runs the watcher/worker cleanup, and the temp .vnc timer is not tied to the window
+    $hwnd = [IntPtr]::Zero
+    try { if ($global:VncPromptHwnd) { $hwnd = [IntPtr]$global:VncPromptHwnd } } catch {}
+    $global:VncPromptHwnd = [IntPtr]::Zero
+    [void]$win.Dispatcher.BeginInvoke('Background', [Action]{   # after the click finishes. Close first, then the password dialog, so the panel does not keep the keyboard. The temp .vnc timer is not tied to the window.
+        try { $win.Close() } catch {}
+        if ($hwnd -ne [IntPtr]::Zero) { Show-VncPasswordPrompt $hwnd } }.GetNewClosure())
     return $true
 }
 function global:Get-VncPickerReason([bool]$hasSelection) { if ($hasSelection) { '' } else { $global:VncTileSize.reason } }
