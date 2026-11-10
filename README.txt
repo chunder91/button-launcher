@@ -31,20 +31,25 @@ WHAT EACH BUTTON DOES
                        v1.4.12 review: after Shell.Application starts the
                        viewer, the launcher looks up that process by its
                        program path and start time, for at most 1.5 seconds.
-                       It does not read another program's command line. When
-                       that process is found, View only stays open until the
+                       The status line is shown before that lookup. It does
+                       not read another program's command line. A viewer that
+                       was already running is not treated as the one just
+                       started. When that
+                       process is found, View only stays open until the
                        viewer shows a window, then closes. If that process
                        quits before a window, View Register stays open and
-                       says "Password refused. Set it in Setup > View-only
+                       says "Couldn't connect. Check Setup > View-only
                        password." If the process cannot be found, View
                        Register closes after 8 seconds and that guidance is
                        written to the log only. A window that already showed
-                       is not later called a refused password. Interact uses
-                       the same process. The password box is brought forward
-                       only while View Register or the viewer is the window
-                       in front; otherwise the prompt flashes and View
-                       Register closes. If Interact's viewer quits first,
-                       View Register stays open and says to press F5.
+                       is not later treated as a failed password. Interact
+                       uses the same process. The password box is brought
+                       forward only while View Register or the viewer is the
+                       window in front. Otherwise the prompt flashes, View
+                       Register stays open, and the status says the password
+                       box is waiting in another window. If Interact's viewer
+                       quits first, View Register stays open and says
+                       "Viewer closed early. Press F5, then try again."
                        v1.4.12 review (not released): the list shows Online,
                        Offline, or Not checked from a short VNC-port check.
                        A line under the list says Online means VNC answered,
