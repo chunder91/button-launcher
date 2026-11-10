@@ -405,7 +405,7 @@ Check 'picker: allowed list only (Read-VncAllowed), no scan, no favourites' ($pk
 Check 'picker: Rescan, Add and More hidden' ($pk -match "foreach \(\`$n in 'Rescan', 'Add', 'More'\) \{ \`$w.FindName\(\`$n\).Visibility = 'Collapsed' \}")
 Check 'picker: Enter = View only, Ctrl+Enter = Interact, double-click = View only, F5 = online check, Esc closes' ($pk -match "'Return' -and \`$ctrl\) \{ \`$_.Handled = \`$true; \`$ui.go.Invoke\(\`$false\)" -and $pk -match 'MouseDoubleClick\(\{ if \(\$lv.SelectedItem\) \{ \$ui.go.Invoke\(\$true\)' -and $pk -match "'F5'\) \{ \`$_.Handled = \`$true; \`$ui.startCheck.Invoke\(\)" -and $pk -match "'Escape'")
 Check 'picker: online check uses 300 ms (VncTimeoutMs) and only the allowed entries' ($pk -match 'VncAllowedCheckScript\).AddArgument\(\$items\).AddArgument\(\$global:VncTimeoutMs\)')
-Check 'picker: closing stops the check' ($pk -match 'Add_Closed\(\{ \[void\]\(Close-VncReachCheck \$ui.reach\); \$ui.stopCheck.Invoke\(\)')
+Check 'picker: closing stops the check and the prompt timer' ($pk -match 'Add_Closed\(\{ Stop-VncPromptWatch \$global:VncPromptWatch; \[void\]\(Close-VncReachCheck \$ui.reach\); \$ui.stopCheck.Invoke\(\)')
 $rm = & $fn 'New-VncRowMenu'; Check 'row menu: allowed mode has only View only + Interact' ($rm -match 'if \(\$ui.allowedMode\) \{ \$m.Items.RemoveAt')
 # View only never asks; password for any allowed row when saved
 $sv = & $fn 'Start-VncViewer'
@@ -614,7 +614,9 @@ function global:Remove-VncViewOnlySecret { }; function global:Test-VncSecret { $
 $rmSrc = [regex]::Match($pd, '\$bNone\.Add_Click\(\{(.*?)\}\.GetNewClosure\(\)\)', 'Singleline').Groups[1].Value
 $rmRun = { param($left) $global:secretLeft = $left; $global:logs = @(); $global:said = $null
     $pb = [pscustomobject]@{} | Add-Member -PassThru ScriptMethod Clear { } | Add-Member -PassThru ScriptMethod Focus { }
-    $tb = [pscustomobject]@{ Text = 'x' }; $d = $null; function global:Test-VncResetConfirm { $true }
+    $tb = [pscustomobject]@{ Text = 'x' } | Add-Member -PassThru ScriptMethod Focus { }; $reveal = @{ on = $false }
+    $focusPw = { if ($reveal.on) { [void]$tb.Focus() } else { [void]$pb.Focus() } }
+    $d = $null; function global:Test-VncResetConfirm { $true }
     $bNone = [pscustomobject]@{ Visibility = 'Visible' }; $res = @{ saved = $true }; $say = { param($m, $c) $global:said = $m }
     & ([scriptblock]::Create($rmSrc)); @{ vis = $bNone.Visibility; saved = $res.saved } }
 $rf = & $rmRun $true; $rfSaid = $global:said; $rfLog = $global:logs
@@ -814,6 +816,26 @@ $global:pidSnap = @($global:pidSnap) + @([pscustomobject]@{ Id = 42; Name = 'vnc
 function global:Get-VncVisibleWindowRows { @([pscustomobject]@{ pid = 42; class = '#32770'; title = 'VNC Authentication'; hwnd = 5 }) }
 Check 'prompt watch: a later snapshot adopts only the new viewer and can see its dialog' ((Update-VncPromptWatch $st ([datetime]::UtcNow)) -eq 'found' -and $st.pid -eq 42 -and $st.hit.hwnd -eq 5)
 Invoke-Expression (& $fn 'Get-VncViewerProcessList'); Invoke-Expression (& $fn 'Get-VncVisibleWindowRows')
+Invoke-Expression (& $fn 'Stop-VncPromptWatch'); Invoke-Expression (& $fn 'Complete-VncPromptWatch'); Invoke-Expression (& $fn 'Enable-VncPickerTiles')
+$stopped = $false
+$fakeTimer = [pscustomobject]@{ }
+$fakeTimer | Add-Member ScriptMethod Stop { $script:stopped = $true }
+$oldWatch = @{ id = 'old'; done = $false; timer = $fakeTimer }
+$global:VncPromptWatch = $oldWatch
+Stop-VncPromptWatch $oldWatch
+Check 'prompt watch: Stop releases the timer and drops that watch' ($stopped -and $oldWatch.done -and $null -eq $global:VncPromptWatch)
+$global:tieLog = @(); function global:Write-LauncherLog($m) { $global:tieLog += [string]$m }
+$global:VncPromptTie = $true
+$tieWatch = @{ id = 'tie'; done = $false; timer = $null; pid = 0; viewOnly = $true; win = $null; hit = $null }
+$global:VncPromptWatch = $tieWatch
+Complete-VncPromptWatch $tieWatch 'timeout'
+Check 'prompt watch: a same-start tie is logged without a path or a password' (($global:tieLog -join '|') -eq 'VNC password prompt: refused, two viewers started together' -and ($global:tieLog -join '|') -notmatch '1234|:\\')
+$sw = & $fn 'Start-VncPromptWatch'
+Check 'prompt watch: a new launch stops the previous timer, and a failed tick stops it and re-enables the tiles' ($sw.IndexOf('Stop-VncPromptWatch $global:VncPromptWatch') -ge 0 -and $sw.IndexOf('Stop-VncPromptWatch $global:VncPromptWatch') -lt $sw.IndexOf('$global:VncPromptWatch = $state') -and $sw.Contains("Write-LauncherLog 'VNC password prompt: watch failed'") -and $sw.Contains('finally { if ($failed) { Stop-VncPromptWatch $state; Enable-VncPickerTiles $state.win } }') -and $src.Contains('Add_Closed({ Stop-VncPromptWatch $global:VncPromptWatch'))
+$global:tileProbe = @{ list = [pscustomobject]@{ SelectedItem = 'x' }; view = [pscustomobject]@{ IsEnabled = $false }; interact = [pscustomobject]@{ IsEnabled = $false } }
+$tileWin = [pscustomobject]@{}; $tileWin | Add-Member ScriptMethod FindName { param($n) $global:tileProbe[$n.ToLower()] }
+Enable-VncPickerTiles $tileWin
+Check 'prompt watch: re-enable follows the selection' ($global:tileProbe.view.IsEnabled -and $global:tileProbe.interact.IsEnabled)
 $ws = [regex]::Match($src, "(?s)\`$global:WaitsSource = @'.*?'@").Value
 $focusSrc = (& $fn 'Start-VncViewer') + (& $fn 'Show-VncPasswordPrompt') + $ws
 Check 'prompt focus: Interact or a View only fallback only; no typing into the field' ($focusSrc -match '\$expectPrompt = \(-not \$viewOnly\) -or \(\$pw -eq ''none''\)' -and $focusSrc -match 'AllowSetForegroundWindow' -and $focusSrc -match '0x0028' -and $focusSrc -notmatch 'SendKeys|keybd_event|SendInput|SetWindowText|WM_SETTEXT|WM_CHAR')
