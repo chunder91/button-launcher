@@ -28,14 +28,23 @@ WHAT EACH BUTTON DOES
                        the viewer asks. Interact uses UltraVNC's own
                        password box.
                        v1.4.11: Interact closes View Register once the viewer starts.
-                       v1.4.12 review: View only with a password file keeps
-                       View Register open, saying "Starting View only…", until
-                       the viewer shows a window or the 8 second check ends.
-                       If the viewer quits before that, the window stays open
-                       and says how to set the View-only password. When a
-                       password box is expected, the status says the box comes
-                       next, and View Register stays open until that box is
-                       focused, or for about 7 seconds, and then closes.
+                       v1.4.12 review: after Shell.Application starts the
+                       viewer, the launcher looks up that process by its
+                       program path and start time, for at most 1.5 seconds.
+                       It does not read another program's command line. When
+                       that process is found, View only stays open until the
+                       viewer shows a window, then closes. If that process
+                       quits before a window, View Register stays open and
+                       says "Password refused. Set it in Setup > View-only
+                       password." If the process cannot be found, View
+                       Register closes after 8 seconds and that guidance is
+                       written to the log only. A window that already showed
+                       is not later called a refused password. Interact uses
+                       the same process. The password box is brought forward
+                       only while View Register or the viewer is the window
+                       in front; otherwise the prompt flashes and View
+                       Register closes. If Interact's viewer quits first,
+                       View Register stays open and says to press F5.
                        v1.4.12 review (not released): the list shows Online,
                        Offline, or Not checked from a short VNC-port check.
                        A line under the list says Online means VNC answered,
