@@ -325,7 +325,13 @@ Check 'D2: custom colour derives 7 hex stops, rest top = its own colour' (@($cd)
 
 # ---- v1.3.0 round 3 (Kern) ----
 Check 'Kern M1: glow Margin -6, radius rad+6, radial 100% at 0.45 -> 0, RadiusX 0.62 / RadiusY 0.75' ($tileSrc -match "\`$glow\.Margin = '-6'" -and $tileSrc -match 'CornerRadius = \[string\]\(\$rad \+ 6\)' -and $tileSrc -match 'New-GlowBrush \$f\[6\] 1\.0 0\.45 0\.62 0\.75' -and $tileSrc -match 'ClipToBounds = \$false')
-Check 'Kern M2: Restart Computer uses the arrows art; no plug plate remains' ($src -notmatch "#D9FFFFFF" -and $src -notmatch '\$pl\.Width = 28' -and $src -notmatch 'power\\\.png\$' -and (Get-FileHash (Join-Path $root 'images/power.png')).Hash -eq (Get-FileHash '/home/box/shared/button-launcher/art/fluent-3d/power-48.png').Hash)
+# Kern M2 compares images/power.png with the host fixture
+# /home/box/shared/button-launcher/art/fluent-3d/power-48.png. That file is not in the repo.
+# A machine that does not have it reports SKIP. It does not pass, and it does not stop the rest of the file.
+$powerArt = '/home/box/shared/button-launcher/art/fluent-3d/power-48.png'
+if ([IO.File]::Exists($powerArt)) {
+Check 'Kern M2: Restart Computer uses the arrows art; no plug plate remains' ($src -notmatch "#D9FFFFFF" -and $src -notmatch '\$pl\.Width = 28' -and $src -notmatch 'power\\\.png\$' -and (Get-FileHash (Join-Path $root 'images/power.png')).Hash -eq (Get-FileHash $powerArt).Hash)
+} else { 'SKIP  Kern M2 power art hash (fixture missing: /home/box/shared/button-launcher/art/fluent-3d/power-48.png). This is SKIP, not PASS.' }
 Check 'Kern 3 / N2: inner corners 16 everywhere, none left at 14' ($src -match "'0,0,16,0'" -and $src -match "'16,0,0,0'" -and $src -notmatch "'0,0,14,0'|'14,0,0,0'|'0,0,0,14'|'0,14,0,0'")
 Check 'Kern 4 + v1.4.8 fix 1: Version 11 subtitle 12 px Regular, line 14, Opacity 1 (was 85%)' ($src -match 'New-Label \$lab\.sub \$fg 12; \$sl\.FontWeight = \[System\.Windows\.FontWeights\]::Normal; \$sl\.LineHeight = 14; \$sl\.Opacity = 1; \$sl\.Name = ''subLabel''')
 Check 'Kern 5: Segoe UI Variable only when installed, else Segoe UI' ($src -match "if \(\`$f\.Source -eq 'Segoe UI Variable'\)" -and $src -match "return 'Segoe UI'\s*\r?\n\}" -and $src -match 'FontFamily \(Get-UiFontName\)')

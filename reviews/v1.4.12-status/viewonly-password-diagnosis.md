@@ -2,7 +2,7 @@
 
 Diagnosed at `0c0968dbe56537f96d9a0e515bf11f4f0e177e6b` (same behavior as reviewed v1.4.11 `37ea47df364fdfad29b07703fdd76fcbb925fdf4` for this path, plus the later freshness gate). The line numbers below are from that commit, before the fix. No password file on this machine was opened.
 
-Charles (Nov 9, 6:56 PM ET): View only should use password 1234 unless he overrides it from the panel. When he tried it, the viewer asked for a password the same way Interact does.
+Charles (Nov 9, 6:56 PM ET): View only should use the built-in default unless he overrides it from the panel. When he tried it, the viewer asked for a password the same way Interact does.
 
 ## What the viewer is
 
@@ -102,7 +102,7 @@ The fix, still least privilege and still not typing into the field:
 
 - When Interact starts, or when View only had to fall back to a prompt (no password file), snapshot `vncviewer.exe`, start the viewer the same way, then take the new PID (`Process.Id` when ProcessStartInfo was used, otherwise a new process with that exe path that was not in the snapshot).
 - Call `AllowSetForegroundWindow` for that PID while the launcher is still allowed to grant it, before waiting for the dialog.
-- Poll at most 2 seconds. A window counts only when its process id is that PID, its class is `#32770`, and its title says Authentication or Password. Any other window of that process is ignored. No `BL.Waits` type, or no PID: stop at once and leave the old behaviour.
+- A dispatcher timer polls for up to 2 seconds, so the UI thread is not asleep. Each tick retries the process list. A candidate must be a new `vncviewer.exe` with that exact path and must not be a PID from before the start. Two new processes with the same start time are refused. A window counts only when its process id is that PID, its class is `#32770`, and its title says Authentication or Password. Any other window of that process is ignored. No window to attach the timer to: one pass, no wait.
 - Interact closes View Register first, in the same dispatcher turn, and then activates that dialog. View only that is still showing the picker activates it without closing. Activation is `SetForegroundWindow` on the dialog, then `WM_NEXTDLGCTL` so the dialog itself focuses its password edit (`ES_PASSWORD` if one is present, otherwise the last visible Edit). The edit's text is never read. Nothing is typed, pasted, or sent with SendKeys.
 - If the dialog is not there when the 2 seconds end, log `not found` and close (Interact) or stay (View only) exactly as before.
 
