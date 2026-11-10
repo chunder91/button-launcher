@@ -145,7 +145,7 @@ $v = Get-VncRowView $rows[1] $false $false; Check "cached row says 'Earlier'; po
 Check 'Kern 6/L5: long name in the row has an ellipsis' ((Get-VncRowView $rows[2] $true $false).nameText.EndsWith([string][char]0x2026))
 
 # --- L4: password file only to an RFB host ---
-Check 'no saved password: never a file' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $false))
+Check 'a row with no host never gets a password file' (-not (Test-VncUsePassword ([pscustomobject]@{ banner = 'RFB 003.889' }) $false))
 
 # --- H1: adapters, ranges, confirmation, favourites-first ---
 Check 'H1: Ethernet with gateway in its subnet' (Test-VncAdapter 'Ethernet' 'Intel(R) Ethernet Connection I219-LM' 'Ethernet' '192.168.1.37' 24 @('192.168.1.1'))
@@ -251,7 +251,7 @@ Check 'viewer path must be a local fixed path' ((& $fn 'Find-VncViewer') -match 
 Check 'secret: DPAPI CurrentUser + entropy, plaintext zeroed' ($sv -match "ProtectedData\]::Protect\(\`$raw, \`$global:VncEntropy, 'CurrentUser'\)" -and $sv -match 'ZeroFreeBSTR' -and (& $fn 'Get-VncSecretHex') -match 'Array\]::Clear')
 Check 'secret: separate file, not buttons.json' ((& $fn 'Get-VncSecretPath') -match "'vnc-viewonly\.dat'")
 $sv2 = & $fn 'Start-VncViewer'
-Check 'v1.4.4: only View only reads the saved password, only for an RFB-greeted host, into a temp .vnc' ($sv2.Contains('if ($viewOnly -and (Test-VncUsePassword $row (Test-VncSecret))) { $hex = Get-VncSecretHex; if ($hex) { $file = New-VncTempConfig $h $p $hex') -and $sv2.Contains('Remove-VncTempSoon $file $proc $OnEarlyExit'))
+Check 'v1.4.12: View only writes the temp .vnc only inside the view-only branch' ($sv2.Contains('if ($viewOnly)') -and $sv2.Contains('if ($launch.use) { $hex = [string]$launch.hex; $file = New-VncTempConfig $h $p $hex') -and $sv2.Contains('Remove-VncTempSoon $file $proc $OnEarlyExit') -and $sv2 -notmatch 'Show-VncPasswordDialog')
 Check 'temp .vnc: random folder, protected ACL for this user, CreateNew, deleted soon + leftovers' ($tcfg -match "bl-vnc-' \+ \[guid\]" -and $tcfg -match 'SetAccessRuleProtection\(\$true, \$false\)' -and $tcfg -match 'CreateNew' -and $sv2 -match 'Remove-VncTempSoon' -and $pk -match 'Remove-VncTempLeftovers')
 Check 'v1.4.4: legacy start-up delete targets only the v1.4.1 file; the new store is another name in another folder' ($src.Contains('try { Clear-VncSecret } catch {}') -and ([regex]::Matches($src, 'Clear-VncSecret')).Count -eq 2 -and (& $fn 'Clear-VncSecret') -notmatch 'Get-Content|ReadAll|Unprotect|Get-VncSecretHex|ViewOnly' -and (& $fn 'Get-VncSecretPath') -match "'vnc-viewonly\.dat'" -and (& $fn 'Get-VncViewOnlyPath') -match "'vnc-viewonly-v2\.dat'" -and (& $fn 'Get-VncViewOnlyDir') -match "LocalApplicationData'\)\) 'ButtonLauncher'")
 $cvs = $ast.Find({ param($x) $x -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -eq 'global:Clear-VncSecret' }, $true).Extent.Text; Invoke-Expression $cvs
@@ -468,8 +468,8 @@ Check 'v1.4.2: exact final args, View only and Interact, address and name' ((((G
 # --- ClaudeCode FIX-FIRST on c202b8b ---
 $on = Get-VncAllowedRows $t.list @{ '192.168.1.21:5900' = 'RFB 003.008'; 'REG2:5901' = 'SSH-2.0-x' } $false
 Check 'CC MED-1: online allowed row carries the RFB banner + session -> saved password used (usePassword True)' ($on[0].row.banner -eq 'RFB 003.008' -and $on[0].row.session -and (Test-VncUsePassword $on[0].row $true))
-Check 'CC MED-1: a non-RFB answer is Offline (the check finished) and gets no password' ($on[1].seen -eq 'Offline' -and $on[1].statusKind -eq 'offline' -and -not $on[1].row.session -and -not (Test-VncUsePassword $on[1].row $true))
-Check 'CC MED-1: nothing saved -> no password and no launcher prompt' (-not (Test-VncUsePassword $on[0].row $false) -and (& $fn 'Start-VncViewer') -notmatch 'Show-VncPasswordDialog')
+Check 'CC MED-1: a non-RFB answer is Offline, and View only still may use the password file' ($on[1].seen -eq 'Offline' -and $on[1].statusKind -eq 'offline' -and -not $on[1].row.session -and (Test-VncUsePassword $on[1].row $true))
+Check 'CC MED-1: nothing saved still passes the password gate, and the launcher has no password prompt of its own' ((Test-VncUsePassword $on[0].row $false) -and (& $fn 'Start-VncViewer') -notmatch 'Show-VncPasswordDialog')
 Check 'CC MED-1: reachability check queues key, kind and banner; only an RFB greeting is Online' ($src -match 'Enqueue\(@\{ key = \$b.key; kind = \$kind; banner = \$banner \}\)' -and (& $fn 'Get-VncReachOutcome') -match 'Test-VncBannerText')
 Check 'CC LOW-L: a folder named vnc-allowed.json(.tmp) -> exit 6' ($global:VncAllowedWriterScript -match "Test-Path -LiteralPath \`$file -PathType Container\) -or \(Test-Path -LiteralPath \`$tmp -PathType Container\)\) \{ exit 6 \}")
 Check 'CC LOW-L: planted .tmp in an untrusted folder goes aside with the folder; CreateNew never opens an old .tmp' ($global:VncAllowedWriterScript -match 'CreateNew' -and $global:VncAllowedWriterScript -match '\.untrusted-')
@@ -478,7 +478,7 @@ Check 'v1.4.4: the elevated writer reports the failing step (20+step), never a b
 Check 'L6/M43-I2: ports below 100 refused (a single colon would mean a display number)' ($(try { [void](Get-VncViewerArgs 'REG1' 99 $true $null); $false } catch { $true }) -and ((Get-VncViewerArgs 'REG1' 100 $false $null) -join ' ') -ceq 'REG1:100 -autoscaling' -and (& $fn 'Start-VncViewer').Contains('if ($p -lt 100)'))
 Check 'M43-I1: step messages say the old list is kept' ((Get-VncAllowedSaveError 24) -like '*old list (if any) is kept*' -and (Get-VncAllowedSaveError 24) -notlike '*Nothing else*')
 $rIp = [pscustomobject]@{ host = '192.168.20.51'; port = 5900; session = $true; banner = 'RFB 003.008' }; $rNm = [pscustomobject]@{ host = 'POS1'; port = 5900; session = $true; banner = 'RFB 003.008' }
-Check 'LJ M44-L1: saved view-only password only for a literal IPv4 row (a name lets the viewer ask)' ((Test-VncUsePassword $rIp $true) -and -not (Test-VncUsePassword $rNm $true) -and -not (Test-VncUsePassword $rIp $false) -and -not (Test-VncUsePassword ([pscustomobject]@{ host = 'pos1.local'; session = $true; banner = 'RFB 003.008' }) $true))
+Check 'v1.4.12: a name on a usable host still passes the password gate (the allowlist is separate)' ((Test-VncUsePassword $rIp $true) -and (Test-VncUsePassword $rNm $true) -and (Test-VncUsePassword $rIp $false) -and (Test-VncUsePassword ([pscustomobject]@{ host = 'pos1.local'; session = $true; banner = 'RFB 003.008' }) $true))
 Check 'LJ M44-I2: ports below 100 refused in endpoints, allowed list, writer and favorites' ($null -eq (ConvertTo-VncEndpoint 'REG1:99') -and $null -eq (ConvertTo-VncEndpoint 'REG1::1') -and (ConvertTo-VncEndpoint 'REG1:100').port -eq 100 -and (ConvertTo-VncAllowedList @([pscustomobject]@{ name = 'A'; host = '10.0.0.1'; port = 99 })).bad -eq 1 -and @((ConvertTo-VncAllowedList @([pscustomobject]@{ name = 'A'; host = '10.0.0.1'; port = 100 })).list).Count -eq 1 -and $global:VncAllowedWriterScript.Contains('$p -lt 100 -or $p -gt 65535) { exit 3 }') -and (& $fn 'Get-VncState').Contains('(Get-VncPort $f.port) -lt 100') -and (& $fn 'Set-VncFavorite').Contains('$port -lt 100'))
 Check 'CC L7: host and IPv4 checks refuse a trailing newline' (-not (Test-VncHost "reg1`n") -and -not (Test-VncIPv4 "1.2.3.4`n") -and -not (Test-VncHost "1.2.3.4`n") -and (Test-VncHost 'reg1') -and (Test-VncIPv4 '1.2.3.4'))
 $qa = @(Get-VncViewerArgs '192.168.20.51' 5900 $true 'C:\Users\O Brien\AppData\Local\Temp\bl-vnc-1\c.vnc')
@@ -586,11 +586,9 @@ $ipRow = [pscustomobject]@{ name = 'POS1'; host = '192.168.20.51'; port = 5900; 
 $nmRow = [pscustomobject]@{ name = 'POS1'; host = 'POS1'; port = 5900; banner = 'RFB 003.008'; session = $true }
 $offRow = [pscustomobject]@{ name = 'POS2'; host = '192.168.20.52'; port = 5900; banner = ''; session = $false }
 Check 'v1.4.6 Squint 1: saved password + IP row that answered -> no fallback message' ((Get-VncPasswordFallbackText $ipRow $true) -eq '')
-Check 'v1.4.6 Squint 1: nothing saved -> says none is saved and where to set it' ((Get-VncPasswordFallbackText $ipRow $false) -like 'No view-only password is saved*Setup > View-only password*')
-Check 'v1.4.6 Squint 1: hostname row -> says listed by name, list it by IP' ((Get-VncPasswordFallbackText $nmRow $true) -like "POS1 is listed by name, so the saved view-only password isn't sent*by IP address in Allowed computers.")
-Check 'v1.4.6 Squint 1: no answer this session -> says press F5' ((Get-VncPasswordFallbackText $offRow $true) -like 'POS2 has not been checked yet*F5*')
+Check 'v1.4.12: nothing saved, a hostname, and an unchecked row do not make View only ask' ((Get-VncPasswordFallbackText $ipRow $false) -eq '' -and (Get-VncPasswordFallbackText $nmRow $true) -eq '' -and (Get-VncPasswordFallbackText $offRow $true) -eq '')
 $sv6 = & $fn 'Start-VncViewer'
-Check 'v1.4.6 Squint 1: Start-VncViewer logs and shows the reason only for View only without a sent password; never $hex/$pb in it' ($sv6.Contains("`$why = if (`$viewOnly -and `$pw -ne 'saved') { Get-VncPasswordFallbackText `$row (Test-VncSecret) }") -and $sv6.Contains("Write-LauncherLog ('VNC view only: viewer will ask: ' + `$why)") -and $sv6.Contains('$global:vncPicker.setStatus.Invoke($why)') -and (& $fn 'Get-VncPasswordFallbackText') -notmatch '\$hex|Get-VncSecretHex|SecurePassword')
+Check 'v1.4.6 Squint 1: Start-VncViewer logs the ask reason only when no password file is sent; never $hex/$pb in it' ($sv6.Contains("`$why = if (`$viewOnly -and `$pw -eq 'none')") -and $sv6.Contains("Write-LauncherLog ('VNC view only: viewer will ask: ' + `$why)") -and $sv6.Contains('$global:vncPicker.setStatus.Invoke($why)') -and (& $fn 'Get-VncPasswordFallbackText') -notmatch '\$hex|Get-VncSecretHex|SecurePassword')
 Check 'v1.4.6 Squint 2: Find-VncViewer and picker open re-search while not found' ((& $fn 'Find-VncViewer').Contains('Initialize-VncViewerScan -Retry') -and (& $fn 'Show-VncPicker').Contains('if ($global:VncViewerScan -and -not $global:VncViewerScan.path) { [void](Initialize-VncViewerScan -Retry) }'))
 $global:VncViewerScan = $null; $global:scanCalls = 0; $global:VncViewerRetrySec = 0
 function global:Find-VncViewerInProgramFiles { $global:scanCalls++; if ($global:scanCalls -ge 2) { @{ path = 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe'; how = 'known'; others = @() } } else { @{ path = ''; how = ''; others = @() } } }
@@ -600,7 +598,7 @@ $a1 = Initialize-VncViewerScan; $a2 = Initialize-VncViewerScan; $a3 = Initialize
 Check 'v1.4.6 Squint 2: cached not-found is reused without -Retry, searched again with -Retry, and a found result is cached' (-not $a1.path -and -not $a2.path -and $a3.path -like '*vncviewer.exe' -and $a4.path -like '*vncviewer.exe' -and $global:scanCalls -eq 2)
 Check 'v1.4.6 Kern: Remove password visible only when saved' ((Get-VncRemoveButtonVisibility $true) -eq 'Visible' -and (Get-VncRemoveButtonVisibility $false) -eq 'Collapsed')
 $pd = & $fn 'Show-VncPasswordDialog'
-Check 'v1.4.6 Kern: dialog has Password label 14 px #FFFFFF (0,0,0,8), field 0,0,0,8, 12 px #B4B4BC note, #B4B4BC Assertive status 0,0,0,16, Remove password hidden unless saved' ($pd.Contains("New-D2Label 'Password' '#FFFFFF' 14; `$lb.Margin = '0,0,0,8'") -and $pd.Contains("`$pf.Margin = '0,0,0,8'") -and $pd.Contains("Only used for computers listed by IP address. UltraVNC uses only the first 8 characters.' '#B4B4BC' 12") -and $pd.Contains("`$st = New-D2Label '' '#B4B4BC' 12; `$st.Margin = '0,0,0,16'") -and $pd.Contains("SetLiveSetting(`$st, 'Assertive')") -and $pd.Contains("New-D2Button 'Remove password' 'Chip'") -and $pd.Contains('$bNone.Visibility = Get-VncRemoveButtonVisibility $has') -and $pd -notmatch "'No password'|#A0A0A0" -and $pd.Contains('Saved password removed. View only will ask for one.'))
+Check 'v1.4.6 Kern: dialog has Password label 14 px #FFFFFF (0,0,0,8), field 0,0,0,8, 12 px #B4B4BC note, #B4B4BC Assertive status 0,0,0,16, Clear hidden unless an override is saved' ($pd.Contains("New-D2Label 'Password' '#FFFFFF' 14; `$lb.Margin = '0,0,0,8'") -and $pd.Contains("`$pf.Margin = '0,0,0,8'") -and $pd.Contains("Used for View only on allowed computers. UltraVNC uses only the first 8 characters.' '#B4B4BC' 12") -and $pd.Contains("`$st = New-D2Label '' '#B4B4BC' 12; `$st.Margin = '0,0,0,16'") -and $pd.Contains("SetLiveSetting(`$st, 'Assertive')") -and $pd.Contains("New-D2Button 'Clear' 'Chip'") -and $pd.Contains('$bNone.Visibility = Get-VncRemoveButtonVisibility $has') -and $pd -notmatch "'No password'|#A0A0A0|1234" -and $pd.Contains('Override cleared. View only uses the built-in default.'))
 Check 'LJ M46-I2: Get-VncPort/ConvertTo-VncEndpoint use [0-9] and \A..\z' ((& $fn 'Get-VncPort').Contains("'\A[0-9]{1,5}\z'") -and (& $fn 'ConvertTo-VncEndpoint').Contains("'\A([^:]+)::?([0-9]+)\z'") -and -not (Get-VncPort ([string][char]0x0661 + '5900')) -and (Get-VncPort '5900') -eq 5900)
 $global:AppVersion = '1.4.12'; Invoke-Expression (& $fn 'Get-LauncherVersionText')
 $mv = $src.IndexOf('$ver.IsEnabled = $false; [void]$setup.Items.Add($ver)'); $ms = $src.IndexOf("Add-MenuItem `$setup 'Set up this PC...'")
@@ -620,8 +618,8 @@ $rmRun = { param($left) $global:secretLeft = $left; $global:logs = @(); $global:
     & ([scriptblock]::Create($rmSrc)); @{ vis = $bNone.Visibility; saved = $res.saved } }
 $rf = & $rmRun $true; $rfSaid = $global:said; $rfLog = $global:logs
 $ro = & $rmRun $false; $roSaid = $global:said; $roLog = $global:logs
-Check 'LJ M47-I1: Remove password rechecks; still saved -> failure message, button stays, log "remove failed"' ($rfSaid -like "Couldn't remove it.*still saved*" -and $rf.vis -eq 'Visible' -and $rf.saved -and $rfLog -contains 'view-only password: remove failed (still saved)' -and ($rfLog -join ' ') -notmatch 'hex|Secure')
-Check 'LJ M47-I1: removed -> success message, button hidden, log "none"' ($roSaid -eq 'Saved password removed. View only will ask for one.' -and $ro.vis -eq 'Collapsed' -and -not $ro.saved -and $roLog -contains 'view-only password: none')
+Check 'LJ M47-I1: Clear rechecks; still saved -> failure message, button stays, log "clear failed"' ($rfSaid -like "Couldn't remove it.*still saved*" -and $rf.vis -eq 'Visible' -and $rf.saved -and $rfLog -contains 'view-only password: clear failed (still saved)' -and ($rfLog -join ' ') -notmatch 'hex|Secure|1234')
+Check 'v1.4.12: Clear -> success message, button hidden, log "default"' ($roSaid -eq 'Override cleared. View only uses the built-in default.' -and $ro.vis -eq 'Collapsed' -and -not $ro.saved -and $roLog -contains 'view-only password: default' -and ($roLog -join ' ') -notmatch '1234')
 Check 'CC N3: Get-VncPrefix / Get-VncFileVersion use [0-9] (non-ASCII digits refused)' ((& $fn 'Get-VncPrefix') -notmatch '\\d' -and (& $fn 'Get-VncFileVersion') -notmatch '\\d' -and (Get-VncPrefix ([string][char]0x0662 + '4')) -eq 24 -and (Get-VncPrefix '23') -eq 23 -and (Get-VncFileVersion ([string][char]0x0661 + '.2')) -eq [version]'0.0' -and (Get-VncFileVersion '1.4.4.0') -eq [version]'1.4.4.0')
 # --- v1.4.7 ---
 $allA = New-Object object[] 4; $allA[0] = @(Get-VncViewerArgs '192.168.20.51' 5900 $false $null); $allA[1] = @(Get-VncViewerArgs '192.168.20.51' 5900 $true $null); $allA[2] = @(Get-VncViewerArgs '192.168.20.51' 5900 $true 'C:\T\bl-vnc-1\c.vnc'); $allA[3] = @(Get-VncViewerArgs 'REG1' 5901 $true $null)   # v1.4.9: kept as arrays (Interact is now one element)
@@ -634,13 +632,41 @@ Check 'CC D1: scan age: clock moved back or missing = expired; recent = small' (
 Check 'CC I1: chip drop handler uses [0-9] with \A..\z' ($src.Contains("'\Abl-chip:([0-9]{1,9})\z'") -and $src -notmatch "bl-chip:\(\\d")
 Check 'CC I2: viewer version part over int32 -> 0.0, no throw' ((Get-VncFileVersion '99999999999.1') -eq [version]'0.0' -and (Get-VncFileVersion '1.5.0.0') -eq [version]'1.5.0.0')
 # --- v1.4.9: the real View Register handler path (allowed list -> picker rows -> SelectedItem.row -> Start-VncViewer -> Start-Process) ---
-foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'Get-VncAllowedRows', 'Start-VncViewer', 'Get-VncRowHost', 'Get-VncRowPort', 'Get-VncArgLine', 'Show-VncNotice', 'Get-VncViewerDir', 'Get-VncProcState', 'Get-VncElevatedWarning', 'Get-LauncherStartLogText', 'Test-LauncherElevated', 'Get-LauncherParentChain', 'New-VncStartInfo', 'Get-VncStartInfoLogText') { Invoke-Expression (& $fn $n) }
+foreach ($n in 'Test-VncAllowedName', 'Test-VncAllowedHost', 'ConvertTo-VncAllowedList', 'ConvertFrom-VncAllowedJson', 'Read-VncAllowed', 'Test-VncAllowedTarget', 'Get-VncViewOnlyLaunch', 'Get-VncViewOnlyDefaultBytes', 'Get-VncViewOnlyMaterial', 'Get-VncAllowedRows', 'Start-VncViewer', 'Get-VncRowHost', 'Get-VncRowPort', 'Get-VncArgLine', 'Show-VncNotice', 'Get-VncViewerDir', 'Get-VncProcState', 'Get-VncElevatedWarning', 'Get-LauncherStartLogText', 'Test-LauncherElevated', 'Get-LauncherParentChain', 'New-VncStartInfo', 'Get-VncStartInfoLogText') { Invoke-Expression (& $fn $n) }
 $global:VncAllowedMax = 50
 $global:t9 = @{ sp = @(); log = @(); box = @() }
 function global:Find-VncViewer($b) { 'C:\Program Files\uvnc bvba\UltraVNC\vncviewer.exe' }
 function global:Get-VncViewerInfo($e) { @{ product = 'UltraVNC'; version = '1.5.0.0'; ultra = $true } }
 function global:Write-LauncherLog($t) { $global:t9.log += [string]$t }
 function global:Test-VncSecret { $false }
+$defHex = ConvertTo-VncObfuscated (Get-VncViewOnlyDefaultBytes)
+$plain = [Text.Encoding]::ASCII.GetString((Get-VncViewOnlyDefaultBytes))
+Check 'default view-only password is the built-in value' ($plain -eq '1234' -and $defHex -match '^[0-9a-f]{16}$')
+$matD = Get-VncViewOnlyMaterial
+Check 'no override: View only material is the default' ($matD.kind -eq 'default' -and $matD.hex -eq $defHex)
+function global:Test-VncSecret { $true }
+function global:Get-VncSecretHex { '0123456789abcdef' }
+$matS = Get-VncViewOnlyMaterial
+Check 'override: View only material is the saved value' ($matS.kind -eq 'saved' -and $matS.hex -eq '0123456789abcdef' -and $matS.hex -ne $defHex)
+function global:Test-VncSecret { $false }
+$matC = Get-VncViewOnlyMaterial
+Check 'clear: View only material is the default again' ($matC.kind -eq 'default' -and $matC.hex -eq $defHex)
+$allowedPw = @([pscustomobject]@{ name = 'POS1'; host = '192.168.20.51'; port = 5900 }, [pscustomobject]@{ name = 'Name'; host = 'POS1'; port = 5900 })
+$lvDef = Get-VncViewOnlyLaunch $true '192.168.20.51' 5900 $allowedPw $matC
+$lvName = Get-VncViewOnlyLaunch $true 'POS1' 5900 $allowedPw $matC
+$lvSav = Get-VncViewOnlyLaunch $true '192.168.20.51' 5900 $allowedPw $matS
+$lvInt = Get-VncViewOnlyLaunch $false '192.168.20.51' 5900 $allowedPw $matS
+$lvOut = Get-VncViewOnlyLaunch $true '10.0.0.9' 5900 $allowedPw $matC
+Check 'allowed View only uses the default, including a name and a stale-shaped row' ($lvDef.use -and $lvDef.kind -eq 'default' -and $lvDef.hex -eq $defHex -and $lvName.use)
+Check 'allowed View only uses the override when one is saved' ($lvSav.use -and $lvSav.kind -eq 'saved' -and $lvSav.hex -eq '0123456789abcdef')
+Check 'Interact still gets no password file' (-not $lvInt.use -and $lvInt.kind -eq 'none' -and ((Get-VncViewerArgs '192.168.20.51' 5900 $false $null) -join ' ') -ceq '192.168.20.51:5900 -autoscaling')
+Check 'a computer that is not allowed gets no password file' (-not $lvOut.use)
+$cfgPw = New-VncConfigText '192.168.20.51' 5900 $defHex $true
+$logPw = Get-VncLaunchLogText $true 'C:\v\vncviewer.exe' @('192.168.20.51:5900', '-config', '"C:\T\c.vnc"', '-viewonly', '-autoscaling') 'C:\T\c.vnc' 'default' @{ product = 'UltraVNC'; version = '1.5'; ultra = $true }
+$favJson = '{"favorites":[{"host":"192.168.20.51","port":5900,"name":"POS1","pinned":false}]}'
+Check 'nothing leaks the default password into the log, the dialog, the launch, or JSON' ($logPw -like '*view-only password: default*' -and $logPw -notmatch '1234' -and $logPw -notmatch $defHex -and $cfgPw -notmatch '1234' -and $favJson -notmatch '1234|password' -and (& $fn 'Show-VncPasswordDialog') -notmatch '1234' -and (& $fn 'Start-VncViewer') -notmatch '1234' -and (& $fn 'Get-VncLaunchLogText') -notmatch '1234')
+function global:Test-VncSecret { $false }
+function global:Read-VncAllowed { @{ list = @(); state = 'missing'; bad = 0 } }   # the integration launch must not read a real list or a password file
 function global:Start-VncProcess($psi) { $global:t9.sp += ,@($psi.FileName, $psi.Arguments, $psi.WorkingDirectory, $psi.UseShellExecute, $psi.Verb); 1 }
 function global:Show-VncNotice([string]$t) { $global:t9.box += $t }
 $goSrc = [regex]::Match($src, '\$ui\.go = \[Action\[bool\]\]\{[^\n]*').Value
@@ -776,7 +802,7 @@ Check 'in-flight: Not checked, not Offline, tip says a check is in progress' ($f
 $okR = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'banner'; banner = 'RFB 003.008'; at = $nowR } } $true $nowR
 Check 'success: fresh RFB is Online while other rows could still be in flight; tip does not claim sign-in or a session' ($okR[0].statusKind -eq 'online' -and $okR[0].statusText -eq 'Online' -and $okR[0].row.session -and $okR[0].row.banner -eq 'RFB 003.008' -and (Test-VncUsePassword $okR[0].row $true) -and $okR[0].statusTip -match 'Nothing was signed in' -and $okR[0].statusTip -match 'no remote session' -and $okR[0].statusTip -notmatch 'password')
 $ref = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'refused'; banner = ''; at = $nowR } } $false $nowR
-Check 'refusal: check finished and the port refused -> Offline, no saved password' ($ref[0].statusText -eq 'Offline' -and $ref[0].statusKind -eq 'offline' -and $ref[0].statusTip -match 'refused' -and -not $ref[0].row.session -and -not (Test-VncUsePassword $ref[0].row $true))
+Check 'refusal: check finished and the port refused -> Offline, and the password gate stays open' ($ref[0].statusText -eq 'Offline' -and $ref[0].statusKind -eq 'offline' -and $ref[0].statusTip -match 'refused' -and -not $ref[0].row.session -and (Test-VncUsePassword $ref[0].row $true))
 $to = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'timeout'; banner = ''; at = $nowR } } $false $nowR
 Check 'timeout is Not checked, not Offline' ($to[0].statusText -eq 'Not checked' -and $to[0].statusKind -eq 'unchecked' -and $to[0].statusTip -match 'timed out' -and $to[0].statusTip -match 'not Offline' -and -not $to[0].row.session)
 $rt = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'read-timeout'; banner = ''; at = $nowR } } $false $nowR
@@ -784,7 +810,7 @@ Check 'read timeout is Not checked, not Offline' ($rt[0].statusText -eq 'Not che
 $badR = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'invalid'; banner = ''; at = $nowR } } $false $nowR
 Check 'invalid target: Not checked, nothing contacted' ($badR[0].statusText -eq 'Not checked' -and $badR[0].statusTip -match 'nothing was contacted')
 $staleR = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'banner'; banner = 'RFB 003.008'; outcome = 'online'; at = $nowR.AddSeconds(-61) } } $false $nowR
-Check 'stale Online expires to Not checked and does not keep the saved-password session' ($staleR[0].statusText -eq 'Not checked' -and $staleR[0].statusTip -match 'expired' -and $staleR[0].statusTip -match 'was Online' -and -not $staleR[0].row.session -and -not (Test-VncUsePassword $staleR[0].row $true) -and $staleR[0].tip -match 'Last check')
+Check 'stale Online expires to Not checked, and View only may still use the password file' ($staleR[0].statusText -eq 'Not checked' -and $staleR[0].statusTip -match 'expired' -and $staleR[0].statusTip -match 'was Online' -and -not $staleR[0].row.session -and (Test-VncUsePassword $staleR[0].row $true) -and $staleR[0].tip -match 'Last check')
 $staleOff = Get-VncAllowedRows $one @{ '192.168.20.51:5900' = @{ kind = 'refused'; outcome = 'offline'; at = $nowR.AddMinutes(-3) } } $false $nowR
 Check 'stale Offline expires to Not checked (expired is not still Offline)' ($staleOff[0].statusText -eq 'Not checked' -and $staleOff[0].statusTip -match 'was Offline' -and $staleOff[0].statusTip -match 'not still Offline')
 foreach ($l in $ast.EndBlock.Statements) { if ($l.Extent.Text -match '^\$global:VncTileSize\s*=') { Invoke-Expression $l.Extent.Text } }
@@ -836,9 +862,9 @@ $kept = Get-VncReachFooter 1 0 2 $false $false $false '3:00 PM' 'POS1: VNC answe
 Check 'footer keeps the counts when the selected row adds its check detail' ($kept -eq '1 online, 0 offline, 2 not checked. Press F5 to check again. POS1: VNC answered just now.' -and $kept -notmatch 'RFB')
 $lf = ConvertTo-VncReachBanner ("RFB 003.008" + [char]10)
 $cr = ConvertTo-VncReachBanner ("RFB 003.008" + [char]13)
-Check 'greeting: LF is the RFB banner; CR is not, and does not open the password gate' ($lf -eq 'RFB 003.008' -and (Get-VncReachOutcome @{ kind = 'banner'; banner = $lf }) -eq 'online' -and $cr -eq '' -and (Get-VncReachOutcome @{ kind = 'banner'; banner = $cr }) -eq 'offline' -and -not (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.20.51'; banner = $cr; session = $true }) $true) -and (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.20.51'; banner = $lf; session = $true }) $true))
+Check 'greeting: LF is the RFB banner; CR is Offline, and both hosts still pass the password gate' ($lf -eq 'RFB 003.008' -and (Get-VncReachOutcome @{ kind = 'banner'; banner = $lf }) -eq 'online' -and $cr -eq '' -and (Get-VncReachOutcome @{ kind = 'banner'; banner = $cr }) -eq 'offline' -and (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.20.51'; banner = $cr; session = $true }) $true) -and (Test-VncUsePassword ([pscustomobject]@{ host = '192.168.20.51'; banner = $lf; session = $true }) $true))
 $whyRow = { param($why) [pscustomobject]@{ name = 'POS2'; host = '192.168.20.52'; port = 5900; banner = ''; session = $false; reachWhy = $why } }
-Check 'fallback: stale, in flight, and cancelled are not "did not answer"' (((Get-VncPasswordFallbackText (& $whyRow 'stale') $true) -like '*last VNC check expired*') -and ((Get-VncPasswordFallbackText (& $whyRow 'running') $true) -like '*still being checked*') -and ((Get-VncPasswordFallbackText (& $whyRow 'cancelled') $true) -like '*was cancelled*') -and ((Get-VncPasswordFallbackText (& $whyRow 'timeout') $true) -like '*timed out*') -and ((Get-VncPasswordFallbackText (& $whyRow 'refused') $true) -like '*did not answer with VNC*'))
+Check 'fallback: stale, in flight, cancelled, timeout, and refused do not make View only ask' (((Get-VncPasswordFallbackText (& $whyRow 'stale') $true) -eq '') -and ((Get-VncPasswordFallbackText (& $whyRow 'running') $true) -eq '') -and ((Get-VncPasswordFallbackText (& $whyRow 'cancelled') $true) -eq '') -and ((Get-VncPasswordFallbackText (& $whyRow 'timeout') $true) -eq '') -and ((Get-VncPasswordFallbackText (& $whyRow 'refused') $true) -eq ''))
 $stag = @(
   [pscustomobject]@{ name = 'Old'; host = '192.168.20.51'; port = 5900 }
   [pscustomobject]@{ name = 'Fresh'; host = '192.168.20.52'; port = 5900 }
@@ -894,10 +920,10 @@ try {
   $crBytes = [Text.Encoding]::ASCII.GetBytes("RFB 003.008`r"); [void]$crStream.Write($crBytes, 0, $crBytes.Length)
   $crSw = [Diagnostics.Stopwatch]::StartNew(); while (-not $crSync.done -and $crSw.ElapsedMilliseconds -lt 3000) { Start-Sleep -Milliseconds 20 }
   $crHit = $null; [void]$crSync.found.TryDequeue([ref]$crHit)
-  $crOk = ($crSync.done -and $crHit.kind -eq 'banner' -and $crHit.banner -eq '' -and (Get-VncReachOutcome $crHit) -eq 'offline' -and -not (Test-VncUsePassword ([pscustomobject]@{ host = '127.0.0.1'; banner = $crHit.banner; session = $true }) $true))
+  $crOk = ($crSync.done -and $crHit.kind -eq 'banner' -and $crHit.banner -eq '' -and (Get-VncReachOutcome $crHit) -eq 'offline' -and (Test-VncUsePassword ([pscustomobject]@{ host = '127.0.0.1'; banner = $crHit.banner; session = $true }) $true))
   $crClient.Close(); $ln2.Stop(); $crPs.Dispose(); $crRs.Dispose()
 } catch { $crOk = $false }
-Check 'loopback CR greeting is Offline and the password gate stays closed' $crOk
+Check 'loopback CR greeting is Offline and the password gate stays open' $crOk
 $cxOk = $false; $cxMs = -1
 try {
   $ln3 = New-Object System.Net.Sockets.TcpListener ([System.Net.IPAddress]::Loopback, 0)

@@ -35,6 +35,9 @@ WHAT EACH BUTTON DOES
                        port, not the whole computer. A listed computer is
                        not automatically Online. The check time is in the
                        row tooltip and, for the selected row, beside the counts.
+                       View only uses a built-in default password, or the
+                       override in Setup > View-only password, for every
+                       allowed computer. Interact still asks.
                        To connect straight to a register, edit the button and
                        put e.g. 192.168.1.50:5900 in Arguments.
   INTERNET             Opens Google in your browser.
