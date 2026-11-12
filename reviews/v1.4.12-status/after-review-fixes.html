@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>View Register status — simulated review-fix preview</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #141416; }
+  body { font-family: Inter, "Liberation Sans", sans-serif; color: #ececf1; padding: 20px 22px 16px; }
+  h1 { font-size: 18px; font-weight: 650; margin: 0 0 8px; }
+  .banner { font-size: 13px; line-height: 1.4; color: #f5d76e; background: #2a2618; border: 1px solid #6b5a28; border-radius: 8px; padding: 8px 12px; margin: 0 0 14px; max-width: 680px; }
+  .win { width: 620px; background: linear-gradient(#26262c, #16161a); border-radius: 12px; padding: 14px 20px 16px; }
+  .intro { color: #a0a0a0; font-size: 13px; line-height: 16px; height: 16px; margin: 0 0 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .list { background: #1b1b20; border: 1px solid rgba(255,255,255,.12); border-radius: 10px; overflow: hidden; }
+  .hdr, .row { display: grid; grid-template-columns: 28px 1fr 180px 160px; align-items: center; }
+  .hdr { height: 32px; color: #a0a0a0; font-size: 14px; font-weight: 650; }
+  .name { padding-left: 4px; }
+  .row { height: 38px; position: relative; font-size: 16px; }
+  .row.sel { background: #313136; }
+  .pill { position: absolute; left: 0; top: 10px; width: 3px; height: 18px; border-radius: 1.5px; background: #22c55e; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 650; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; }
+  .sq { width: 10px; height: 10px; background: #f87171; }
+  .ring { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid #b4b4bc; box-sizing: border-box; }
+  .on { color: #4ade80; } .off { color: #fecaca; } .no { color: #b4b4bc; }
+  .foot { margin-top: 2px; height: 32px; color: #a0a0a0; font-size: 12px; line-height: 16px; }
+  .foot div { height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pair { display: flex; gap: 8px; }
+  .pair span, .pair b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pair span { max-width: 360px; flex: 0 1 auto; }
+  .pair b { min-width: 180px; flex: 1 0 180px; font-weight: 450; color: #c8c8d0; }
+  .note { margin: 12px 0 0; color: #c8c8d0; font-size: 12px; line-height: 1.4; max-width: 680px; }
+</style>
+</head>
+<body>
+  <h1>Simulated View Register after the layout fix</h1>
+  <div class="banner">SIMULATED — not a Windows WPF capture and not a measure of Segoe UI. Font is Inter. No live check ran. The intro is one 16 px line. The footer is two 16 px lines (32 px), not a 48 px wrap. The historical Windows before image is not included here.</div>
+  <div class="win">
+    <p class="intro">Pick a computer. View only to watch, Interact to take control.</p>
+    <div class="list">
+      <div class="hdr"><div></div><div class="name">Name</div><div>Address</div><div>Status</div></div>
+      <div class="row"><div></div><div class="name">Register 2</div><div>192.168.20.52</div><div class="status off"><i class="sq"></i>Offline</div></div>
+      <div class="row sel"><div class="pill"></div><div></div><div class="name">POS1</div><div>192.168.20.51</div><div class="status on"><i class="dot"></i>Online</div></div>
+      <div class="row"><div></div><div class="name">Front till</div><div>192.168.20.53</div><div class="status no"><i class="ring"></i>Not checked</div></div>
+    </div>
+    <div class="foot">
+      <div>Online: VNC answered, not signed in or the screen. Offline: the VNC port, not the PC.</div>
+      <div class="pair"><span>Not finished. 12 online, 4 offline, 8 not checked. Not Offline. Press F5.</span><b>Front till: the VNC check timed out.</b></div>
+    </div>
+  </div>
+  <p class="note">Sample states only. SIMULATED. The green bar on POS1 is selection, not the Online mark. The column label stays Not checked while a check is still running. Counts are capped near 360 px so the selected or error line keeps about 180 px; both can ellipsize, and the full words stay on the tooltips. The spoken status line is the counts plus that detail. An empty list says “No computers have been allowed yet.” Window size in the product stays 620×522, minimum 616×410. This picture does not prove that fit.</p>
+</body>
+</html>

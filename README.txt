@@ -28,6 +28,38 @@ WHAT EACH BUTTON DOES
                        the viewer asks. Interact uses UltraVNC's own
                        password box.
                        v1.4.11: Interact closes View Register once the viewer starts.
+                       v1.4.12 review: after Shell.Application starts the
+                       viewer, the launcher looks up that process by its
+                       program path and start time, for at most 1.5 seconds.
+                       The status line is shown before that lookup. It does
+                       not read another program's command line. A viewer that
+                       was already running is not treated as the one just
+                       started. When that
+                       process is found, View only stays open until the
+                       viewer shows a window, then closes. If that process
+                       quits before a window, View Register stays open and
+                       says "Couldn't connect. Check Setup > View-only
+                       password." If the process cannot be found, View
+                       Register closes after 8 seconds and that guidance is
+                       written to the log only. A window that already showed
+                       is not later treated as a failed password. Interact
+                       uses the same process. The password box is brought
+                       forward only while View Register or the viewer is the
+                       window in front. Otherwise the prompt flashes, View
+                       Register stays open, and the status says the password
+                       box is waiting in another window. If Interact's viewer
+                       quits first, View Register stays open and says
+                       "Viewer closed early. Press F5, then try again."
+                       v1.4.12 review (not released): the list shows Online,
+                       Offline, or Not checked from a short VNC-port check.
+                       A line under the list says Online means VNC answered,
+                       not signed in or the screen, and Offline is the VNC
+                       port, not the whole computer. A listed computer is
+                       not automatically Online. The check time is in the
+                       row tooltip and, for the selected row, beside the counts.
+                       View only uses a built-in default password, or the
+                       override in Setup > View-only password, for every
+                       allowed computer. Interact still asks.
                        To connect straight to a register, edit the button and
                        put e.g. 192.168.1.50:5900 in Arguments.
   INTERNET             Opens Google in your browser.
